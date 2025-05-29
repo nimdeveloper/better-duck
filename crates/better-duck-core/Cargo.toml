@@ -1,0 +1,21 @@
+[package]
+name = "better-duck-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libduckdb-sys = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+chrono = { workspace = true }
+
+[features]
+default = ["bundled"]
+bundled = ["libduckdb-sys/bundled"]
+json = ["libduckdb-sys/json", "bundled"]
+parquet = ["libduckdb-sys/parquet", "bundled"]
+buildtime_bindgen = ["libduckdb-sys/buildtime_bindgen"]
+
+[dev-dependencies]
+tempfile = "3.3"
