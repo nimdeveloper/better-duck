@@ -1,3 +1,4 @@
 {
-  "conventionalCommits.emojiFormat": "emoji"
+  "conventionalCommits.emojiFormat": "emoji",
+  "conventionalCommits.scopes": ["core"]
 }

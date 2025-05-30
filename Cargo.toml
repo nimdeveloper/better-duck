@@ -23,3 +23,4 @@ parking_lot = "0.12"                                            # For efficient 
 # Optional dependencies
 serde = { version = "1.0", features = ["derive"] }
 tokio = "1.0"
+strum = "0.25"
