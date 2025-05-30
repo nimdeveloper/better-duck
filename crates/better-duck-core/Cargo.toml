@@ -9,6 +9,7 @@ thiserror = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
 chrono = { workspace = true }
+strum = { workspace = true, features = ["derive"] }
 
 [features]
 default = ["bundled"]
