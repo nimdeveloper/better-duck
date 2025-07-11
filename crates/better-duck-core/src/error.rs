@@ -1,7 +1,17 @@
+#![allow(dead_code)]
 // Direct copy from DuckDB
 
-use crate::ffi;
+use crate::ffi::{duckdb_type, Error as FFIError};
 use std::{error, fmt, path::PathBuf, result, str};
+
+// Error type for conversion failures
+#[derive(Debug)]
+pub enum DuckDBConversionError {
+    TypeMismatch { expected: duckdb_type, found: duckdb_type },
+    ConversionError(String),
+    NullValue,
+    PrecisionLoss(String),
+}
 
 /// Enum listing possible errors from duckdb.
 #[derive(Debug)]
@@ -9,7 +19,7 @@ use std::{error, fmt, path::PathBuf, result, str};
 #[non_exhaustive]
 pub enum Error {
     /// An error from an underlying DuckDB call.
-    DuckDBFailure(ffi::Error, Option<String>),
+    DuckDBFailure(FFIError, Option<String>),
 
     /// Error when the value of a particular column is requested, but it cannot
     /// be converted to the requested Rust type.
@@ -76,18 +86,23 @@ pub enum Error {
 
     /// Append Error
     AppendError,
+
+    ConversionError(DuckDBConversionError),
 }
 
 /// A typedef of the result returned by many methods.
 pub type Result<T, E = Error> = result::Result<T, E>;
 
 impl PartialEq for Error {
-    fn eq(&self, other: &Error) -> bool {
+    fn eq(
+        &self,
+        other: &Error,
+    ) -> bool {
         match (self, other) {
             (Error::DuckDBFailure(e1, s1), Error::DuckDBFailure(e2, s2)) => e1 == e2 && s1 == s2,
             (Error::IntegralValueOutOfRange(i1, n1), Error::IntegralValueOutOfRange(i2, n2)) => {
                 i1 == i2 && n1 == n2
-            }
+            },
             (Error::Utf8Error(e1), Error::Utf8Error(e2)) => e1 == e2,
             (Error::NulError(e1), Error::NulError(e2)) => e1 == e2,
             (Error::InvalidParameterName(n1), Error::InvalidParameterName(n2)) => n1 == n2,
@@ -102,7 +117,7 @@ impl PartialEq for Error {
             (Error::StatementChangedRows(n1), Error::StatementChangedRows(n2)) => n1 == n2,
             (Error::InvalidParameterCount(i1, n1), Error::InvalidParameterCount(i2, n2)) => {
                 i1 == i2 && n1 == n2
-            }
+            },
             (..) => false,
         }
     }
@@ -146,7 +161,10 @@ const UNKNOWN_COLUMN: usize = usize::MAX;
 // }
 
 impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
         match *self {
             Error::DuckDBFailure(ref err, None) => err.fmt(f),
             Error::DuckDBFailure(_, Some(ref s)) => write!(f, "{s}"),
@@ -163,14 +181,14 @@ impl fmt::Display for Error {
                 } else {
                     write!(f, "Integer {val} out of range")
                 }
-            }
+            },
             Error::Utf8Error(ref err) => err.fmt(f),
             Error::NulError(ref err) => err.fmt(f),
             Error::InvalidParameterName(ref name) => write!(f, "Invalid parameter name: {name}"),
             Error::InvalidPath(ref p) => write!(f, "Invalid path: {}", p.to_string_lossy()),
             Error::ExecuteReturnedResults => {
                 write!(f, "Execute returned results - did you mean to call query?")
-            }
+            },
             Error::QueryReturnedNoRows => write!(f, "Query returned no rows"),
             Error::InvalidColumnIndex(i) => write!(f, "Invalid column index: {i}"),
             Error::InvalidColumnName(ref name) => write!(f, "Invalid column name: {name}"),
@@ -181,16 +199,23 @@ impl fmt::Display for Error {
             //     write!(f, "Invalid column type {t} , name: {name}")
             // }
             Error::InvalidParameterCount(i1, n1) => {
-                write!(
-                    f,
-                    "Wrong number of parameters passed to query. Got {i1}, needed {n1}"
-                )
-            }
+                write!(f, "Wrong number of parameters passed to query. Got {i1}, needed {n1}")
+            },
             Error::StatementChangedRows(i) => write!(f, "Query changed {i} rows"),
             Error::ToSqlConversionFailure(ref err) => err.fmt(f),
             Error::InvalidQuery => write!(f, "Query is not read-only"),
             Error::MultipleStatement => write!(f, "Multiple statements provided"),
             Error::AppendError => write!(f, "Append error"),
+            Error::ConversionError(ref err) => match err {
+                DuckDBConversionError::TypeMismatch { expected, found } => {
+                    write!(f, "Type mismatch: expected {expected}, found {found}")
+                },
+                DuckDBConversionError::ConversionError(ref msg) => {
+                    write!(f, "Conversion error: {msg}")
+                },
+                DuckDBConversionError::NullValue => write!(f, "Null value encountered"),
+                DuckDBConversionError::PrecisionLoss(ref msg) => write!(f, "Precision loss: {msg}"),
+            },
         }
     }
 }
@@ -215,7 +240,7 @@ impl error::Error for Error {
             | Error::InvalidQuery
             | Error::AppendError
             // | Error::ArrowTypeToDuckdbType(..)
-            | Error::MultipleStatement => None,
+            | Error::MultipleStatement | Error::ConversionError(_) => None,
             // Error::FromSqlConversionFailure(_, _, ref err)
             Error::ToSqlConversionFailure(ref err) => Some(&**err),
         }
