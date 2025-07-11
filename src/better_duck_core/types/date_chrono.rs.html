@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>    <span class="kw">fn </span>to_duck(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;duckdb_value, DuckDBConversionError&gt; {
 <a href=#26 id=26 data-nosnippet>26</a>        <span class="comment">// This is a simplification: only micros, no months/days
 <a href=#27 id=27 data-nosnippet>27</a>        </span><span class="kw">let </span>micros = <span class="self">self</span>.num_microseconds().unwrap_or(<span class="number">0</span>);
-<a href=#28 id=28 data-nosnippet>28</a>        <span class="kw">let </span>interval = duckdb_interval { months: <span class="number">0</span>, days: <span class="number">0</span>, micros: micros <span class="kw">as </span>i64 };
+<a href=#28 id=28 data-nosnippet>28</a>        <span class="kw">let </span>interval = duckdb_interval { months: <span class="number">0</span>, days: <span class="number">0</span>, micros };
 <a href=#29 id=29 data-nosnippet>29</a>        <span class="prelude-val">Ok</span>(<span class="kw">unsafe </span>{ duckdb_create_interval(interval) })
 <a href=#30 id=30 data-nosnippet>30</a>    }
 <a href=#31 id=31 data-nosnippet>31</a>}

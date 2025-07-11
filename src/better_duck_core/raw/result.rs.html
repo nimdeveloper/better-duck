@@ -41,7 +41,7 @@
 <a href=#41 id=41 data-nosnippet>41</a>        <span class="comment">// TODO: Better error handling?
 <a href=#42 id=42 data-nosnippet>42</a>        </span>res.resolve_columns_name().unwrap();
 <a href=#43 id=43 data-nosnippet>43</a>        res.resolve_columns_types().unwrap();
-<a href=#44 id=44 data-nosnippet>44</a>        <span class="kw">return </span>res;
+<a href=#44 id=44 data-nosnippet>44</a>        res
 <a href=#45 id=45 data-nosnippet>45</a>    }
 <a href=#46 id=46 data-nosnippet>46</a>
 <a href=#47 id=47 data-nosnippet>47</a>    <span class="attr">#[inline]
@@ -60,7 +60,7 @@
 <a href=#60 id=60 data-nosnippet>60</a>        <span class="kw">let </span>return_val: <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span>str&gt; = CStr::from_ptr(name).to_str().map_err(|e| {
 <a href=#61 id=61 data-nosnippet>61</a>            Error::ConversionError(DuckDBConversionError::ConversionError(e.to_string()))
 <a href=#62 id=62 data-nosnippet>62</a>        });
-<a href=#63 id=63 data-nosnippet>63</a>        <span class="kw">return </span>return_val;
+<a href=#63 id=63 data-nosnippet>63</a>        return_val
 <a href=#64 id=64 data-nosnippet>64</a>    }
 <a href=#65 id=65 data-nosnippet>65</a>    <span class="attr">#[inline]
 <a href=#66 id=66 data-nosnippet>66</a>    </span><span class="kw">fn </span>resolve_columns_types(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -68,14 +68,14 @@
 <a href=#68 id=68 data-nosnippet>68</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>col_types = Box::&lt;[DUCKDB_TYPE]&gt;::new_uninit_slice(<span class="self">self</span>.col_count <span class="kw">as </span>usize);
 <a href=#69 id=69 data-nosnippet>69</a>
 <a href=#70 id=70 data-nosnippet>70</a>        <span class="kw">for </span>each <span class="kw">in </span><span class="number">0</span>..<span class="self">self</span>.col_count {
-<a href=#71 id=71 data-nosnippet>71</a>            <span class="kw">let </span>temp_col_type = <span class="kw">unsafe </span>{ <span class="self">self</span>.get_col_type(each <span class="kw">as </span>u64) };
+<a href=#71 id=71 data-nosnippet>71</a>            <span class="kw">let </span>temp_col_type = <span class="kw">unsafe </span>{ <span class="self">self</span>.get_col_type(each) };
 <a href=#72 id=72 data-nosnippet>72</a>            <span class="kw">unsafe </span>{
 <a href=#73 id=73 data-nosnippet>73</a>                col_types[each <span class="kw">as </span>usize].as_mut_ptr().write(temp_col_type);
 <a href=#74 id=74 data-nosnippet>74</a>                <span class="comment">// ptr::write(slice_ptr.add(each as usize), col_name);
 <a href=#75 id=75 data-nosnippet>75</a>            </span>}
 <a href=#76 id=76 data-nosnippet>76</a>        }
 <a href=#77 id=77 data-nosnippet>77</a>        <span class="self">self</span>.column_types = <span class="kw">unsafe </span>{ col_types.assume_init() };
-<a href=#78 id=78 data-nosnippet>78</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#78 id=78 data-nosnippet>78</a>        <span class="prelude-val">Ok</span>(())
 <a href=#79 id=79 data-nosnippet>79</a>    }
 <a href=#80 id=80 data-nosnippet>80</a>    <span class="attr">#[inline]
 <a href=#81 id=81 data-nosnippet>81</a>    </span><span class="kw">fn </span>resolve_columns_name(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -84,7 +84,7 @@
 <a href=#84 id=84 data-nosnippet>84</a>        <span class="comment">// let slice_ptr = col_names.as_mut_ptr() as *mut &amp;'static str;
 <a href=#85 id=85 data-nosnippet>85</a>
 <a href=#86 id=86 data-nosnippet>86</a>        </span><span class="kw">for </span>each <span class="kw">in </span><span class="number">0</span>..<span class="self">self</span>.col_count {
-<a href=#87 id=87 data-nosnippet>87</a>            <span class="kw">let </span>temp_col_name = <span class="kw">unsafe </span>{ <span class="self">self</span>.get_col_name(each <span class="kw">as </span>u64) };
+<a href=#87 id=87 data-nosnippet>87</a>            <span class="kw">let </span>temp_col_name = <span class="kw">unsafe </span>{ <span class="self">self</span>.get_col_name(each) };
 <a href=#88 id=88 data-nosnippet>88</a>
 <a href=#89 id=89 data-nosnippet>89</a>            <span class="kw">if let </span><span class="prelude-val">Ok</span>(col_name) = temp_col_name {
 <a href=#90 id=90 data-nosnippet>90</a>                <span class="kw">unsafe </span>{
@@ -100,7 +100,7 @@
 <a href=#100 id=100 data-nosnippet>100</a>            <span class="kw">let </span>types = raw <span class="kw">as </span><span class="kw-2">*mut </span>[<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str];
 <a href=#101 id=101 data-nosnippet>101</a>            Box::from_raw(types)
 <a href=#102 id=102 data-nosnippet>102</a>        };
-<a href=#103 id=103 data-nosnippet>103</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#103 id=103 data-nosnippet>103</a>        <span class="prelude-val">Ok</span>(())
 <a href=#104 id=104 data-nosnippet>104</a>    }
 <a href=#105 id=105 data-nosnippet>105</a>
 <a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">unsafe fn </span>get_row(
@@ -149,7 +149,7 @@
 <a href=#149 id=149 data-nosnippet>149</a>    /// result is properly initialized.
 <a href=#150 id=150 data-nosnippet>150</a>    /// # Returns
 <a href=#151 id=151 data-nosnippet>151</a>    /// * `Option&lt;()&gt;` - Returns `Some(())` if the chunk was advanced successfully,
-<a href=#152 id=152 data-nosnippet>152</a>    /// or `None` if there are no more chunks.
+<a href=#152 id=152 data-nosnippet>152</a>    ///     or `None` if there are no more chunks.
 <a href=#153 id=153 data-nosnippet>153</a>    /// # Errors
 <a href=#154 id=154 data-nosnippet>154</a>    /// Panics if the chunk cannot be fetched or if the result is invalid.
 <a href=#155 id=155 data-nosnippet>155</a>    </span><span class="kw">fn </span>advance(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;()&gt; {
@@ -181,7 +181,7 @@
 <a href=#181 id=181 data-nosnippet>181</a>                    <span class="self">self</span>.chunk = <span class="prelude-val">None</span>;
 <a href=#182 id=182 data-nosnippet>182</a>                    <span class="kw">return </span><span class="prelude-val">None</span>;
 <a href=#183 id=183 data-nosnippet>183</a>                }
-<a href=#184 id=184 data-nosnippet>184</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw">_</span>) = the_chunk.next_row() {
+<a href=#184 id=184 data-nosnippet>184</a>                <span class="kw">if </span>the_chunk.next_row().is_some() {
 <a href=#185 id=185 data-nosnippet>185</a>                    <span class="comment">// We have a valid row - return it
 <a href=#186 id=186 data-nosnippet>186</a>                    </span><span class="kw">let </span>row_chunk = the_chunk.raw();
 <a href=#187 id=187 data-nosnippet>187</a>                    <span class="kw">if </span>row_chunk.is_null() {
@@ -204,9 +204,9 @@
 <a href=#204 id=204 data-nosnippet>204</a>    /// This function assumes that the current row is valid and has been advanced to.
 <a href=#205 id=205 data-nosnippet>205</a>    /// # Returns
 <a href=#206 id=206 data-nosnippet>206</a>    /// * `Result&lt;Vec&lt;DuckValue&gt;&gt;` - The current row as a vector of
-<a href=#207 id=207 data-nosnippet>207</a>    /// `DuckValue`, or an error if the row is invalid or if there are no rows.
+<a href=#207 id=207 data-nosnippet>207</a>    ///     `DuckValue`, or an error if the row is invalid or if there are no rows.
 <a href=#208 id=208 data-nosnippet>208</a>    /// # Errors
-<a href=#209 id=209 data-nosnippet>209</a>    /// Returns an error if the current row is invalid or if there are no rows.
+<a href=#209 id=209 data-nosnippet>209</a>    ///  Returns an error if the current row is invalid or if there are no rows.
 <a href=#210 id=210 data-nosnippet>210</a>    ///
 <a href=#211 id=211 data-nosnippet>211</a>    </span><span class="kw">pub fn </span>current(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;AbstractRow&gt; {
 <a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>chunk = <span class="self">self</span>.chunk.as_mut().unwrap();
@@ -263,7 +263,7 @@
 <a href=#263 id=263 data-nosnippet>263</a>    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;AbstractRow&gt;;
 <a href=#264 id=264 data-nosnippet>264</a>
 <a href=#265 id=265 data-nosnippet>265</a>    <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt; {
-<a href=#266 id=266 data-nosnippet>266</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw">_</span>) = <span class="self">self</span>.advance() {
+<a href=#266 id=266 data-nosnippet>266</a>        <span class="kw">if </span><span class="self">self</span>.advance().is_some() {
 <a href=#267 id=267 data-nosnippet>267</a>            <span class="comment">// If we successfully advanced, return the next row
 <a href=#268 id=268 data-nosnippet>268</a>            </span><span class="prelude-val">Some</span>(<span class="self">self</span>.current())
 <a href=#269 id=269 data-nosnippet>269</a>        } <span class="kw">else </span>{
