@@ -1,0 +1,36 @@
+# rustfmt.toml
+
+# Maximum line width (community standard)
+max_width = 100
+
+# Indentation
+tab_spaces = 4
+
+# Import organization
+imports_granularity = "Crate"  # Group imports from same crate together
+group_imports = "StdExternalCrate"  # Order: std > external > current crate
+reorder_imports = true
+reorder_imports_in_group = true
+
+# Formatting heuristics
+use_small_heuristics = "Max"     # Prefer compact formatting where possible
+condense_wildcard_suffixes = true # Format `_..` as `..`
+overflow_delimited_expr = true    # Improve delimited expression formatting
+
+# Function styling
+fn_params_layout = "Vertical"     # Always break function params if multiline
+where_single_line = false          # Always break `where` clauses
+
+# Control flow
+control_brace_style = "AlwaysSameLine"  # K&R-style braces
+match_arm_blocks = true            # Newline between match arms with blocks
+match_block_trailing_comma = true  # Trailing comma in multi-line match blocks
+
+# Comments
+wrap_comments = true              # Rewrap comments to max_width
+format_code_in_doc_comments = true # Format code blocks in docs
+comment_width = 80                # Wrap comments at 80 columns
+
+# Advanced
+error_on_line_overflow = false    # Don't fail on long lines (warn only)
+license_template_path = "LICENSE_HEADER" # File with license header

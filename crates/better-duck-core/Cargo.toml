@@ -8,15 +8,18 @@ libduckdb-sys = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
-chrono = { workspace = true }
+chrono = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
+rust_decimal = { workspace = true, features = ["macros"], optional = true }
 
 [features]
-default = ["bundled"]
+default = ["bundled", "chrono", "decimal"]
 bundled = ["libduckdb-sys/bundled"]
 json = ["libduckdb-sys/json", "bundled"]
 parquet = ["libduckdb-sys/parquet", "bundled"]
 buildtime_bindgen = ["libduckdb-sys/buildtime_bindgen"]
+chrono = ["dep:chrono"]
+decimal = ["dep:rust_decimal"]
 
 [dev-dependencies]
 tempfile = "3.3"
