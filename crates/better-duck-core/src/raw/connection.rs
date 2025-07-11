@@ -1,4 +1,3 @@
-#![allow(unused)]
 use std::{
     ffi::{c_void, CStr, CString},
     mem,
@@ -10,8 +9,13 @@ use std::{
 use crate::{
     config::Config,
     error::{Error, Result},
-    ffi,
+    ffi::{
+        duckdb_close, duckdb_connect, duckdb_connection, duckdb_database, duckdb_disconnect,
+        duckdb_free, duckdb_open_ext, duckdb_query, duckdb_result, DuckDBError, DuckDBSuccess,
+        Error as FFIError,
+    },
     helpers::duck_result::result_from_duckdb_result,
+    raw::{appender::Appender, statement::Statement},
 };
 
 /// `RawDatabase` is a low-level wrapper around a DuckDB database handle.
@@ -39,13 +43,13 @@ use crate::{
 /// let shared = Arc::new(raw_db);
 /// // Now `shared` can be cloned and sent between threads
 /// ```
-pub struct RawDatabase(pub(crate) ffi::duckdb_database);
+pub struct RawDatabase(pub(crate) duckdb_database);
 impl RawDatabase {
     #[inline]
-    pub unsafe fn new(db: ffi::duckdb_database) -> Result<RawDatabase> {
+    pub unsafe fn new(db: duckdb_database) -> Result<RawDatabase> {
         if db.is_null() {
             return Err(Error::DuckDBFailure(
-                ffi::Error::new(ffi::DuckDBError),
+                FFIError::new(DuckDBError),
                 Some("database is null".to_owned()),
             ));
         }
@@ -57,7 +61,7 @@ impl Drop for RawDatabase {
     fn drop(&mut self) {
         unsafe {
             if !self.0.is_null() {
-                ffi::duckdb_close(&mut self.0);
+                duckdb_close(&mut self.0);
             }
         }
     }
@@ -84,7 +88,6 @@ impl Drop for RawDatabase {
 /// ```rust
 /// use better_duck_core::raw::RawConnection;
 /// use std::ffi::CString;
-///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Open a new in-memory database connection
 /// let path = CString::new(":memory:")?;
@@ -101,44 +104,109 @@ impl Drop for RawDatabase {
 /// ```
 pub struct RawConnection {
     pub db: Arc<RawDatabase>,
-    pub con: ffi::duckdb_connection,
+    pub con: duckdb_connection,
 }
 impl RawConnection {
+    /// Returns the underlying raw DuckDB connection handle.
+    ///
+    /// # Safety
+    ///
+    /// This function exposes the raw FFI connection handle. Improper use of this handle
+    /// may lead to undefined behavior. Use with caution.
+    ///
+    /// # Returns
+    ///
+    /// The raw `ffi::duckdb_connection` handle associated with this `RawConnection`.
+    #[allow(unused)]
+    fn raw(&self) -> duckdb_connection {
+        self.con
+    }
+
+    /// Creates a new `RawConnection` from an existing `RawDatabase`.
+    ///
+    /// # Safety
+    /// This function is unsafe because it dereferences raw pointers and interacts with the FFI.
+    /// Callers must ensure that the `RawDatabase` is valid for the duration of the `RawConnection`.
+    ///
+    /// # Errors
+    /// Returns an error if the connection cannot be established.
+    ///
+    /// # Example
+    /// ```rust
+    /// use std::sync::Arc;
+    /// use better_duck_core::raw::{RawConnection, RawDatabase};
+    /// let db = Arc::new(RawDatabase::new(unsafe { std::ptr::null_mut() }).unwrap());
+    /// let conn = unsafe { RawConnection::new(db) };
+    /// ```
+    ///
+    /// # Note
+    /// This function is typically used internally and should not be called directly.
+    /// It is recommended to use higher-level methods like `open_with_flags` to create a new connection.
+    ///
     #[inline]
-    pub unsafe fn new(db: Arc<RawDatabase>) -> Result<RawConnection> {
-        let mut con: ffi::duckdb_connection = ptr::null_mut();
-        let r = ffi::duckdb_connect(db.0, &mut con);
-        if r != ffi::DuckDBSuccess {
-            ffi::duckdb_disconnect(&mut con);
-            return Err(Error::DuckDBFailure(
-                ffi::Error::new(r),
-                Some("connect error".to_owned()),
-            ));
+    unsafe fn new(db: Arc<RawDatabase>) -> Result<RawConnection> {
+        let mut con: duckdb_connection = ptr::null_mut();
+        let r = duckdb_connect(db.0, &mut con);
+        if r != DuckDBSuccess {
+            duckdb_disconnect(&mut con);
+            return Err(Error::DuckDBFailure(FFIError::new(r), Some("connect error".to_owned())));
         }
         Ok(RawConnection { db, con })
     }
 
-    pub fn open_with_flags(c_path: &CStr, config: Config) -> Result<RawConnection> {
+    /// Opens a new connection to the database with the specified flags.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection cannot be established.
+    ///
+    /// # Example
+    /// ```rust
+    /// use std::ffi::CString;
+    /// use better_duck_core::raw::{RawConnection, RawDatabase};
+    /// let db = Arc::new(RawDatabase::new(unsafe { std::ptr::null_mut() }).unwrap());
+    /// let conn = unsafe { RawConnection::new(db) };
+    /// ```
+    /// # Note
+    /// This function is typically used internally and should not be called directly.
+    /// It is recommended to use higher-level methods from [`Connection`](crate::connection::Connection) like `open_with_flags` to create a new connection.
+    ///
+    pub fn open_with_flags(
+        c_path: &CStr,
+        config: Config,
+    ) -> Result<RawConnection> {
         unsafe {
-            let mut db: ffi::duckdb_database = ptr::null_mut();
+            let mut db: duckdb_database = ptr::null_mut();
             let mut c_err = std::ptr::null_mut();
-            let r =
-                ffi::duckdb_open_ext(c_path.as_ptr(), &mut db, config.duckdb_config(), &mut c_err);
-            if r != ffi::DuckDBSuccess {
+            let r = duckdb_open_ext(c_path.as_ptr(), &mut db, config.duckdb_config(), &mut c_err);
+            if r != DuckDBSuccess {
                 let msg = Some(CStr::from_ptr(c_err).to_string_lossy().to_string());
-                ffi::duckdb_free(c_err as *mut c_void);
-                return Err(Error::DuckDBFailure(ffi::Error::new(r), msg));
+                duckdb_free(c_err as *mut c_void);
+                return Err(Error::DuckDBFailure(FFIError::new(r), msg));
             }
             RawConnection::new(Arc::new(RawDatabase::new(db)?))
         }
     }
 
+    /// Closes the connection to the database.
+    ///
+    /// This function is typically used internally and should not be called directly.
+    /// It is recommended to use higher-level methods from [`Connection`](crate::connection::Connection) like `open_with_flags` to create a new connection.
+    /// # Errors
+    ///
+    /// Returns an error if the connection cannot be closed.
+    /// # Example
+    /// ```rust
+    /// use better_duck_core::raw::RawConnection;
+    /// let mut conn = RawConnection::new(...);
+    /// conn.close().unwrap();
+    /// ```
     pub fn close(&mut self) -> Result<()> {
         if self.con.is_null() {
             return Ok(());
         }
         unsafe {
-            ffi::duckdb_disconnect(&mut self.con);
+            duckdb_disconnect(&mut self.con);
             self.con = ptr::null_mut();
         }
         Ok(())
@@ -163,21 +231,81 @@ impl RawConnection {
         unsafe { RawConnection::new(self.db.clone()) }
     }
 
-    pub fn execute(&mut self, sql: &str) -> Result<()> {
+    /// Executes a SQL statement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the SQL statement cannot be executed.
+    /// # Example
+    /// ```
+    /// use better_duck_core::raw::RawConnection;
+    /// let mut conn = RawConnection::new(...);
+    /// conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    /// ```
+    /// # Note
+    /// This method is typically used internally and should not be called directly.
+    /// It is recommended to use higher-level methods from [`Connection`](crate::connection::Connection) like `execute` to run SQL statements.
+    ///
+    pub fn execute(
+        &mut self,
+        sql: &str,
+    ) -> Result<()> {
         let c_str = CString::new(sql).unwrap();
         unsafe {
-            let mut out = mem::zeroed();
-            let r = ffi::duckdb_query(self.con, c_str.as_ptr() as *const c_char, &mut out);
+            let out: *mut duckdb_result = mem::zeroed();
+            let r = duckdb_query(self.con, c_str.as_ptr() as *const c_char, out);
+
             result_from_duckdb_result(r, out)?;
-            ffi::duckdb_destroy_result(&mut out);
             Ok(())
         }
     }
 
-    // TODO: Implement `prepare`
+    /// Prepares a SQL statement for execution.
+    ///
+    /// This method is typically used internally and should not be called directly.
+    /// It is recommended to use higher-level methods from [`Connection`](crate::connection::Connection) like `prepare` to create a new statement.
+    /// # Errors
+    /// Returns an error if the SQL statement cannot be prepared.
+    /// # Example
+    /// ```rust
+    /// use better_duck_core::raw::RawConnection;
+    /// let mut conn = RawConnection::new(...);
+    /// let stmt = conn.prepare("SELECT * FROM test").unwrap().fetch().unwrap();
+    /// ```
+    /// # Note
+    /// This method is typically used internally and should not be called directly.
+    /// It is recommended to use higher-level methods from [`Connection`](crate::connection::Connection) like `prepare` to create a new statement.
+    #[allow(unused)]
+    pub fn prepare(
+        &mut self,
+        sql: &str,
+    ) -> Result<Statement> {
+        Statement::new(self, sql)
+    }
 
-    // TODO: Implement `appender`
+    /// Creates a new appender for the specified table and schema.
+    /// This method is typically used internally and should not be called directly.
+    /// It is recommended to use higher-level methods from [`Connection`](crate::connection::Connection) like `appender` to create a new appender.
+    /// # Errors
+    /// Returns an error if the appender cannot be created.
+    /// # Example
+    /// ```rust
+    /// use better_duck_core::raw::RawConnection;
+    /// let mut conn = RawConnection::new(...);
+    /// let appender = conn.appender("test_table", "public").unwrap();
+    /// // Use the appender...
+    /// ```
+    /// # Note
+    /// This method is typically used internally and should not be called directly.
+    pub fn appender(
+        &mut self,
+        table: &str,
+        schema: &str,
+    ) -> Result<Appender> {
+        Appender::new(self.clone(), table, schema)
+    }
 }
+
 impl Clone for RawConnection {
     /// # Warning
     ///
@@ -192,7 +320,6 @@ impl Clone for RawConnection {
     }
 }
 impl Drop for RawConnection {
-    #[allow(unused_must_use)]
     #[inline]
     fn drop(&mut self) {
         use std::thread::panicking;
@@ -203,5 +330,54 @@ impl Drop for RawConnection {
                 panic!("Error while closing DuckDB connection: {e:?}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_raw_connection_open() {
+        let path = CString::new(":memory:").unwrap();
+        let config = Config::default();
+        let conn = RawConnection::open_with_flags(&path, config);
+        assert!(conn.is_ok());
+    }
+
+    #[test]
+    fn test_raw_connection_execute() {
+        let path = CString::new(":memory:").unwrap();
+        let config = Config::default();
+        let mut conn = RawConnection::open_with_flags(&path, config).unwrap();
+        let result = conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+        assert!(result.is_ok(), "{}", result.err().unwrap());
+    }
+    #[test]
+    fn test_raw_connection_prepare() {
+        let path = CString::new(":memory:").unwrap();
+        let config = Config::default();
+        let mut conn = RawConnection::open_with_flags(&path, config).unwrap();
+
+        // Create the table
+        let result = conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+        assert!(result.is_ok(), "{}", result.err().unwrap());
+        //Create statement
+        let stmt = conn.prepare("SELECT * FROM test");
+        assert!(stmt.is_ok(), "{}", stmt.err().unwrap());
+    }
+
+    #[test]
+    fn test_raw_connection_appender() {
+        let path = CString::new(":memory:").unwrap();
+        let config = Config::default();
+        let mut conn = RawConnection::open_with_flags(&path, config).unwrap();
+
+        // Create the table
+        let result = conn.execute("CREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT)");
+        assert!(result.is_ok(), "{}", result.err().unwrap());
+        // Create appender
+        let appender = conn.appender("test_table", "main");
+        assert!(appender.is_ok(), "{}", appender.err().unwrap());
     }
 }
