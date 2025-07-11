@@ -6,3 +6,4 @@ mod connection;
 mod error;
 mod helpers;
 mod raw;
+mod types;
