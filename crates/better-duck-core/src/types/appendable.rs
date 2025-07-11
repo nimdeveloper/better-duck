@@ -15,8 +15,8 @@ pub trait AppendAble {
     /// Returns `Ok(())` if the value was successfully appended, or an error if the operation failed.
     fn stmt_append(
         &mut self,
-        idx: u64,
-        stmt: duckdb_prepared_statement,
+        _idx: u64,
+        _stmt: duckdb_prepared_statement,
     ) -> Result<()> {
         unimplemented!(
             "Statement bind is not implemented for this type: {}",
@@ -34,7 +34,7 @@ pub trait AppendAble {
     /// Returns `Ok(())` if the value was successfully appended, or an error if the operation failed.
     fn appender_append(
         &mut self,
-        appender: duckdb_appender,
+        _appender: duckdb_appender,
     ) -> Result<()> {
         unimplemented!(
             "Appender append is not implemented for this type: {}",
