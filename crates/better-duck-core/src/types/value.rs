@@ -242,7 +242,7 @@ impl DuckValue {
             },
             DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR | DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL => {
                 unsafe {
-                    let data_ptr = unsafe { duckdb_vector_get_data(val) };
+                    let data_ptr = duckdb_vector_get_data(val);
                     // Cast the raw pointer to a pointer of the expected DuckDB primitive type
                     let values: *mut duckdb_string_t = data_ptr as *mut duckdb_string_t;
 
@@ -256,7 +256,7 @@ impl DuckValue {
                     let char_ptr = duckdb_string_t_data(&mut duck_string_t);
 
                     // Use duckdb_string_t_length to get the length
-                    let length = duckdb_string_t_length(duck_string_t);
+                    let _length = duckdb_string_t_length(duck_string_t); // !NOTICE
 
                     // Create a Rust slice from the raw pointer and length
                     // The pointer might not be null-terminated for non-inlined strings,
