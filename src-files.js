@@ -1,0 +1,3 @@
+var srcIndex = new Map(JSON.parse('[["better_duck_core",["",[["helpers",[],["duck_result.rs","mod.rs","path.rs"]],["raw",[],["appender.rs","connection.rs","data_chunk.rs","mod.rs","result.rs","row.rs","statement.rs"]],["types",[],["appendable.rs","date_chrono.rs","mod.rs","numeric.rs","value.rs","varchar.rs"]]],["config.rs","connection.rs","error.rs","lib.rs"]]]]'));
+createSrcSidebar();
+//{"start":36,"fragment_lengths":[328]}
