@@ -4,8 +4,7 @@ use std::ptr;
 use crate::error::Result;
 use crate::ffi::{
     duckdb_appender, duckdb_appender_begin_row, duckdb_appender_close, duckdb_appender_create,
-    duckdb_appender_destroy, duckdb_appender_end_row, duckdb_appender_flush, DuckDBSuccess,
-    Error as FFIError,
+    duckdb_appender_destroy, duckdb_appender_end_row, duckdb_appender_flush,
 };
 use crate::helpers::duck_result::result_from_duckdb_appender;
 use crate::raw::connection::RawConnection;
@@ -32,21 +31,8 @@ impl Appender {
                 &mut appender,
             )
         };
-        if res != DuckDBSuccess {
-            // Clean up after error
-            // If the appender creation failed, we need to ensure we don't leave dangling pointers.
-            // If appender is not null, we destroy it to avoid memory leaks.
-            if !appender.is_null() {
-                unsafe { duckdb_appender_destroy(&mut appender) };
-            }
-            // !To Check: Should we drop connection?
-            // drop(con);
-            return Err(crate::error::Error::DuckDBFailure(
-                FFIError::new(res),
-                Some("failed to create appender".to_owned()),
-            ));
-        }
-        Ok(Appender { _con: con, inn: appender })
+        result_from_duckdb_appender(res, &mut appender)
+            .map(|_| Appender { _con: con, inn: appender })
     }
 
     #[allow(dead_code)]
