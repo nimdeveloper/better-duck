@@ -1,10 +1,5 @@
-#![allow(dead_code)]
-
-#[cfg(not(unix))]
-use std::{ffi::CString, path::Path};
-
-#[cfg(not(unix))]
 use crate::error::Result;
+use std::{ffi::CString, path::Path};
 
 #[cfg(unix)]
 pub fn path_to_cstring(p: &Path) -> Result<CString> {
