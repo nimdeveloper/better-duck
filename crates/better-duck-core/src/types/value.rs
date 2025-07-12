@@ -131,7 +131,7 @@ impl DuckValue {
     ) -> Result<DuckValue, DuckDBConversionError> {
         // Get data as i64 slice
         let data_ptr = unsafe { duckdb_vector_get_data(val) as *mut i64 };
-        let validity_ptr = unsafe { duckdb_vector_get_validity(val) as *mut u64 };
+        let validity_ptr = unsafe { duckdb_vector_get_validity(val) };
         // Check validity
         let is_valid = unsafe { duckdb_validity_row_is_valid(validity_ptr, row_idx) };
 
@@ -318,7 +318,7 @@ impl DuckValue {
                 };
 
                 if t == DUCKDB_TYPE_DUCKDB_TYPE_ARRAY {
-                    return Ok(DuckValue::Array(unsafe { slice_data.unwrap().assume_init() }));
+                    Ok(DuckValue::Array(unsafe { slice_data.unwrap().assume_init() }))
                 } else if t == DUCKDB_TYPE_DUCKDB_TYPE_LIST {
                     let mut vec_data = vec_data.unwrap();
                     unsafe { vec_data.set_len(list_length as usize) };
@@ -386,35 +386,35 @@ impl Drop for DuckValue {
     fn drop(&mut self) {}
 }
 
-impl Into<String> for DuckValue {
-    fn into(self) -> String {
-        match self {
+impl From<DuckValue> for String {
+    fn from(val: DuckValue) -> Self {
+        match val {
             DuckValue::Text(ref s) => s.clone(),
             DuckValue::Null => String::new(),
-            _ => panic!("Cannot convert {:?} to String", self),
+            _ => panic!("Cannot convert {:?} to String", val),
         }
     }
 }
-impl Into<i64> for DuckValue {
-    fn into(self) -> i64 {
-        match self {
+impl From<DuckValue> for i64 {
+    fn from(val: DuckValue) -> Self {
+        match val {
             DuckValue::BigInt(v) => v,
             DuckValue::Int(v) => v as i64,
             DuckValue::SmallInt(v) => v as i64,
             DuckValue::TinyInt(v) => v as i64,
             DuckValue::Null => 0,
-            _ => panic!("Cannot convert {:?} to i64", self),
+            _ => panic!("Cannot convert {:?} to i64", val),
         }
     }
 }
-impl Into<i32> for DuckValue {
-    fn into(self) -> i32 {
-        match self {
+impl From<DuckValue> for i32 {
+    fn from(val: DuckValue) -> Self {
+        match val {
             DuckValue::Int(v) => v,
             DuckValue::SmallInt(v) => v as i32,
             DuckValue::TinyInt(v) => v as i32,
             DuckValue::Null => 0,
-            _ => panic!("Cannot convert {:?} to i32", self),
+            _ => panic!("Cannot convert {:?} to i32", val),
         }
     }
 }

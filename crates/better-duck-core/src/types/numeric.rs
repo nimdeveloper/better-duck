@@ -96,6 +96,7 @@ fn i128_from_hugeint(hugeint: duckdb_hugeint) -> i128 {
 }
 
 fn hugeint_from_i128(hugeint: i128) -> duckdb_hugeint {
+    #[allow(clippy::manual_range_contains)]
     if hugeint > MAX_SUPPORTED_I128 || hugeint < -MAX_SUPPORTED_I128 {
         panic!("Unsupported! MAX:{}", MAX_SUPPORTED_I128); // TODO: Better error handling
     }
@@ -184,17 +185,13 @@ impl DuckDialect for Decimal {
 
         let mut num_width = format!("{}", value).len();
         if scale as usize >= num_width {
-            num_width += 1 * (scale as usize - num_width + 1); // for the decimal point
+            num_width += scale as usize - num_width + 1; // for the decimal point
         }
         if value < 0 {
             num_width -= 1; // for the negative sign
         }
 
-        let val = duckdb_decimal {
-            scale: scale,
-            width: num_width as u8,
-            value: hugeint_from_i128(value),
-        };
+        let val = duckdb_decimal { scale, width: num_width as u8, value: hugeint_from_i128(value) };
         Ok(unsafe { duckdb_create_decimal(val) })
     }
 }

@@ -25,7 +25,7 @@ impl DuckDialect for Duration {
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
         // This is a simplification: only micros, no months/days
         let micros = self.num_microseconds().unwrap_or(0);
-        let interval = duckdb_interval { months: 0, days: 0, micros: micros as i64 };
+        let interval = duckdb_interval { months: 0, days: 0, micros };
         Ok(unsafe { duckdb_create_interval(interval) })
     }
 }

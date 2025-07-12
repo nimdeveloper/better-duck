@@ -64,7 +64,7 @@ impl Drop for Appender {
     fn drop(&mut self) {
         if !self.inn.is_null() {
             unsafe {
-                let _ = self.flush().unwrap(); // can't safely handle failures here
+                self.flush().unwrap(); // can't safely handle failures here
                 duckdb_appender_close(self.inn);
                 duckdb_appender_destroy(&mut self.inn);
             }

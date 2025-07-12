@@ -141,25 +141,27 @@ const UNKNOWN_COLUMN: usize = usize::MAX;
 
 /// The conversion isn't precise, but it's convenient to have it
 /// to allow use of `get_raw(…).as_…()?` in callbacks that take `Error`.
+/// ```
 // impl From<FromSqlError> for Error {
-//     #[cold]
-//     fn from(err: FromSqlError) -> Error {
-//         // The error type requires index and type fields, but they aren't known in this
-//         // context.
-//         match err {
-//             FromSqlError::OutOfRange(val) => Error::IntegralValueOutOfRange(UNKNOWN_COLUMN, val),
-//             #[cfg(feature = "uuid")]
-//             FromSqlError::InvalidUuidSize(_) => {
-//                 Error::FromSqlConversionFailure(UNKNOWN_COLUMN, Type::Blob, Box::new(err))
-//             }
-//             FromSqlError::Other(source) => {
-//                 Error::FromSqlConversionFailure(UNKNOWN_COLUMN, Type::Null, source)
-//             }
-//             _ => Error::FromSqlConversionFailure(UNKNOWN_COLUMN, Type::Null, Box::new(err)),
-//         }
-//     }
-// }
-
+///     #[cold]
+///     fn from(err: FromSqlError) -> Error {
+///         // The error type requires index and type fields, but they aren't known in this
+///         // context.
+///         match err {
+///             FromSqlError::OutOfRange(val) => Error::IntegralValueOutOfRange(UNKNOWN_COLUMN, val),
+///             #[cfg(feature = "uuid")]
+///             FromSqlError::InvalidUuidSize(_) => {
+///                 Error::FromSqlConversionFailure(UNKNOWN_COLUMN, Type::Blob, Box::new(err))
+///             }
+///             FromSqlError::Other(source) => {
+///                 Error::FromSqlConversionFailure(UNKNOWN_COLUMN, Type::Null, source)
+///             }
+///             _ => Error::FromSqlConversionFailure(UNKNOWN_COLUMN, Type::Null, Box::new(err)),
+///         }
+///     }
+/// }
+/// ```
+///
 impl fmt::Display for Error {
     fn fmt(
         &self,

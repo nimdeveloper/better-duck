@@ -41,7 +41,7 @@ impl RawResult {
         // TODO: Better error handling?
         res.resolve_columns_name().unwrap();
         res.resolve_columns_types().unwrap();
-        return res;
+        res
     }
 
     #[inline]
@@ -60,7 +60,7 @@ impl RawResult {
         let return_val: Result<&str> = CStr::from_ptr(name).to_str().map_err(|e| {
             Error::ConversionError(DuckDBConversionError::ConversionError(e.to_string()))
         });
-        return return_val;
+        return_val
     }
     #[inline]
     fn resolve_columns_types(&mut self) -> Result<()> {
@@ -68,14 +68,14 @@ impl RawResult {
         let mut col_types = Box::<[DUCKDB_TYPE]>::new_uninit_slice(self.col_count as usize);
 
         for each in 0..self.col_count {
-            let temp_col_type = unsafe { self.get_col_type(each as u64) };
+            let temp_col_type = unsafe { self.get_col_type(each) };
             unsafe {
                 col_types[each as usize].as_mut_ptr().write(temp_col_type);
                 // ptr::write(slice_ptr.add(each as usize), col_name);
             }
         }
         self.column_types = unsafe { col_types.assume_init() };
-        return Ok(());
+        Ok(())
     }
     #[inline]
     fn resolve_columns_name(&mut self) -> Result<()> {
@@ -84,7 +84,7 @@ impl RawResult {
         // let slice_ptr = col_names.as_mut_ptr() as *mut &'static str;
 
         for each in 0..self.col_count {
-            let temp_col_name = unsafe { self.get_col_name(each as u64) };
+            let temp_col_name = unsafe { self.get_col_name(each) };
 
             if let Ok(col_name) = temp_col_name {
                 unsafe {
@@ -100,7 +100,7 @@ impl RawResult {
             let types = raw as *mut [&'static str];
             Box::from_raw(types)
         };
-        return Ok(());
+        Ok(())
     }
 
     unsafe fn get_row(
@@ -149,7 +149,7 @@ impl RawResult {
     /// result is properly initialized.
     /// # Returns
     /// * `Option<()>` - Returns `Some(())` if the chunk was advanced successfully,
-    /// or `None` if there are no more chunks.
+    ///     or `None` if there are no more chunks.
     /// # Errors
     /// Panics if the chunk cannot be fetched or if the result is invalid.
     fn advance(&mut self) -> Option<()> {
@@ -181,7 +181,7 @@ impl RawResult {
                     self.chunk = None;
                     return None;
                 }
-                if let Some(_) = the_chunk.next_row() {
+                if the_chunk.next_row().is_some() {
                     // We have a valid row - return it
                     let row_chunk = the_chunk.raw();
                     if row_chunk.is_null() {
@@ -204,9 +204,9 @@ impl RawResult {
     /// This function assumes that the current row is valid and has been advanced to.
     /// # Returns
     /// * `Result<Vec<DuckValue>>` - The current row as a vector of
-    /// `DuckValue`, or an error if the row is invalid or if there are no rows.
+    ///     `DuckValue`, or an error if the row is invalid or if there are no rows.
     /// # Errors
-    /// Returns an error if the current row is invalid or if there are no rows.
+    ///  Returns an error if the current row is invalid or if there are no rows.
     ///
     pub fn current(&mut self) -> Result<AbstractRow> {
         let chunk = self.chunk.as_mut().unwrap();
@@ -263,7 +263,7 @@ impl Iterator for RawResult {
     type Item = Result<AbstractRow>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(_) = self.advance() {
+        if self.advance().is_some() {
             // If we successfully advanced, return the next row
             Some(self.current())
         } else {

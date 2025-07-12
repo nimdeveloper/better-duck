@@ -38,7 +38,7 @@ impl RawDataChunk {
     #[allow(unused)]
     #[inline]
     pub fn current_row(&self) -> u64 {
-        return self.1;
+        self.1
     }
     #[inline]
     pub unsafe fn row_count(&self) -> u64 {
