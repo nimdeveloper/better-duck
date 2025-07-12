@@ -105,13 +105,6 @@ where
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError>;
 }
 
-pub trait DuckType {
-    // Converts the current type to a DuckDB-compatible format.
-    fn from_duck() -> ();
-    // Converts a DuckDB-compatible format to the current type.
-    fn to_duck() -> ();
-}
-
 // Macro to implement DuckDialect for types
 
 macro_rules! impl_duck_append_able {

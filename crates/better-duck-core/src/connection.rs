@@ -27,7 +27,7 @@ impl Connection {
     ) -> Result<Connection> {
         let c_path = path_to_cstring(path.as_ref())?;
         let config = config.with("duckdb_api", "rust").unwrap();
-        RawConnection::open_with_flags(&c_path, config).map(|db| Connection(db))
+        RawConnection::open_with_flags(&c_path, config).map(Connection)
     }
 }
 // In-memory implementation
