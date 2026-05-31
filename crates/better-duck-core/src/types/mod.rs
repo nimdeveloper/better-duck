@@ -4,7 +4,8 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 /// Public type modules.
 pub mod appendable;
-// pub mod blob;
+/// `Vec<u8>` DuckDB BLOB type conversion.
+pub mod blob;
 #[cfg(feature = "chrono")]
 mod date_chrono;
 #[cfg(not(feature = "chrono"))]
@@ -13,6 +14,9 @@ mod date_native;
 pub mod numeric;
 /// The `DuckValue` enum representing any DuckDB column value.
 pub mod value;
+/// A reference-based variant of `DuckValue` for zero-copy scenarios.
+pub mod value_ref;
+/// `String` DuckDB type conversion.
 pub mod varchar;
 use crate::error::DuckDBConversionError;
 
@@ -45,17 +49,15 @@ use crate::ffi::{
 /// # Examples
 ///
 /// ```rust
-/// use better_duck_core::types::{DuckDialect, DuckDBConversionError};
+/// use better_duck_core::types::DuckDialect;
+/// use better_duck_core::ffi::{duckdb_create_bool, duckdb_destroy_value};
 ///
-/// // Assume `duckdb_value` is a valid DuckDB boolean value obtained from DuckDB.
-/// let duckdb_value: duckdb_value = /* obtain from DuckDB */;
-///
-/// // Convert DuckDB value to Rust bool
-/// let rust_bool = bool::from_duck(duckdb_value)?;
-///
-/// // Convert Rust bool back to DuckDB value
-/// let duckdb_value2 = rust_bool.to_duck()?;
-/// # Ok::<(), DuckDBConversionError>(())
+/// // SAFETY: duckdb_create_bool always succeeds for any bool value.
+/// let mut duck_val = unsafe { duckdb_create_bool(true) };
+/// let rust_val = bool::from_duck(duck_val).expect("conversion succeeds");
+/// assert!(rust_val);
+/// // SAFETY: duck_val was created by duckdb_create_bool above.
+/// unsafe { duckdb_destroy_value(&mut duck_val) };
 /// ```
 pub trait DuckDialect
 where
@@ -171,3 +173,60 @@ impl_duck_append_able!(
 
 // Implementations for other DuckDB types would follow the same pattern
 // (Date, Time, Timestamp, Decimal, etc. would need custom handling)
+/// Represents a DuckDB column data type for use in Rust.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Type {
+    /// The value is a `NULL` value.
+    Null,
+    /// The value is a boolean.
+    Boolean,
+    /// The value is a signed tiny integer.
+    TinyInt,
+    /// The value is a signed small integer.
+    SmallInt,
+    /// The value is a signed integer.
+    Int,
+    /// The value is a signed big integer.
+    BigInt,
+    /// The value is a signed huge integer.
+    HugeInt,
+    /// The value is a unsigned tiny integer.
+    UTinyInt,
+    /// The value is a unsigned small integer.
+    USmallInt,
+    /// The value is a unsigned integer.
+    UInt,
+    /// The value is a unsigned big integer.
+    UBigInt,
+    /// The value is a unsigned huge integer.
+    UHugeInt,
+    /// The value is a f32.
+    Float,
+    /// The value is a f64.
+    Double,
+    /// The value is a timestamp.
+    Timestamp,
+    /// The value is a date.
+    Date,
+    /// The value is a time.
+    Time,
+    /// The value is an interval (month, day, nano).
+    Interval,
+    /// The value is a text string.
+    Text,
+    #[cfg(feature = "decimal")]
+    /// The value is a Decimal.
+    Decimal,
+    /// The value is a blob of data.
+    Blob,
+    /// The value is a list.
+    List,
+    /// The value is an enum.
+    Enum,
+    /// The value is an array with fixed length.
+    Array(Box<[Type]>),
+    /// The value is a union.
+    Union(Box<Type>),
+    /// Any DuckDB type.
+    Any,
+}
