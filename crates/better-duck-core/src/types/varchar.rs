@@ -9,6 +9,9 @@ use super::{DuckDBConversionError, DuckDialect};
 
 impl DuckDialect for String {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
+        // SAFETY: `value` is a valid duckdb_value of VARCHAR type. `duckdb_get_varchar`
+        // returns a heap-allocated null-terminated C string that must be freed with
+        // `duckdb_free`. We copy the bytes before freeing.
         // if type_ != DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR
         //     && type_ != DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL
         // {
@@ -34,6 +37,8 @@ impl DuckDialect for String {
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
         let c_str = CString::new(self.as_str())
             .map_err(|e| DuckDBConversionError::ConversionError(e.to_string()))?;
+        // SAFETY: `c_str` is a valid null-terminated C string. `duckdb_create_varchar`
+        // copies the string contents internally.
         Ok(unsafe { duckdb_create_varchar(c_str.as_ptr()) })
     }
 }

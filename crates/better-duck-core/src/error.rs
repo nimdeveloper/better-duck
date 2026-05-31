@@ -4,12 +4,21 @@
 use crate::ffi::{duckdb_type, Error as FFIError};
 use std::{error, fmt, path::PathBuf, result, str};
 
-// Error type for conversion failures
+/// Describes why a value conversion from or to DuckDB failed.
 #[derive(Debug)]
 pub enum DuckDBConversionError {
-    TypeMismatch { expected: duckdb_type, found: duckdb_type },
+    /// The DuckDB column type did not match the expected Rust type.
+    TypeMismatch {
+        /// The type that was expected.
+        expected: duckdb_type,
+        /// The type that was actually found.
+        found: duckdb_type,
+    },
+    /// A general conversion error with a description.
     ConversionError(String),
+    /// A null value was encountered where a non-null value was required.
     NullValue,
+    /// The conversion would lose precision (e.g. Decimal scale overflow).
     PrecisionLoss(String),
 }
 
@@ -28,7 +37,7 @@ pub enum Error {
     /// Error when DuckDB gives us an integral value outside the range of the
     /// requested type (e.g., trying to get the value 1000 into a `u8`).
     /// The associated `usize` is the column index,
-    /// and the associated `i64` is the value returned by SQLite.
+    /// and the associated `i64` is the value returned by DuckDB.
     IntegralValueOutOfRange(usize, i128),
 
     /// Error converting a string to UTF-8.
@@ -45,12 +54,12 @@ pub enum Error {
     /// Error converting a file path to a string.
     InvalidPath(PathBuf),
 
-    /// Error returned when an [`execute`](crate::Connection::execute) call
+    /// Error returned when an [`execute`](crate::connection::Connection::execute) call
     /// returns rows.
     ExecuteReturnedResults,
 
-    /// Error when a query that was expected to return at least one row (e.g.,
-    /// for [`query_row`](crate::Connection::query_row)) did not return any.
+    /// Error when a query that was expected to return at least one row did not
+    /// return any.
     QueryReturnedNoRows,
 
     /// Error when the value of a particular column is requested, but the index
@@ -67,11 +76,11 @@ pub enum Error {
     // InvalidColumnType(usize, String, Type),
 
     /// Error when a query that was expected to insert one row did not insert
-    /// any or insert many.
+    /// any or inserted many.
     StatementChangedRows(usize),
 
     /// Error available for the implementors of the
-    /// [`ToSql`](crate::types::ToSql) trait.
+    /// [`AppendAble`](crate::types::appendable::AppendAble) trait.
     ToSqlConversionFailure(Box<dyn error::Error + Send + Sync + 'static>),
 
     /// Error when the SQL is not a `SELECT`, is not read-only.
@@ -79,15 +88,21 @@ pub enum Error {
 
     /// Error when the SQL contains multiple statements.
     MultipleStatement,
+
     /// Error when the number of bound parameters does not match the number of
     /// parameters in the query. The first `usize` is how many parameters were
     /// given, the 2nd is how many were expected.
     InvalidParameterCount(usize, usize),
 
-    /// Append Error
+    /// An error occurred while appending a value via the DuckDB appender API.
     AppendError,
 
+    /// A value conversion error.
     ConversionError(DuckDBConversionError),
+
+    /// An unexpected error with no more specific classification.
+    #[allow(non_camel_case_types)]
+    UNKNOWN(Box<dyn ::std::error::Error>),
 }
 
 /// A typedef of the result returned by many methods.
@@ -218,6 +233,7 @@ impl fmt::Display for Error {
                 DuckDBConversionError::NullValue => write!(f, "Null value encountered"),
                 DuckDBConversionError::PrecisionLoss(ref msg) => write!(f, "Precision loss: {msg}"),
             },
+            Error::UNKNOWN(e) => write!(f, "Unknown error: {e}"),
         }
     }
 }
@@ -242,9 +258,11 @@ impl error::Error for Error {
             | Error::InvalidQuery
             | Error::AppendError
             // | Error::ArrowTypeToDuckdbType(..)
-            | Error::MultipleStatement | Error::ConversionError(_) => None,
+            | Error::MultipleStatement
+            | Error::ConversionError(_) => None,
             // Error::FromSqlConversionFailure(_, _, ref err)
             Error::ToSqlConversionFailure(ref err) => Some(&**err),
+            Error::UNKNOWN(e) => Some(e.as_ref()),
         }
     }
 }

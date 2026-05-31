@@ -24,7 +24,7 @@ use crate::error::{Error, Result};
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// let result = error_from_duckdb_code(ffi::DuckDBError, Some("Some error".to_string()));
 /// assert!(result.is_err());
 /// ```
@@ -53,7 +53,7 @@ fn error_from_duckdb_code(
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// let code = ffi::DuckDBSuccess;
 /// let appender: *mut ffi::duckdb_appender = std::ptr::null_mut();
 /// let result = result_from_duckdb_appender(code, appender);
@@ -68,6 +68,9 @@ pub fn result_from_duckdb_appender(
     if code == DuckDBSuccess {
         return Ok(());
     }
+    // SAFETY: `appender` is a valid non-null `*mut duckdb_appender`; the appender
+    // may be null internally if creation failed, which we check via `(*appender).is_null()`.
+    // On failure we extract the error string and destroy the appender.
     unsafe {
         let message = if (*appender).is_null() {
             Some("appender is null".to_string())
@@ -98,7 +101,7 @@ pub fn result_from_duckdb_appender(
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// let code = ffi::DuckDBSuccess;
 /// let prepare: ffi::duckdb_prepared_statement = std::ptr::null_mut();
 /// let result = result_from_duckdb_prepare(code, prepare);
@@ -113,6 +116,9 @@ pub fn result_from_duckdb_prepare(
     if code == DuckDBSuccess {
         return Ok(());
     }
+    // SAFETY: `prepare` is a duckdb_prepared_statement returned by `duckdb_prepare`.
+    // If non-null we extract the error message and destroy it. The null check guards
+    // against a failed prepare that returned null.
     unsafe {
         let message = if prepare.is_null() {
             Some("prepare is null".to_string())
@@ -143,7 +149,7 @@ pub fn result_from_duckdb_prepare(
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// let code = ffi::DuckDBSuccess;
 /// let out: ffi::duckdb_arrow = std::ptr::null_mut();
 /// let result = result_from_duckdb_arrow(code, out);
@@ -159,6 +165,8 @@ pub fn result_from_duckdb_arrow(
     if code == DuckDBSuccess {
         return Ok(());
     }
+    // SAFETY: `out` is a duckdb_arrow returned by `duckdb_query_arrow`. If non-null we
+    // extract the error string and destroy it.
     unsafe {
         let message = if out.is_null() {
             Some("out arrow is null".to_string())
@@ -189,7 +197,7 @@ pub fn result_from_duckdb_arrow(
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// let code = ffi::DuckDBSuccess;
 /// let out: *mut ffi::duckdb_result = std::ptr::null_mut();
 /// let result = result_from_duckdb_result(code, out);
@@ -204,6 +212,10 @@ pub fn result_from_duckdb_result(
     if code == DuckDBSuccess {
         return Ok(());
     }
+    // SAFETY: `out` is a `*mut duckdb_result` that was passed to `duckdb_query` or
+    // `duckdb_execute_prepared`. On error DuckDB writes error info into `*out`, and
+    // `duckdb_result_error` returns a pointer into that memory. We copy the error string
+    // and then destroy the result.
     unsafe {
         let message = {
             let c_err = duckdb_result_error(out);

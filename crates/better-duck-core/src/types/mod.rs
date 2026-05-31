@@ -1,11 +1,17 @@
 #![allow(dead_code)]
+// Suppress: `DuckDialect::from_duck`/`to_duck` and `AppendAble` methods accept
+// raw FFI pointer parameters by design — implementations are responsible for safety.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+/// Public type modules.
 pub mod appendable;
 // pub mod blob;
 #[cfg(feature = "chrono")]
 mod date_chrono;
 #[cfg(not(feature = "chrono"))]
 mod date_native;
+/// Numeric DuckDB type conversions and `AppendAble` implementations.
 pub mod numeric;
+/// The `DuckValue` enum representing any DuckDB column value.
 pub mod value;
 pub mod varchar;
 use crate::error::DuckDBConversionError;
@@ -21,21 +27,22 @@ use crate::ffi::{
 
 /// Trait for converting between DuckDB values and Rust types.
 ///
-/// This trait provides methods to safely convert DuckDB values to Rust types and vice versa,
-/// handling type safety and conversion errors. Implementors must ensure that conversions
-/// are performed only between compatible types to avoid undefined behavior.
+/// This trait provides methods to safely convert DuckDB values to Rust types and vice versa.
+/// Implementors must ensure that conversions are performed only between compatible types to
+/// avoid undefined behaviour.
 ///
 /// # Safety
 ///
-/// The `from_duck` method assumes that the provided `duckdb_value` matches the expected DuckDB type
-/// for the implementing Rust type. Passing a value of an incorrect type may result in panics or
-/// memory safety issues. Always perform type checking at a higher level before calling this method.
+/// The `from_duck` method assumes that the provided `duckdb_value` matches the expected DuckDB
+/// type for the implementing Rust type. Passing a value of an incorrect type may result in
+/// panics or memory safety issues. Always perform type checking at a higher level before
+/// calling this method.
 ///
 /// # Errors
 ///
 /// Both `from_duck` and `to_duck` return a [`DuckDBConversionError`] if the conversion fails.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust
 /// use better_duck_core::types::{DuckDialect, DuckDBConversionError};
@@ -62,50 +69,47 @@ where
     /// for the implementing Rust type. Calling this method with a value of the wrong type
     /// is undefined behavior and may lead to panics or memory safety issues.
     ///
-    /// # Best Practice
-    ///
-    /// Always ensure that the DuckDB type of the value matches the expected Rust type
-    /// before calling this method. Type checking should be performed at a higher level.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use better_duck_core::types::{DuckDialect, DuckDBConversionError};
-    /// // Assume `duckdb_value` is a valid DuckDB boolean value.
-    /// let value: duckdb_value = /* obtained from DuckDB */;
-    /// let rust_bool = bool::from_duck(value)?;
-    /// ```
-    ///
     /// # Errors
     ///
     /// Returns a `DuckDBConversionError` if the conversion fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use better_duck_core::types::DuckDialect;
+    /// use better_duck_core::ffi::{duckdb_create_bool, duckdb_destroy_value};
+    ///
+    /// // SAFETY: duckdb_create_bool always succeeds.
+    /// let mut val = unsafe { duckdb_create_bool(false) };
+    /// let result = bool::from_duck(val).unwrap();
+    /// assert!(!result);
+    /// // SAFETY: val was created by duckdb_create_bool above.
+    /// unsafe { duckdb_destroy_value(&mut val) };
+    /// ```
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError>
     where
         Self: Sized;
 
     /// Converts the implementing Rust type to a DuckDB value.
     ///
-    /// This method transforms the Rust value into a DuckDB-compatible value (`duckdb_value`),
-    /// suitable for insertion or update operations in DuckDB.
-    ///
     /// # Errors
     ///
     /// Returns a [`DuckDBConversionError`] if the conversion fails, for example due to
     /// unsupported types, precision loss, or null values.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```
-    /// use better_duck_core::types::{DuckDialect, DuckDBConversionError};
+    /// ```rust
+    /// use better_duck_core::types::DuckDialect;
+    /// use better_duck_core::ffi::duckdb_destroy_value;
     ///
     /// let rust_bool = true;
-    /// let duckdb_value = rust_bool.to_duck()?;
-    /// # Ok::<(), DuckDBConversionError>(())
+    /// let mut duckdb_value = rust_bool.to_duck().expect("conversion succeeds");
+    /// // SAFETY: duckdb_value was created by to_duck above.
+    /// unsafe { duckdb_destroy_value(&mut duckdb_value) };
     /// ```
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError>;
 }
-
-// Macro to implement DuckDialect for types
 
 macro_rules! impl_duck_append_able {
     ($rust_type:ty, $duck_type:expr, $duck_append_fn:expr, $duck_bind_fn:expr) => {
@@ -114,6 +118,8 @@ macro_rules! impl_duck_append_able {
                 &mut self,
                 appender: crate::ffi::duckdb_appender,
             ) -> Result<()> {
+                // SAFETY: `appender` is a valid duckdb_appender. The value is a copy of
+                // a valid Rust primitive compatible with the DuckDB column type.
                 unsafe { $duck_append_fn(appender, *self) };
                 Ok(())
             }
@@ -122,6 +128,8 @@ macro_rules! impl_duck_append_able {
                 idx: u64,
                 stmt: crate::ffi::duckdb_prepared_statement,
             ) -> Result<()> {
+                // SAFETY: `stmt` is a valid prepared statement. `idx` is a 1-based parameter
+                // index within the statement's parameter count, as required by the DuckDB C API.
                 unsafe { $duck_bind_fn(stmt, idx, *self) };
                 Ok(())
             }
@@ -132,6 +140,7 @@ macro_rules! impl_duck_dialect {
     ($rust_type:ty, $duck_type:expr, $to_duck_fn:expr, $from_duck_fn:expr) => {
         impl DuckDialect for $rust_type {
             fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
+                // SAFETY: `value` is a valid duckdb_value of the matching DuckDB type.
                 // if type_ != $duck_type {
                 //     return Err(DuckDBConversionError::TypeMismatch {
                 //         expected: $duck_type,
@@ -142,6 +151,7 @@ macro_rules! impl_duck_dialect {
             }
 
             fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
+                // SAFETY: The value is a copy of a valid Rust primitive.
                 Ok(unsafe { $to_duck_fn(*self) })
             }
         }
