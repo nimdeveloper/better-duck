@@ -1,240 +1,198 @@
-use std::{ffi::CStr, ptr};
+use std::{
+    cell::OnceCell,
+    ffi::CStr,
+    ops::{Deref, DerefMut},
+};
 
 use libduckdb_sys::{duckdb_column_count, duckdb_column_name, duckdb_destroy_result, DUCKDB_TYPE};
 
 use crate::{
     error::{DuckDBConversionError, Error, Result},
     ffi,
-    raw::row::AbstractRow,
-    types::value::DuckValue,
+    raw::row::DuckRow,
 };
 
-use super::data_chunk::RawDataChunk;
+use super::data_chunk::DataChunk;
 
 // TODO: Implement rows cache by using Box<[DuckValue]> or Vec<DuckValue> to store rows
-/// Represents a raw DuckDB result, holding the result pointer, data chunk, column names,
-/// column types, and column count.
-/// This struct is used to manage the result of a DuckDB query,
-/// allowing access to the data in a structured way.
-/// It provides methods to resolve column names and types,
-/// as well as to retrieve the data in a row-wise manner.
+// TODO: Implement exists method
+
+/// Represents the result of a DuckDB query, providing row-by-row iteration over
+/// the returned data.
+///
+/// `DuckResult` owns the underlying `duckdb_result` and destroys it in [`Drop`].
+/// It implements [`Iterator`] yielding `Result<DuckRow>`.
+///
 /// # Safety
-/// This struct is unsafe because it directly interacts with the DuckDB FFI.
-/// It assumes that the DuckDB result is valid and that the underlying data structures
-pub struct RawResult {
-    pub(super) res: ffi::duckdb_result,
-    chunk: Option<RawDataChunk>,
-    column_names: Box<[&'static str]>,
+///
+/// This struct interacts directly with the DuckDB C API. The underlying
+/// `duckdb_result` must be a fully initialised result from a successful query.
+pub struct DuckResult {
+    res: ffi::duckdb_result,
+    chunk: Option<DataChunk>,
+    /// Owned column names, populated once on construction.
+    column_names: OnceCell<Box<[Box<str>]>>,
     column_types: Box<[DUCKDB_TYPE]>,
-    col_count: u64,
+    /// Number of columns in the result.
+    pub col_count: u64,
 }
 
-impl RawResult {
-    pub fn new(mut result: ffi::duckdb_result) -> RawResult {
-        let mut res = RawResult {
+impl DuckResult {
+    /// Creates a new `DuckResult` from an owned `duckdb_result`.
+    ///
+    /// Immediately resolves column names and types. Panics if the result is in
+    /// an invalid state (should not happen for a result from a successful query).
+    pub fn new(mut result: ffi::duckdb_result) -> DuckResult {
+        let mut res = DuckResult {
+            // SAFETY: `result` is a valid, fully initialised `duckdb_result` that was
+            // returned by `duckdb_query` or `duckdb_execute_prepared` and is now moved
+            // (heap-allocated by the caller). `duckdb_column_count` reads from this struct.
+            col_count: unsafe { duckdb_column_count(&mut result) },
             res: result,
             chunk: None,
-            column_names: Box::new([]),
+            column_names: OnceCell::new(),
             column_types: Box::new([]),
-            col_count: unsafe { duckdb_column_count(&mut result) },
         };
-        // TODO: Better error handling?
-        res.resolve_columns_name().unwrap();
-        res.resolve_columns_types().unwrap();
+        res.resolve_columns_name().expect("failed to resolve column names");
+        res.resolve_columns_types().expect("failed to resolve column types");
         res
     }
 
     #[inline]
+    // SAFETY: caller must ensure `col_index` is within [0, col_count).
     unsafe fn get_col_type(
         &mut self,
         col_index: u64,
     ) -> DUCKDB_TYPE {
+        // SAFETY: `self.res` is valid; `col_index` is within bounds (enforced by caller).
         ffi::duckdb_column_type(&mut self.res, col_index)
     }
-    #[inline]
-    unsafe fn get_col_name(
-        &mut self,
-        col_index: u64,
-    ) -> Result<&'static str> {
-        let name = duckdb_column_name(&mut self.res, col_index);
-        let return_val: Result<&str> = CStr::from_ptr(name).to_str().map_err(|e| {
-            Error::ConversionError(DuckDBConversionError::ConversionError(e.to_string()))
-        });
-        return_val
-    }
+
     #[inline]
     fn resolve_columns_types(&mut self) -> Result<()> {
         // TODO: What happens for this var, if the function returns error? (Maybe using https://docs.rs/scopeguard/latest/scopeguard/)
         let mut col_types = Box::<[DUCKDB_TYPE]>::new_uninit_slice(self.col_count as usize);
 
         for each in 0..self.col_count {
+            // SAFETY: `each` is within [0, col_count), satisfying the invariant of
+            // `get_col_type`.
             let temp_col_type = unsafe { self.get_col_type(each) };
+            // SAFETY: `col_types[each]` is within the allocation; we write an initialised
+            // `DUCKDB_TYPE` value.
             unsafe {
                 col_types[each as usize].as_mut_ptr().write(temp_col_type);
-                // ptr::write(slice_ptr.add(each as usize), col_name);
             }
         }
+        // SAFETY: every element in `col_types` has been initialised above.
         self.column_types = unsafe { col_types.assume_init() };
         Ok(())
     }
+
     #[inline]
     fn resolve_columns_name(&mut self) -> Result<()> {
-        // TODO: What happens for this var, if the function returns error? (Maybe using https://docs.rs/scopeguard/latest/scopeguard/)
-        let mut col_names = Box::<[&'static str]>::new_uninit_slice(self.col_count as usize);
-        // let slice_ptr = col_names.as_mut_ptr() as *mut &'static str;
-
-        for each in 0..self.col_count {
-            let temp_col_name = unsafe { self.get_col_name(each) };
-
-            if let Ok(col_name) = temp_col_name {
-                unsafe {
-                    col_names[each as usize].as_mut_ptr().write(col_name);
-                    // ptr::write(slice_ptr.add(each as usize), col_name);
+        let names = (0..self.col_count)
+            .map(|i| {
+                // SAFETY: `i` is within [0, col_count). `duckdb_column_name` returns a
+                // pointer into result-owned memory valid for the lifetime of `self.res`.
+                // We copy the bytes immediately so the raw pointer does not escape.
+                let raw = unsafe { duckdb_column_name(&mut self.res, i) };
+                if raw.is_null() {
+                    return Err(Error::InvalidColumnIndex(i as usize));
                 }
-            } else {
-                return Err(Error::InvalidColumnIndex(each as usize));
-            }
-        }
-        self.column_names = unsafe {
-            let raw = Box::into_raw(col_names);
-            let types = raw as *mut [&'static str];
-            Box::from_raw(types)
-        };
-        Ok(())
+                // SAFETY: DuckDB guarantees null-terminated valid UTF-8 for column names.
+                unsafe { CStr::from_ptr(raw) }
+                    .to_str()
+                    .map(|s| s.to_string().into_boxed_str())
+                    .map_err(|e| {
+                        Error::ConversionError(DuckDBConversionError::ConversionError(
+                            e.to_string(),
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<Box<str>>>>()?;
+
+        self.column_names
+            .set(names.into_boxed_slice())
+            .map_err(|_| Error::UNKNOWN("column names already set".into()))
     }
 
-    unsafe fn get_row(
-        &self,
-        chunk: ffi::duckdb_data_chunk,
-        row_idx: u64,
-    ) -> Result<Vec<DuckValue>> {
-        let column_count = self.col_count;
-        if column_count == 0 {
-            return Err(Error::DuckDBFailure(
-                ffi::Error::new(ffi::DuckDBError),
-                Some("No columns in result".to_owned()),
-            ));
-        }
-        let mut values: Vec<DuckValue>;
-        // let types: Vec<_>;
-        values = Vec::with_capacity(column_count as usize);
-
-        let values_ptr: *mut DuckValue = values.as_mut_ptr();
-        // types = Vec::with_capacity(column_count as usize);
-        for col_idx in 0..column_count {
-            let col_vec = ffi::duckdb_data_chunk_get_vector(chunk, col_idx);
-
-            if col_vec.is_null() {
-                return Err(Error::DuckDBFailure(
-                    ffi::Error::new(ffi::DuckDBError),
-                    Some("Column is null".to_owned()),
-                ));
-            }
-            let val =
-                DuckValue::from_duckdb_vec(col_vec, self.column_types[col_idx as usize], row_idx)
-                    .map_err(Error::ConversionError)?;
-            ptr::write(values_ptr.add(col_idx as usize), val);
-        }
-        values.set_len(column_count as usize);
-        Ok(values)
-    }
-
-    /// Fetch the next chunk of data from the DuckDB result.
-    /// This function will attempt to fetch the next chunk of data
-    /// and store it as a `RawDataChunk` inside itself. If there are no more chunks,
-    /// it will set the chunk to `None`.
-    /// # Safety
-    /// This function is unsafe because it directly interacts with the DuckDB FFI.
-    /// It assumes that the `RawResult` is in a valid state and that the DuckDB
-    /// result is properly initialized.
-    /// # Returns
-    /// * `Option<()>` - Returns `Some(())` if the chunk was advanced successfully,
-    ///     or `None` if there are no more chunks.
-    /// # Errors
-    /// Panics if the chunk cannot be fetched or if the result is invalid.
+    /// Advances the internal cursor to the next row.
+    ///
+    /// Returns `Some(())` if a row is available, or `None` if all rows have been
+    /// consumed.
     fn advance(&mut self) -> Option<()> {
-        unsafe {
-            // We'll use a loop to avoid recursion and handle chunk exhaustion gracefully
-            loop {
-                if self.chunk.is_none() {
-                    let next_chunk = RawDataChunk::from_result(self);
-                    match next_chunk {
-                        None => {
-                            // No more chunks
-                            return None;
-                        },
-                        Some(Err(_)) => {
-                            // If we can't fetch the next chunk, we set the pointer to null
-                            // to indicate that there are no more chunks to fetch.
-                            self.chunk = None;
-                            return None;
-                        },
-                        Some(Ok(chunk)) => {
-                            // Found a new chunk!
-                            self.chunk = Some(chunk);
-                        },
-                    }
+        loop {
+            if self.chunk.is_none() {
+                // SAFETY: `self.res` is a valid duckdb_result. `DataChunk::from_result`
+                // calls `duckdb_fetch_chunk` which returns null when exhausted.
+                let next_chunk = unsafe { DataChunk::from_result(self) };
+                match next_chunk {
+                    None => return None,
+                    Some(Err(_)) => {
+                        self.chunk = None;
+                        return None;
+                    },
+                    Some(Ok(chunk)) => {
+                        self.chunk = Some(chunk);
+                    },
                 }
-                let the_chunk = self.chunk.as_mut().unwrap();
-                // Check if this chunk has rows
-                if the_chunk.row_count() == 0 {
-                    self.chunk = None;
-                    return None;
+            }
+            let the_chunk = self.chunk.as_mut().unwrap();
+            // SAFETY: `the_chunk` wraps a valid duckdb_data_chunk.
+            if unsafe { the_chunk.row_count() } == 0 {
+                self.chunk = None;
+                return None;
+            }
+            // SAFETY: `the_chunk` wraps a valid duckdb_data_chunk whose row count > 0.
+            if unsafe { the_chunk.next_row() }.is_some() {
+                let row_chunk = **the_chunk;
+                if row_chunk.is_null() {
+                    panic!("Data chunk is null");
                 }
-                if the_chunk.next_row().is_some() {
-                    // We have a valid row - return it
-                    let row_chunk = the_chunk.raw();
-                    if row_chunk.is_null() {
-                        panic!("Data chunk is null");
-                    }
-                    return Some(());
-                } else {
-                    // No more rows in current chunk
-                    self.chunk = None;
-                    // Loop to try next chunk instead of recursing
-                }
+                return Some(());
+            } else {
+                self.chunk = None;
+                // Loop to fetch the next chunk.
             }
         }
     }
 }
 
 // Exposed API
-impl RawResult {
-    /// Return current row as a vector of DuckValue
-    /// This function assumes that the current row is valid and has been advanced to.
-    /// # Returns
-    /// * `Result<Vec<DuckValue>>` - The current row as a vector of
-    ///     `DuckValue`, or an error if the row is invalid or if there are no rows.
-    /// # Errors
-    ///  Returns an error if the current row is invalid or if there are no rows.
+impl DuckResult {
+    /// Returns the current row as a [`DuckRow`].
     ///
-    pub fn current(&mut self) -> Result<AbstractRow> {
+    /// # Errors
+    ///
+    /// Returns an error if the chunk is not available or value conversion fails.
+    pub fn current(&mut self) -> Result<DuckRow> {
+        let col_names = self.column_names().to_vec().into_boxed_slice();
         let chunk = self.chunk.as_mut().unwrap();
-        let row_idx = chunk.current_row() - 1; // Adjust for 0-based index
-        let raw_chunk = unsafe { *chunk.raw() };
-        let result = unsafe { self.get_row(raw_chunk, row_idx)? };
-        Ok(AbstractRow::new(result, self.column_names.clone()))
+        DuckRow::from_chunk(chunk, col_names, &self.column_types)
     }
 
-    /// Returns the number of columns in the result.
-    /// This function assumes that the result is valid and has been properly initialized.
-    /// Works for INSERT, UPDATE, DELETE only, and will return 0 for SELECT.
-    /// # Returns
-    /// * `u64` - The number of columns in the result.
-    /// # Errors
-    /// Panics if the result is invalid or if the column count cannot be determined.
+    /// Returns the number of rows changed by the last INSERT/UPDATE/DELETE.
+    ///
+    /// Returns `0` for SELECT statements.
     #[allow(unused)]
     #[inline]
     pub fn changes(&mut self) -> u64 {
+        // SAFETY: `self.res` is a valid duckdb_result.
         unsafe { ffi::duckdb_rows_changed(&mut self.res) }
     }
 
+    /// Returns the number of columns in this result.
     #[allow(unused)]
     #[inline]
     pub fn column_count(&self) -> u64 {
         self.col_count
     }
 
+    /// Returns the DuckDB type of the column at `col_index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidColumnIndex`] if `col_index` is out of range.
     #[allow(unused)]
     #[inline]
     pub fn column_type(
@@ -247,32 +205,70 @@ impl RawResult {
         Ok(self.column_types[col_index])
     }
 
+    /// Returns the name of the column at `col_index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidColumnIndex`] if `col_index` is out of range.
     #[allow(unused)]
     #[inline]
     pub fn column_name(
         &self,
         col_index: usize,
-    ) -> Result<&'static str> {
+    ) -> Result<&str> {
         if col_index >= self.col_count as usize {
             return Err(Error::InvalidColumnIndex(col_index));
         }
-        Ok(self.column_names[col_index])
+        Ok(&self.column_names.get().unwrap()[col_index])
+    }
+
+    /// Returns a slice of all column names in result order.
+    #[allow(unused)]
+    #[inline]
+    pub fn column_names(&self) -> &[Box<str>] {
+        self.column_names.get().map(|v| v.as_ref()).unwrap_or(&[])
+    }
+
+    /// Returns the zero-based index of the column with the given name, or `None`
+    /// if no column matches.
+    #[allow(unused)]
+    #[inline]
+    pub fn column_idx(
+        &self,
+        col_name: &str,
+    ) -> Option<usize> {
+        self.column_names.get().unwrap().iter().position(|name| name.as_ref() == col_name)
     }
 }
-impl Iterator for RawResult {
-    type Item = Result<AbstractRow>;
+
+impl Iterator for DuckResult {
+    type Item = Result<DuckRow>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.advance().is_some() {
-            // If we successfully advanced, return the next row
             Some(self.current())
         } else {
             None
         }
     }
 }
-impl Drop for RawResult {
+
+impl Deref for DuckResult {
+    type Target = ffi::duckdb_result;
+
+    fn deref(&self) -> &Self::Target {
+        &self.res
+    }
+}
+impl DerefMut for DuckResult {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.res
+    }
+}
+impl Drop for DuckResult {
     fn drop(&mut self) {
+        // SAFETY: `self.res` is a valid duckdb_result created by `DuckResult::new`.
+        // `duckdb_destroy_result` is called exactly once here in `drop`.
         unsafe {
             duckdb_destroy_result(&mut self.res);
         }

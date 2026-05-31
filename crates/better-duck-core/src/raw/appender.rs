@@ -111,9 +111,9 @@ impl Drop for Appender {
         // SAFETY: `self.inn` is a valid, non-null duckdb_appender (null guard above).
         // Close and destroy are safe to call in sequence; after destroy the handle is
         // invalid and will not be used again.
-            unsafe {
-                duckdb_appender_close(self.inn);
-                duckdb_appender_destroy(&mut self.inn);
+        unsafe {
+            duckdb_appender_close(self.inn);
+            duckdb_appender_destroy(&mut self.inn);
         }
     }
 }
