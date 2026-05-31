@@ -34,8 +34,8 @@ impl Appender {
         schema: &str,
     ) -> Result<Appender> {
         let mut appender: duckdb_appender = ptr::null_mut();
-        let c_table = CString::new(table).unwrap();
-        let c_schema = CString::new(schema).unwrap();
+        let c_table = CString::new(table)?;
+        let c_schema = CString::new(schema)?;
         // SAFETY: `con.con` is a valid open duckdb_connection. `c_schema` and `c_table`
         // are valid null-terminated C strings. `appender` is a valid output pointer.
         let res = unsafe {
@@ -92,19 +92,28 @@ impl Appender {
     unsafe fn flush(&mut self) -> Result<()> {
         // SAFETY: `self.inn` is a valid duckdb_appender (enforced by the caller).
         let res = duckdb_appender_flush(self.inn);
-        duckdb_appender_destroy(&mut self.inn);
         result_from_duckdb_appender(res, &mut self.inn)
     }
 }
 
 impl Drop for Appender {
     fn drop(&mut self) {
-        if !self.inn.is_null() {
+        if self.inn.is_null() {
+            return;
+        }
+        // [err-result-over-panic] — log on flush failure; never panic in Drop.
+        // SAFETY: `self.inn` is non-null (checked above); it is a valid duckdb_appender
+        // created in `new`. After close and destroy it is invalidated. The null guard
+        // above ensures this runs at most once.
+        if let Err(e) = unsafe { self.flush() } {
+            eprintln!("[better-duck] appender flush on drop failed: {e}");
+        }
+        // SAFETY: `self.inn` is a valid, non-null duckdb_appender (null guard above).
+        // Close and destroy are safe to call in sequence; after destroy the handle is
+        // invalid and will not be used again.
             unsafe {
-                self.flush().unwrap(); // can't safely handle failures here
                 duckdb_appender_close(self.inn);
                 duckdb_appender_destroy(&mut self.inn);
-            }
         }
     }
 }
