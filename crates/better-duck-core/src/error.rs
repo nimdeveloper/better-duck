@@ -182,7 +182,7 @@ impl fmt::Display for Error {
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
-        match *self {
+        match self {
             Error::DuckDBFailure(ref err, None) => err.fmt(f),
             Error::DuckDBFailure(_, Some(ref s)) => write!(f, "{s}"),
             // Error::FromSqlConversionFailure(i, ref t, ref err) => {
@@ -193,7 +193,7 @@ impl fmt::Display for Error {
             //     }
             // }
             Error::IntegralValueOutOfRange(col, val) => {
-                if col != UNKNOWN_COLUMN {
+                if *col != UNKNOWN_COLUMN {
                     write!(f, "Integer {val} out of range at index {col}")
                 } else {
                     write!(f, "Integer {val} out of range")
@@ -240,7 +240,7 @@ impl fmt::Display for Error {
 
 impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match *self {
+        match self {
             Error::DuckDBFailure(ref err, _) => Some(err),
             Error::Utf8Error(ref err) => Some(err),
             Error::NulError(ref err) => Some(err),
