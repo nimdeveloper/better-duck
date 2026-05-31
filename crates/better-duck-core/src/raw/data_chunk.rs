@@ -1,37 +1,36 @@
-use std::ptr;
+use std::{
+    ops::{Deref, DerefMut},
+    ptr,
+};
 
 use libduckdb_sys::{duckdb_data_chunk, duckdb_destroy_data_chunk};
 
-use super::result::RawResult;
+use super::result::DuckResult;
 use crate::{error::Result, ffi};
 
-pub struct RawDataChunk(
+pub struct DataChunk(
     pub(crate) duckdb_data_chunk,
     pub(crate) u64, // current row index in chunk
 );
 
-impl RawDataChunk {
+impl DataChunk {
     #[inline]
-    pub fn raw(&mut self) -> *mut duckdb_data_chunk {
-        &mut self.0
-    }
-    #[inline]
-    pub unsafe fn new(data_chunk: ffi::duckdb_data_chunk) -> Result<RawDataChunk> {
+    pub unsafe fn new(data_chunk: ffi::duckdb_data_chunk) -> Result<DataChunk> {
         if data_chunk.is_null() {
             return Err(crate::error::Error::DuckDBFailure(
                 ffi::Error::new(ffi::DuckDBError),
                 Some("data chunk is null".to_owned()),
             ));
         }
-        Ok(RawDataChunk(data_chunk, 0))
+        Ok(DataChunk(data_chunk, 0))
     }
     #[inline]
-    pub unsafe fn from_result(result: &RawResult) -> Option<Result<RawDataChunk>> {
-        let data_chunk = ffi::duckdb_fetch_chunk(result.res);
+    pub unsafe fn from_result(result: &DuckResult) -> Option<Result<DataChunk>> {
+        let data_chunk = ffi::duckdb_fetch_chunk(**result);
         if data_chunk.is_null() {
             return None;
         }
-        let res = RawDataChunk::new(data_chunk);
+        let res = DataChunk::new(data_chunk);
         Some(res)
     }
 
@@ -53,6 +52,8 @@ impl RawDataChunk {
         if self.1 >= self.row_count() {
             // Reset the row index and fetch the next chunk
             self.1 = 0;
+            // SAFETY: `self.0` is a valid, non-null duckdb_data_chunk; after destroy
+            // we null it so this path is never re-entered.
             unsafe { duckdb_destroy_data_chunk(&mut (self.0)) };
             self.0 = ptr::null_mut();
             return None;
@@ -61,9 +62,28 @@ impl RawDataChunk {
         Some(self.1 - 1)
     }
 }
-impl Drop for RawDataChunk {
+
+impl Deref for DataChunk {
+    type Target = duckdb_data_chunk;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for DataChunk {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for DataChunk {
     fn drop(&mut self) {
         if !self.0.is_null() {
+            // SAFETY: `self.0` is a valid non-null `duckdb_data_chunk`. The null guard
+            // ensures this path runs at most once.
             unsafe { duckdb_destroy_data_chunk(&mut (self.0)) };
         }
     }
