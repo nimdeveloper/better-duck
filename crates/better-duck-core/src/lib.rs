@@ -21,4 +21,12 @@ pub mod connection;
 pub mod error;
 mod helpers;
 mod raw;
-mod types;
+/// DuckDB type system and value conversion traits.
+pub mod types;
+
+/// A fully iterable DuckDB query result.
+pub use raw::result::DuckResult;
+/// A single row from a DuckDB query result.
+pub use raw::row::DuckRow;
+/// Trait for binding values to DuckDB prepared statements and appenders.
+pub use types::appendable::AppendAble;

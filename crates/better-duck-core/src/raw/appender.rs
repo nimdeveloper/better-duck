@@ -181,7 +181,6 @@ mod appender_tests {
 
         let appender = Appender::new(con.clone(), "test_appender", "main");
         assert!(appender.is_ok());
-        // Drop happens automatically, should not panic
     }
 
     #[test]
@@ -201,22 +200,19 @@ mod appender_tests {
         appender.save().unwrap();
 
         let mut stmt = con.prepare("SELECT id,name FROM test_append WHERE id=123").unwrap();
-        let mut rows = stmt.fetch().unwrap().unwrap();
+        let mut rows = stmt.execute().unwrap();
         assert!(rows.next().is_none(), "Row with id=123 should not exist");
 
         let mut stmt = con.prepare("SELECT id,name FROM test_append").unwrap();
-
-        let rows = stmt.fetch().unwrap();
-        assert!(!rows.is_none());
-        let rows = rows.unwrap();
+        let rows = stmt.execute().unwrap();
         for row in rows {
             assert!(row.is_ok());
             let row = row.unwrap();
             let id = match row.get("id").unwrap() {
-                DuckValue::Int(id) => *id,
+                DuckValue::Int(id) => id,
                 other => panic!("Expected Int for 'id', got {:?}", other),
             };
-            assert!([1, 2, 3].contains(&id), "Row with id={} should exist", id);
+            assert!([1, 2, 3].contains(id), "Row with id={} should exist", id);
             let name = match row.get("name").unwrap() {
                 DuckValue::Text(name) => name.as_str(),
                 other => panic!("Expected Str for 'name', got {:?}", other),

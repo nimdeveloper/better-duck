@@ -1,4 +1,4 @@
-use std::{mem, ptr, sync::Arc};
+use std::{ffi::CString, mem, ptr};
 
 use libduckdb_sys::{
     duckdb_clear_bindings, duckdb_destroy_prepare, duckdb_execute_prepared, duckdb_nparams,
@@ -7,120 +7,71 @@ use libduckdb_sys::{
 
 use crate::{
     error::{Error, Result},
+    ffi,
     ffi::duckdb_prepared_statement,
     helpers::duck_result::{result_from_duckdb_prepare, result_from_duckdb_result},
-    raw::{connection::RawConnection, result::RawResult},
+    raw::{connection::RawConnection, result::DuckResult},
     types::appendable::AppendAble,
 };
 
-/// Represents a prepared DuckDB statement, holding the connection, the prepared statement pointer, and execution result.
-pub struct Statement {
-    /// Shared reference to the underlying DuckDB connection.
-    con: Arc<RawConnection>,
+/// A prepared DuckDB statement that can be executed one or more times.
+///
+/// After calling [`execute`](Statement::execute), the statement can be reused
+/// by calling [`clear_bindings`](Statement::clear_bindings) and re-binding parameters.
+pub struct Statement<'a> {
+    /// Reference to the underlying DuckDB connection.
+    con: &'a RawConnection,
     /// Pointer to the prepared DuckDB statement (FFI resource).
     stmt: duckdb_prepared_statement,
-    /// Result of the last execution, if any.
-    result: Option<RawResult>,
-    /// Index for parameter binding.
+    /// 1-based index of the next parameter to bind (incremented by each `bind` call).
     bind_idx: u64,
 }
 
-impl Statement {
-    /// Create a new prepared statement from a SQL string.
+impl Statement<'_> {
+    /// Prepares a new `Statement` from an SQL string.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// * `con` - Reference to a raw DuckDB connection.
-    /// * `sql` - SQL query string to prepare.
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Self>` - The prepared statement or an error.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let con = get_test_connection();
-    /// let stmt = Statement::new(&con, "SELECT 1");
-    /// assert!(stmt.is_ok());
-    /// ```
-    pub(super) fn new(
-        con: &RawConnection,
+    /// Returns an error if the SQL cannot be compiled into a prepared statement.
+    pub(super) fn new<'a, 'b: 'a>(
+        con: &'b RawConnection,
         sql: &str,
-    ) -> Result<Self> {
+    ) -> Result<Statement<'a>> {
         let mut stmt: duckdb_prepared_statement = ptr::null_mut();
-        // Convert SQL string to C-compatible string for FFI.
-        let c_str = std::ffi::CString::new(sql).expect("Failed to create CString from SQL");
-        // SAFETY: con.con and c_str are valid, stmt is a valid pointer for output.
+        let c_str = std::ffi::CString::new(sql)?;
+        // SAFETY: `con.con` is a valid open `duckdb_connection`; `c_str` is a valid
+        // null-terminated C string. `stmt` is a valid output pointer.
         let resp = unsafe { duckdb_prepare(con.con, c_str.as_ptr(), &mut stmt) };
-        // The result_from_duckdb_prepare will check the response and return an error if needed.
-        result_from_duckdb_prepare(resp, stmt).map(|_| Self {
-            con: Arc::new(con.clone()),
-            stmt,
-            result: None,
-            bind_idx: 0,
-        })
+        result_from_duckdb_prepare(resp, stmt)?;
+        Ok(Statement { con, stmt, bind_idx: 0 })
     }
 
-    // unsafe fn bind_at_raw(
-    //     &self,
-    //     binder: duckdb_prepared_statement,
-    //     idx: u64,
-    // ) -> Result<()> {
-    //     // SAFETY: This is unsafe because it directly interacts with the DuckDB FFI.
-    //     // Ensure that the binder is a valid prepared statement pointer.
-    //     let resp = duckdb_bind_int32(binder, idx as i32);
-    //     result_from_duckdb_result(resp, &mut self.stmt)
-    // }
-
-    /// Return a reference to the raw DuckDB prepared statement pointer.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let stmt = Statement::new(&con, "SELECT 1").unwrap();
-    /// let raw_ptr = stmt.raw();
-    /// ```
+    /// Returns a reference to the raw prepared-statement pointer.
     #[allow(unused)]
     #[inline]
     fn raw(&self) -> &duckdb_prepared_statement {
         &self.stmt
     }
 
-    /// Return a reference to the underlying raw connection.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let stmt = Statement::new(&con, "SELECT 1").unwrap();
-    /// let con_ref = stmt.connection();
-    /// ```
+    /// Returns a reference to the underlying raw connection.
     #[allow(unused)]
     #[inline]
     fn connection(&self) -> &RawConnection {
-        &self.con
+        self.con
     }
 }
 
 // Exposed API
-impl Statement {
-    /// Bind a value to the next parameter index using the provided binder.
+impl Statement<'_> {
+    /// Binds a value to the next positional parameter (1-based).
     ///
-    /// # Arguments
+    /// The first call binds parameter 1, the second call parameter 2, and so on.
+    /// Call [`clear_bindings`](Statement::clear_bindings) to reset the counter.
     ///
-    /// * `binder` - The value to bind, must implement `AppendAble`.
+    /// # Errors
     ///
-    /// # Returns
-    ///
-    /// * `Result<()>` - Ok if successful, error otherwise.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let mut stmt = Statement::new(&con, "SELECT ?").unwrap();
-    /// let mut binder = MyAppendableValue::new(42);
-    /// stmt.bind(&mut binder).unwrap();
-    /// ```
+    /// Returns an error if the underlying DuckDB bind call fails.
+    #[must_use = "bind result should be checked"]
     #[allow(unused)]
     #[inline]
     pub fn bind<T: AppendAble>(
@@ -128,28 +79,20 @@ impl Statement {
         binder: &mut T,
     ) -> Result<()> {
         self.bind_idx += 1;
-        // Bind at the current index (0-based).
-        self.bind_at(binder, self.bind_idx - 1)
+        // Pass the 1-based index directly to stmt_append.
+        self.bind_at(binder, self.bind_idx)
     }
 
-    /// Bind a value to a specific parameter index using the provided binder.
+    /// Binds a value to the parameter at the given 1-based index.
     ///
     /// # Arguments
     ///
-    /// * `binder` - The value to bind, must implement `AppendAble`.
-    /// * `idx` - The parameter index to bind at (0-based).
+    /// * `binder` - The value to bind, must implement [`AppendAble`].
+    /// * `idx` - The 1-based parameter index.
     ///
-    /// # Returns
+    /// # Errors
     ///
-    /// * `Result<()>` - Ok if successful, error otherwise.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let mut stmt = Statement::new(&con, "SELECT ?").unwrap();
-    /// let mut binder = MyAppendableValue::new(42);
-    /// stmt.bind_at(&mut binder, 0).unwrap();
-    /// ```
+    /// Returns an error if the underlying DuckDB bind call fails.
     #[allow(unused)]
     #[inline]
     pub fn bind_at<T: AppendAble>(
@@ -157,82 +100,52 @@ impl Statement {
         binder: &mut T,
         idx: u64,
     ) -> Result<()> {
-        // Call the binder's stmt_append to bind the value at the given index.
         binder.stmt_append(idx, self.stmt)
     }
 
-    /// Execute the prepared statement and fetch the result.
+    /// Executes the prepared statement and returns the result.
     ///
-    /// # Returns
-    ///
-    /// * `Result<Option<RawResult>>` - The result if successful, or an error.
+    /// The statement can be re-executed after calling [`clear_bindings`](Statement::clear_bindings)
+    /// and re-binding parameters.
     ///
     /// # Errors
     ///
-    /// Returns an error if the statement has already been executed.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let mut stmt = Statement::new(&con, "SELECT 1").unwrap();
-    /// let result = stmt.fetch();
-    /// assert!(result.is_ok());
-    /// ```
+    /// Returns an error if execution fails.
+    #[must_use = "execute returns the query result; dropping it without reading discards rows"]
     #[allow(unused)]
-    pub fn fetch(&mut self) -> Result<Option<RawResult>> {
-        if self.result.is_some() {
-            // Prevent double execution of the same statement instance.
-            return Err(crate::error::Error::DuckDBFailure(
-                crate::ffi::Error::new(crate::ffi::DuckDBError),
-                Some("Statement already executed".to_owned()),
-            ));
-        }
-        // SAFETY: result must be zeroed before passing to FFI.
-        let mut result: duckdb_result = unsafe { mem::zeroed() };
-        // SAFETY: stmt must be a valid prepared statement pointer.
-        let resp = unsafe { duckdb_execute_prepared(self.stmt, &mut result) };
-        // The result_from_duckdb_result will check the response and return an error if needed.
-        result_from_duckdb_result(resp, &mut result).map(|_| Some(RawResult::new(result)))
+    pub fn execute(&mut self) -> Result<DuckResult> {
+        // SAFETY: `mem::zeroed::<duckdb_result>()` produces an all-zeros value, which is
+        // the correct initial state for a `duckdb_result` output parameter.
+        let mut out = Box::new(unsafe { mem::zeroed::<duckdb_result>() });
+        // SAFETY: `self.stmt` is a valid prepared statement. `&mut *out` provides a
+        // pointer to the heap-allocated zeroed `duckdb_result`. Ownership of `*out`
+        // transfers to `DuckResult::new`, whose `Drop` calls `duckdb_destroy_result` once.
+        let resp = unsafe { duckdb_execute_prepared(self.stmt, &mut *out as *mut duckdb_result) };
+        result_from_duckdb_result(resp, &mut *out as *mut duckdb_result)?;
+        Ok(DuckResult::new(*out))
     }
 
-    /// Get the number of parameters bound to the prepared statement.
-    ///
-    /// # Returns
-    ///
-    /// * `usize` - The number of parameters bound.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let mut stmt = Statement::new(&con, "SELECT ?").unwrap();
-    /// let mut binder = MyAppendableValue::new(42);
-    /// stmt.bind(&mut binder).unwrap();
-    /// let count = stmt.bind_parameter_count();
-    /// assert_eq!(count, 1);
-    /// ```
+    /// Returns the number of parameters in the prepared statement.
     #[allow(unused)]
     #[inline]
     pub fn bind_parameter_count(&self) -> usize {
+        // SAFETY: `self.stmt` is a valid prepared statement.
         unsafe { duckdb_nparams(self.stmt) as usize }
     }
 
-    /// Clear all bindings for the prepared statement.
+    /// Clears all parameter bindings and resets the bind index to zero.
     ///
-    /// # Returns
+    /// After calling this method, subsequent [`bind`](Statement::bind) calls start
+    /// from parameter 1 again.
     ///
-    /// * `Result<()>` - Ok if successful, error otherwise.
+    /// # Errors
     ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let mut stmt = Statement::new(&con, "SELECT ?").unwrap();
-    /// let mut binder = MyAppendableValue::new(42);
-    /// stmt.bind(&mut binder).unwrap();
-    /// stmt.clear_bindings().unwrap();
-    /// ```
+    /// Returns an error if the DuckDB clear-bindings call fails.
+    #[must_use = "clear_bindings result should be checked"]
     #[allow(unused)]
     #[inline]
-    pub fn clear_bindings(&self) -> Result<()> {
+    pub fn clear_bindings(&mut self) -> Result<()> {
+        // SAFETY: `self.stmt` is a valid prepared statement.
         let res = unsafe { duckdb_clear_bindings(self.stmt) };
         if res != DuckDBSuccess {
             Err(Error::DuckDBFailure(
@@ -240,58 +153,27 @@ impl Statement {
                 Some("Failed to clear bindings".to_owned()),
             ))
         } else {
+            self.bind_idx = 0;
             Ok(())
         }
     }
 
-    /// Check if the prepared statement is null (not initialized).
-    ///
-    /// # Returns
-    ///
-    /// * `bool` - True if the statement is null, false otherwise.
+    /// Returns `true` if the prepared statement pointer is null (not initialised).
     #[allow(unused)]
     #[inline]
     pub fn is_null(&self) -> bool {
         self.stmt.is_null()
     }
-
-    /// Reset the result of the last execution, if any.
-    ///
-    /// # Safety
-    ///
-    /// Resources held by the previous result (such as DuckDB result pointers)
-    /// are freed automatically when the RawResult is dropped.
-    /// This ensures no memory leaks occur when resetting the result.
-    #[allow(unused)]
-    #[inline]
-    pub fn reset_result(&mut self) {
-        if self.result.is_some() {
-            self.result = None;
-        }
-    }
-}
-/// Clone the statement, but do not clone the result.
-///
-/// NOTE: The underlying prepared statement pointer is not duplicated at the FFI level,
-/// so use with caution. This is a shallow clone.
-impl Clone for Statement {
-    fn clone(&self) -> Self {
-        // TODO: Should we clone the result? or empty the result?
-        Self { con: Arc::clone(&self.con), stmt: self.stmt, result: None, bind_idx: self.bind_idx }
-    }
 }
 
-/// Ensure the prepared statement is destroyed when the Statement is dropped.
-///
-/// # Safety
-///
-/// This will call the DuckDB FFI to destroy the prepared statement. Do not use the pointer after drop.
-impl Drop for Statement {
+/// Destroys the prepared statement when the `Statement` is dropped.
+impl Drop for Statement<'_> {
     fn drop(&mut self) {
+        // SAFETY: `self.stmt` is a valid duckdb_prepared_statement (or null).
+        // `duckdb_destroy_prepare` is idempotent and handles the non-null check itself,
+        // but we guard here as a belt-and-suspenders measure.
         unsafe {
             if !self.stmt.is_null() {
-                // SAFETY: This will free the prepared statement at the FFI level.
-                // Do not use self.stmt after this call.
                 duckdb_destroy_prepare(&mut self.stmt);
             }
         }
@@ -305,7 +187,6 @@ mod tests {
     use crate::helpers::path::path_to_cstring;
     use crate::raw::connection::RawConnection;
     use crate::types::appendable::AppendAble;
-    use std::sync::Arc;
 
     struct DummyAppendAble;
     impl AppendAble for DummyAppendAble {
@@ -325,9 +206,6 @@ mod tests {
     }
 
     fn get_test_connection() -> RawConnection {
-        // This should be replaced with a real connection setup for integration tests
-        // For now, this is a placeholder and will not work unless implemented
-        // Setup: create a connection (assuming test DB in memory)
         let c_path = path_to_cstring(":memory:".as_ref()).unwrap();
         let config = Config::default().with("duckdb_api", "rust").unwrap();
         RawConnection::open_with_flags(&c_path, config).unwrap()
@@ -348,7 +226,7 @@ mod tests {
         let mut stmt = Statement::new(&con, sql).unwrap();
         let mut dummy = DummyAppendAble;
         assert!(stmt.bind(&mut dummy).is_ok());
-        assert!(stmt.bind_at(&mut dummy, 0).is_ok());
+        assert!(stmt.bind_at(&mut dummy, 1).is_ok());
     }
 
     #[test]
@@ -361,21 +239,32 @@ mod tests {
     }
 
     #[test]
-    fn test_fetch() {
+    fn test_execute() {
         let con = get_test_connection();
         let sql = "SELECT 1";
         let mut stmt = Statement::new(&con, sql).unwrap();
-        let result = stmt.fetch();
-        // We can't assert much without a real connection, but this checks the call
-        let _ = result.is_ok() || result.is_err();
+        let result = stmt.execute();
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn test_clone() {
-        // This test only checks that clone does not panic
-        let con = Arc::new(get_test_connection());
-        let stmt =
-            Statement { con: con.clone(), stmt: std::ptr::null_mut(), result: None, bind_idx: 0 };
-        let _cloned = stmt.clone();
+    fn test_execute_can_be_called_multiple_times() {
+        let con = get_test_connection();
+        let sql = "SELECT 1";
+        let mut stmt = Statement::new(&con, sql).unwrap();
+        assert!(stmt.execute().is_ok());
+        assert!(stmt.execute().is_ok());
+    }
+
+    #[test]
+    fn test_clear_bindings_resets_idx() {
+        let con = get_test_connection();
+        let sql = "SELECT $1";
+        let mut stmt = Statement::new(&con, sql).unwrap();
+        let mut dummy = DummyAppendAble;
+        stmt.bind(&mut dummy).unwrap();
+        assert_eq!(stmt.bind_idx, 1);
+        stmt.clear_bindings().unwrap();
+        assert_eq!(stmt.bind_idx, 0);
     }
 }

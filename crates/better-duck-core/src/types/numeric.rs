@@ -4,7 +4,7 @@
 
 use super::{DuckDBConversionError, DuckDialect};
 use crate::{
-    error::Result,
+    error::{Error, Result},
     ffi::{
         duckdb_create_decimal, duckdb_create_double, duckdb_create_float, duckdb_create_hugeint,
         duckdb_create_int16, duckdb_create_int32, duckdb_create_int64, duckdb_create_int8,
@@ -41,7 +41,7 @@ macro_rules! impl_duck_dialect {
                 //         found: type_,
                 //     });
                 // }
-// SAFETY: `value` is a valid duckdb_value of the matching DuckDB type.
+                // SAFETY: `value` is a valid duckdb_value of the matching DuckDB type.
                 // The caller is responsible for passing the correct type.
                 Ok(unsafe { $from_duck_fn(value) })
             }
