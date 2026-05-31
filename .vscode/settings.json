@@ -1,4 +1,126 @@
 {
   "conventionalCommits.emojiFormat": "emoji",
-  "conventionalCommits.scopes": ["core"]
+  "conventionalCommits.scopes": ["core", "helpers", "internal"],
+  "[rust]": {
+    "editor.formatOnSave": true,
+    "editor.formatOnPaste": true
+  },
+  "lldb.script": { "lang.rust.toolchain": "stable-x86_64-pc-windows-gnu" },
+  "cSpell.words": [
+    "appendable",
+    "appender",
+    "chrono",
+    "cstring",
+    "DUCKDB",
+    "HUGEINT",
+    "libduckdb",
+    "nparams",
+    "SQLNULL",
+    "TINYINT",
+    "UHUGEINT",
+    "UINTEGER",
+    "Uninit",
+    "USMALLINT",
+    "UTINYINT",
+    "VARINT"
+  ],
+  "material-icon-theme.files.customClones": [
+    {
+      "name": "rust-mod",
+      "base": "rust",
+      "color": "blue-400",
+      "fileNames": ["mod.rs"]
+    },
+    {
+      "name": "rust-lib",
+      "base": "rust",
+      "color": "light-green-300",
+      "lightColor": "light-green-600",
+      "fileNames": ["lib.rs"]
+    },
+    {
+      "name": "rust-main",
+      "base": "rust",
+      "color": "indigo-300",
+      "lightColor": "indigo-600",
+      "fileNames": ["main.rs"]
+    }
+  ],
+  // "rust-analyzer.check.command": "clippy",
+  // "rust-analyzer.check.extraArgs": ["-- -D warnings"],
+  "rust-analyzer.checkOnSave": true,
+
+  "todo-tree.general.tags": [
+    "BUG",
+    "HACK",
+    "XXX",
+    "[ ]",
+    "[x]",
+    "TODO",
+    "FIXME",
+    "FIX",
+    "CHECKME",
+    "CHECK",
+    "WARNING",
+    "WARN",
+    "ATTENTION",
+    "IMPORTANT",
+    "QUESTION",
+    "EXPAIN",
+    "INFORMATION",
+    "INFO",
+    "EXPERIMENTAL",
+    "EXPERIMENT"
+  ],
+  "todo-tree.general.tagGroups": {
+    "BUG": ["BUG", "HACK"],
+    "FIXME": ["FIXME", "FIX"],
+    "CHECK": ["CHECKME", "CHECK"],
+    "WARN": ["WARNING", "WARN", "ATTENTION"],
+    "IMPORTANT": ["IMPORTANT"],
+    "QUESTION": ["QUESTION", "EXPAIN"],
+    "INFO": ["INFORMATION", "INFO"],
+    "EXPERIMENT": ["EXPERIMENTAL", "EXPERIMENT"]
+  },
+  "todo-tree.highlights.customHighlight": {
+    "TODO": {
+      "foreground": "#7fffd4",
+      "type": "text-and-comment"
+    },
+    "BUG": {
+      "icon": "bug",
+      "foreground": "#ff0037",
+      "type": "text-and-comment"
+    },
+    "FIXME": {
+      "icon": "tools",
+      "foreground": "#FF8C00",
+      "type": "text-and-comment"
+    },
+    "WARN": {
+      "foreground": "#FF2D00",
+      "icon": "alert",
+      "type": "text-and-comment"
+    },
+    "QUESTION": {
+      "icon": "question",
+      "foreground": "#3498DB",
+      "type": "text-and-comment"
+    },
+    "INFO": {
+      "icon": "info",
+      "foreground": "#f0ffff",
+      "type": "text-and-comment"
+    },
+    "IMPORTANT": {
+      "icon": "north-star",
+      "foreground": "#98C379",
+      "type": "text-and-comment"
+    },
+    "EXPERIMENT": {
+      "icon": "beaker",
+      "foreground": "#ff0037",
+      "type": "text-and-comment"
+    }
+  }
 }

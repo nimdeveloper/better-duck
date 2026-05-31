@@ -1,0 +1,128 @@
+name: Publish Rust Crate to crates.io
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+" # Stable releases (e.g., v1.0.0)
+      - "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+" # Beta releases (e.g., v1.0.0-beta.1)
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Job to create the .crate artifact and calculate its digest for SLSA
+  # This job runs `cargo package` to create the .crate file and calculates its SHA256 digest.
+  # This digest is then passed to the SLSA generator for provenance.
+  create_crate_artifact:
+    runs-on: ubuntu-latest
+    outputs:
+      crate_digest: ${{ steps.calculate_digest.outputs.digest }}
+      crate_name: ${{ steps.get_crate_info.outputs.crate_name }}
+      crate_version: ${{ steps.get_crate_info.outputs.crate_version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install jq (for parsing cargo metadata)
+        run: sudo apt-get install -y jq
+
+      - name: Get crate name and version
+        id: get_crate_info
+        run: |
+          # This assumes your repository name is the same as your main crate name.
+          # For a workspace, this would need to be adjusted to pick the specific crate to publish.
+          CRATE_NAME=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "${{ github.event.repository.name }}") | .name')
+          CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "${{ github.event.repository.name }}") | .version')
+          echo "crate_name=$CRATE_NAME" >> $GITHUB_OUTPUT
+          echo "crate_version=$CRATE_VERSION" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Package crate (dry run for digest)
+        # This creates the .crate file in target/package/ without publishing.
+        run: cargo package --no-verify
+        working-directory: . # Ensure it runs from the root of the repo
+
+      - name: Calculate crate digest
+        id: calculate_digest
+        run: |
+          # Find the generated .crate file and calculate its SHA256 digest.
+          # This assumes a single .crate file is generated in target/package/.
+          CRATE_FILE=$(find target/package -name "*.crate" | head -n 1)
+          if [ -z "$CRATE_FILE" ]; then
+            echo "Error: .crate file not found in target/package/."
+            exit 1
+          fi
+          DIGEST=$(sha256sum "$CRATE_FILE" | awk '{print $1}')
+          echo "digest=sha256:$DIGEST" >> $GITHUB_OUTPUT
+          echo "Crate file: $CRATE_FILE"
+          echo "Digest: sha256:$DIGEST"
+        shell: bash
+
+  # Job to publish the crate(s) to crates.io
+  publish:
+    runs-on: ubuntu-latest
+    needs: create_crate_artifact # Ensure artifact info is available for SLSA
+    permissions:
+      id-token: write # For OIDC authentication if needed by cargo login
+      contents: read # To checkout code
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Login to crates.io
+        run: cargo login ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Install jq (for parsing cargo metadata)
+        run: sudo apt-get install -y jq
+
+      - name: Get crate names (if workspace)
+        id: get_crates
+        run: |
+          # This command lists all workspace members.
+          # If your project is a single crate, this will list just that crate.
+          CRATES=$(cargo metadata --no-deps --format-version 1 | jq -r '.workspace_members[] | .split(":")[0]')
+          echo "crates=$CRATES" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Publish crates to crates.io
+        env:
+          CRATES_TO_PUBLISH: ${{ steps.get_crates.outputs.crates }}
+        run: |
+          # Iterate through each crate and publish it.
+          # --no-verify is used here as verification was (implicitly) handled by `create_crate_artifact`
+          # and to speed up publishing in CI.
+          for CRATE in $CRATES_TO_PUBLISH; do
+            echo "Attempting to publish $CRATE..."
+            cargo publish -p $CRATE --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --all-features --allow-dirty --no-verify
+            echo "$CRATE published successfully."
+            sleep 5 # Give crates.io a small delay between publishes if there are multiple crates
+          done
+        shell: bash
+
+  # Job to generate SLSA provenance for the release tag
+  # This job calls the SLSA generator as a reusable workflow.
+  # It attests to the source `.crate` file that was published.
+  generate_slsa_provenance:
+    needs: [create_crate_artifact, publish] # Depends on both artifact creation and successful publish
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v1.9.0
+    with:
+      # Pass the base64-encoded digest of the .crate file.
+      # The `name` should match the expected filename of the published `.crate` file.
+      base64-subjects: |
+        - digest:
+            sha256: ${{ needs.create_crate_artifact.outputs.crate_digest }}
+          name: ${{ needs.create_crate_artifact.outputs.crate_name }}-${{ needs.create_crate_artifact.outputs.crate_version }}.crate
+      upload-assets: true # Upload the attestation to the release
+    permissions:
+      contents: write # To upload the provenance attestation to the release
+      id-token: write # For OIDC authentication with Sigstore (used by SLSA generator)

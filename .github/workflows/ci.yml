@@ -1,0 +1,102 @@
+name: Rust CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Job to run tests on Linux
+  test_linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Run documentation tests
+        run: cargo test --doc --verbose
+
+  # Job to run tests on Windows
+  test_windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Run documentation tests
+        run: cargo test --doc --verbose
+
+  # Job to run tests and build for iOS target on macOS
+  test_macos_and_ios_build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Run tests on macOS
+        run: cargo test --verbose
+
+      - name: Run documentation tests on macOS
+        run: cargo test --doc --verbose
+
+      - name: Add iOS targets for cross-compilation
+        run: |
+          rustup target add aarch64-apple-ios
+          rustup target add x86_64-apple-ios # For iOS simulator
+
+      - name: Build for iOS (aarch64-apple-ios)
+        run: cargo build --target aarch64-apple-ios --verbose
+        # Add --release if you want to test release builds
+        # This step only builds, it doesn't publish binaries to crates.io.
+        # Crates.io is for source code.
+
+      - name: Build for iOS Simulator (x86_64-apple-ios)
+        run: cargo build --target x86_64-apple-ios --verbose
+
+  # Job to run Clippy linter
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy # Ensure clippy is installed
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        # --all-targets includes benches, examples, etc.
+        # --all-features ensures all features are linted.
+        # -D warnings treats all warnings as errors.
