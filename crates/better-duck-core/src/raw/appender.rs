@@ -177,7 +177,7 @@ mod appender_tests {
         let mut con = get_test_connection();
 
         let create_sql = "CREATE TABLE test_appender (id INTEGER, name VARCHAR)";
-        con.execute(create_sql).unwrap();
+        let _ = con.query(create_sql).unwrap();
 
         let appender = Appender::new(con.clone(), "test_appender", "main");
         assert!(appender.is_ok());
@@ -188,8 +188,7 @@ mod appender_tests {
     fn test_appender_append_and_flush() {
         let mut con = get_test_connection();
 
-        // Make sure table exists
-        con.execute("CREATE TABLE test_append (id INTEGER, name VARCHAR)").unwrap();
+        let _ = con.query("CREATE TABLE test_append (id INTEGER, name VARCHAR)").unwrap();
 
         let mut appender = Appender::new(con.clone(), "test_append", "main").unwrap();
         let mut row = Row(1, "Alice");
