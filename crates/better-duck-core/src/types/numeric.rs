@@ -1,3 +1,7 @@
+// The `AppendAble` and `DuckDialect` implementations accept raw FFI pointer parameters
+// by design. Implementations are responsible for passing valid pointers.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use super::{DuckDBConversionError, DuckDialect};
 use crate::{
     error::Result,
@@ -26,7 +30,7 @@ use rust_decimal::Decimal;
 
 const MAX_SUPPORTED_I128: i128 = (i64::MAX as i128 + 1) * (u64::MAX as i128);
 
-// Macro to implement DuckDialect for types
+// Macro to implement DuckDialect for primitive numeric types.
 macro_rules! impl_duck_dialect {
     ($rust_type:ty, $duck_type:expr, $to_duck_fn:expr, $from_duck_fn:expr) => {
         impl DuckDialect for $rust_type {
@@ -37,16 +41,23 @@ macro_rules! impl_duck_dialect {
                 //         found: type_,
                 //     });
                 // }
+// SAFETY: `value` is a valid duckdb_value of the matching DuckDB type.
+                // The caller is responsible for passing the correct type.
                 Ok(unsafe { $from_duck_fn(value) })
             }
 
             fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
+                // SAFETY: The value passed is a copy of a valid Rust primitive.
+                // `duckdb_create_*` functions accept any value of the matching type.
                 Ok(unsafe { $to_duck_fn(*self) })
             }
         }
     };
 }
 
+// Macro to implement AppendAble for primitive numeric types.
+//
+// `idx` is always the **1-based** parameter index supplied by `Statement::bind`.
 macro_rules! impl_duck_append_able {
     ($rust_type:ty, $duck_append_fn:expr, $duck_bind_fn:expr) => {
         impl AppendAble for $rust_type {
@@ -54,6 +65,8 @@ macro_rules! impl_duck_append_able {
                 &mut self,
                 appender: crate::ffi::duckdb_appender,
             ) -> Result<()> {
+                // SAFETY: `appender` is a valid duckdb_appender. The value is a copy of
+                // a valid Rust primitive compatible with the DuckDB column type.
                 unsafe { $duck_append_fn(appender, *self) };
                 Ok(())
             }
@@ -62,6 +75,9 @@ macro_rules! impl_duck_append_able {
                 idx: u64,
                 stmt: crate::ffi::duckdb_prepared_statement,
             ) -> Result<()> {
+                // SAFETY: `stmt` is a valid duckdb_prepared_statement. `idx` is a 1-based
+                // parameter index within the statement's parameter count, as required by
+                // the DuckDB C API. The value is a copy of a valid Rust primitive.
                 unsafe { $duck_bind_fn(stmt, idx, *self) };
                 Ok(())
             }
@@ -123,11 +139,15 @@ impl DuckDialect for i128 {
         //         found: type_,
         //     });
         // }
+        // SAFETY: `value` is a valid duckdb_value of type HUGEINT. The caller ensures
+        // the correct type is passed.
         let hugeint: duckdb_hugeint = unsafe { duckdb_get_hugeint(value) };
         Ok(i128_from_hugeint(hugeint))
     }
 
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
+        // SAFETY: `hugeint_from_i128` returns a valid `duckdb_hugeint` for any i128
+        // within `MAX_SUPPORTED_I128` (panics outside that range).
         Ok(unsafe { duckdb_create_hugeint(hugeint_from_i128(*self)) })
     }
 }
@@ -137,6 +157,8 @@ impl AppendAble for i128 {
         &mut self,
         appender: crate::ffi::duckdb_appender,
     ) -> Result<()> {
+        // SAFETY: `appender` is a valid duckdb_appender. `hugeint_from_i128` converts the
+        // value to a valid duckdb_hugeint.
         unsafe { duckdb_append_hugeint(appender, hugeint_from_i128(*self)) };
         Ok(())
     }
@@ -145,6 +167,9 @@ impl AppendAble for i128 {
         idx: u64,
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
+        // SAFETY: `stmt` is a valid prepared statement. `idx` is a 1-based parameter index
+        // within the statement's parameter count (as required by the DuckDB C API).
+        // `hugeint_from_i128` converts the value to a valid duckdb_hugeint.
         unsafe { duckdb_bind_hugeint(stmt, idx, hugeint_from_i128(*self)) };
         Ok(())
     }
@@ -162,6 +187,7 @@ impl DuckDialect for Decimal {
         //         found: type_,
         //     });
         // }
+        // SAFETY: `value` is a valid duckdb_value of type DECIMAL.
         let decimal_value = unsafe { duckdb_get_decimal(value) };
 
         let scale = decimal_value.scale;
@@ -173,6 +199,7 @@ impl DuckDialect for Decimal {
             Decimal::from_i128_with_scale(i128_from_hugeint(decimal_value.value), scale as u32);
         Ok(decimal)
     }
+
     fn to_duck(&self) -> Result<duckdb_value, super::DuckDBConversionError> {
         let scale = self.scale();
         if scale > u8::MAX as u32 {
@@ -185,23 +212,27 @@ impl DuckDialect for Decimal {
 
         let mut num_width = format!("{}", value).len();
         if scale as usize >= num_width {
-            num_width += scale as usize - num_width + 1; // for the decimal point
+            num_width += scale as usize - num_width + 1;
         }
         if value < 0 {
-            num_width -= 1; // for the negative sign
+            num_width -= 1;
         }
 
         let val = duckdb_decimal { scale, width: num_width as u8, value: hugeint_from_i128(value) };
+        // SAFETY: `val` is a fully initialised `duckdb_decimal` with valid scale/width.
         Ok(unsafe { duckdb_create_decimal(val) })
     }
 }
+
+/// Decimal does not currently support the DuckDB appender or prepared-statement
+/// bind APIs. Use `to_duck()` and insert via raw SQL instead.
 #[cfg(feature = "decimal")]
 impl AppendAble for Decimal {
     fn appender_append(
         &mut self,
         _appender: crate::ffi::duckdb_appender,
     ) -> Result<()> {
-        panic!("Decimal does not support appender append!");
+        Err(Error::AppendError)
         // unsafe { duckdb_append_decimal(appender, self.to_duck()?) };
     }
     fn stmt_append(
@@ -209,11 +240,12 @@ impl AppendAble for Decimal {
         _idx: u64,
         _stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
-        panic!("Decimal does not support statement append!");
+        Err(Error::AppendError)
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::undocumented_unsafe_blocks)]
 mod test_numeric_conversion {
     use crate::ffi::duckdb_destroy_value;
 
@@ -224,6 +256,7 @@ mod test_numeric_conversion {
         let mut duck_value = value.to_duck().unwrap();
         let converted_value = i8::from_duck(duck_value).unwrap();
         assert_eq!(value, converted_value);
+        // SAFETY: `duck_value` is a valid duckdb_value created by `to_duck`.
         unsafe { duckdb_destroy_value(&mut duck_value) };
     }
     #[test]
@@ -317,7 +350,7 @@ mod test_numeric_conversion {
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
 
-        let value: i128 = 170141183460469231722463931679029329919;
+        let value: i128 = 170_141_183_460_469_231_722_463_931_679_029_329_919;
         let mut duck_value = value.to_duck().unwrap();
         let converted_value = i128::from_duck(duck_value).unwrap();
         assert_eq!(value, converted_value);
@@ -329,7 +362,7 @@ mod test_numeric_conversion {
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
 
-        let value: i128 = -170141183460469231722463931679029329919;
+        let value: i128 = -170_141_183_460_469_231_722_463_931_679_029_329_919;
         let mut duck_value = value.to_duck().unwrap();
         let converted_value = i128::from_duck(duck_value).unwrap();
         assert_eq!(value, converted_value);
@@ -340,7 +373,7 @@ mod test_numeric_conversion {
     fn test_decimal_conversion() {
         use super::*;
 
-        let value = Decimal::from_i128_with_scale(-0x0000_0000_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF, 0); // -79228162514264337593543950335
+        let value = Decimal::from_i128_with_scale(-0x0000_0000_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF, 0);
         let mut duck_value = value.to_duck().unwrap();
         let converted_value = Decimal::from_duck(duck_value).unwrap();
         assert_eq!(value, converted_value);
@@ -349,31 +382,31 @@ mod test_numeric_conversion {
         let value = Decimal::from_i128_with_scale(
             -0x0000_0000_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF,
             Decimal::MAX_SCALE,
-        ); // -7.9228162514264337593543950335
+        );
         let mut duck_value = value.to_duck().unwrap();
         let converted_value = Decimal::from_duck(duck_value).unwrap();
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
 
-        let value = Decimal::from_i128_with_scale(-42, 4); // -0.042
+        let value = Decimal::from_i128_with_scale(-42, 4);
         let mut duck_value = value.to_duck().unwrap();
         let converted_value = Decimal::from_duck(duck_value).unwrap();
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
 
-        let value = Decimal::from_i128_with_scale(-42, 0); // -0.042
+        let value = Decimal::from_i128_with_scale(-42, 0);
         let mut duck_value = value.to_duck().unwrap();
         let converted_value = Decimal::from_duck(duck_value).unwrap();
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
 
-        let value = Decimal::from_i128_with_scale(0, 4); // -0.042
+        let value = Decimal::from_i128_with_scale(0, 4);
         let mut duck_value = value.to_duck().unwrap();
         let converted_value = Decimal::from_duck(duck_value).unwrap();
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
 
-        let value = Decimal::from_i128_with_scale(0x0000_0000_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF, 0); // -79228162514264337593543950335
+        let value = Decimal::from_i128_with_scale(0x0000_0000_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF, 0);
         let mut duck_value = value.to_duck().unwrap();
         let converted_value = Decimal::from_duck(duck_value).unwrap();
         assert_eq!(value, converted_value);
@@ -382,7 +415,7 @@ mod test_numeric_conversion {
         let value = Decimal::from_i128_with_scale(
             0x0000_0000_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF,
             Decimal::MAX_SCALE,
-        ); // 7.9228162514264337593543950335
+        );
         let mut duck_value = value.to_duck().unwrap();
         let converted_value = Decimal::from_duck(duck_value).unwrap();
         assert_eq!(value, converted_value);

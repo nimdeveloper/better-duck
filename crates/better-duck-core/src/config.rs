@@ -170,6 +170,7 @@ impl Config {
     ) -> Result<()> {
         if self.config.is_none() {
             let mut config: ffi::duckdb_config = ptr::null_mut();
+            // SAFETY: `config` is a valid output pointer; `duckdb_create_config` initialises it.
             let state = unsafe { ffi::duckdb_create_config(&mut config) };
             assert_eq!(state, ffi::DuckDBSuccess);
             self.config = Some(config);
@@ -177,6 +178,8 @@ impl Config {
 
         let c_key = CString::new(key).unwrap();
         let c_value = CString::new(value).unwrap();
+        // SAFETY: `self.config.unwrap()` is a valid duckdb_config created above.
+        // `c_key` and `c_value` are valid null-terminated C strings that outlive this call.
         let state = unsafe {
             ffi::duckdb_set_config(
                 self.config.unwrap(),
@@ -197,6 +200,9 @@ impl Config {
 impl Drop for Config {
     fn drop(&mut self) {
         if self.config.is_some() {
+            // SAFETY: `self.config.unwrap()` is a valid duckdb_config created in `set`.
+            // After this call the config handle is invalid and must not be used again.
+            // The `is_some` guard ensures we only call this once.
             unsafe { ffi::duckdb_destroy_config(&mut self.config.unwrap()) };
         }
     }

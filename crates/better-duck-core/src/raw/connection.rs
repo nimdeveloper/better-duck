@@ -29,7 +29,7 @@ use crate::{
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use std::sync::Arc;
 /// use better_duck_core::raw::RawDatabase;
 /// use better_duck_core::ffi;
@@ -45,6 +45,17 @@ use crate::{
 /// ```
 pub struct RawDatabase(pub(crate) duckdb_database);
 impl RawDatabase {
+    /// Creates a new [`RawDatabase`] from an existing raw database handle.
+    ///
+    /// # Safety
+    ///
+    /// `db` must be a valid, open `duckdb_database` obtained from a successful call to
+    /// `duckdb_open` or `duckdb_open_ext`. Passing a null or invalid pointer is
+    /// undefined behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `db` is null.
     #[inline]
     pub unsafe fn new(db: duckdb_database) -> Result<RawDatabase> {
         if db.is_null() {
@@ -59,6 +70,8 @@ impl RawDatabase {
 impl Drop for RawDatabase {
     #[inline]
     fn drop(&mut self) {
+        // SAFETY: `self.0` is a valid duckdb_database (or null). `duckdb_close` accepts
+        // null and is idempotent. After this call the handle is invalidated.
         unsafe {
             if !self.0.is_null() {
                 duckdb_close(&mut self.0);
@@ -67,16 +80,16 @@ impl Drop for RawDatabase {
     }
 }
 
-/// A low-level connection to a DuckDB database that provides direct access to the database.
+/// A low-level connection to a DuckDB database.
 ///
-/// `RawConnection` manages both a connection handle and a reference to the underlying database.
-/// It provides methods to execute SQL commands and manage the connection lifecycle.
+/// `RawConnection` manages both a connection handle and a reference to the underlying
+/// database. It provides methods to execute SQL commands and manage the connection lifecycle.
 ///
 /// # Thread Safety
 ///
 /// While the database handle is shared through an [`Arc`], each connection is unique and
-/// should not be shared between threads. Instead, create new connections using [`try_clone`](RawConnection::try_clone)
-/// for each thread.
+/// should not be shared between threads. Instead, create new connections using
+/// [`try_clone`](RawConnection::try_clone) for each thread.
 ///
 /// # Resource Management
 ///
@@ -85,8 +98,8 @@ impl Drop for RawDatabase {
 ///
 /// # Example
 ///
-/// ```rust
-/// use better_duck_core::raw::RawConnection;
+/// ```rust,ignore
+/// use better_duck_core::raw::RawConnection; // raw is crate-private
 /// use std::ffi::CString;
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Open a new in-memory database connection
@@ -103,9 +116,12 @@ impl Drop for RawDatabase {
 /// # }
 /// ```
 pub struct RawConnection {
+    /// Shared handle to the underlying database.
     pub db: Arc<RawDatabase>,
+    /// The raw DuckDB connection handle.
     pub con: duckdb_connection,
 }
+
 impl RawConnection {
     /// Returns the underlying raw DuckDB connection handle.
     ///
@@ -113,22 +129,20 @@ impl RawConnection {
     ///
     /// This function exposes the raw FFI connection handle. Improper use of this handle
     /// may lead to undefined behavior. Use with caution.
-    ///
-    /// # Returns
-    ///
-    /// The raw `ffi::duckdb_connection` handle associated with this `RawConnection`.
     #[allow(unused)]
     fn raw(&self) -> duckdb_connection {
         self.con
     }
 
-    /// Creates a new `RawConnection` from an existing `RawDatabase`.
+    /// Creates a new `RawConnection` from an existing [`RawDatabase`].
     ///
     /// # Safety
-    /// This function is unsafe because it dereferences raw pointers and interacts with the FFI.
-    /// Callers must ensure that the `RawDatabase` is valid for the duration of the `RawConnection`.
+    ///
+    /// The `db` must contain a valid, open `duckdb_database`. This function is called
+    /// internally by [`open_with_flags`](RawConnection::open_with_flags).
     ///
     /// # Errors
+    ///
     /// Returns an error if the connection cannot be established.
     ///
     /// # Example
@@ -154,7 +168,9 @@ impl RawConnection {
         Ok(RawConnection { db, con })
     }
 
-    /// Opens a new connection to the database with the specified flags.
+    /// Opens a new connection to the database at the given path with the specified config.
+    ///
+    /// Pass a path of `":memory:"` for an in-memory database.
     ///
     /// # Errors
     ///
@@ -175,6 +191,8 @@ impl RawConnection {
         c_path: &CStr,
         config: Config,
     ) -> Result<RawConnection> {
+        // SAFETY: `c_path` is a valid null-terminated C string. `db` and `c_err` are valid
+        // output pointers. On error we free `c_err` via `duckdb_free`.
         unsafe {
             let mut db: duckdb_database = ptr::null_mut();
             let mut c_err = std::ptr::null_mut();
@@ -188,7 +206,9 @@ impl RawConnection {
         }
     }
 
-    /// Closes the connection to the database.
+    /// Closes the connection, releasing the underlying DuckDB handle.
+    ///
+    /// Subsequent calls are no-ops.
     ///
     /// This function is typically used internally and should not be called directly.
     /// It is recommended to use higher-level methods from [`Connection`](crate::connection::Connection) like `open_with_flags` to create a new connection.
@@ -205,6 +225,8 @@ impl RawConnection {
         if self.con.is_null() {
             return Ok(());
         }
+        // SAFETY: `self.con` is a valid open duckdb_connection. After disconnect it is
+        // set to null so this code path cannot run twice.
         unsafe {
             duckdb_disconnect(&mut self.con);
             self.con = ptr::null_mut();
@@ -212,7 +234,7 @@ impl RawConnection {
         Ok(())
     }
 
-    /// Creates a new connection to the already-opened database.
+    /// Creates a new connection to the same database as this one.
     ///
     /// This method creates a new connection that shares the same underlying database
     /// handle through an Arc reference. The database will remain open until all
@@ -231,7 +253,11 @@ impl RawConnection {
         unsafe { RawConnection::new(self.db.clone()) }
     }
 
-    /// Executes a SQL statement.
+    /// Executes a SQL statement and returns the result.
+    ///
+    /// Use this for DDL (`CREATE TABLE`, `DROP`, etc.) and DML (`INSERT`, `UPDATE`,
+    /// `DELETE`). For reading data, use [`prepare`](RawConnection::prepare) and
+    /// [`Statement::execute`](crate::raw::statement::Statement::execute).
     ///
     /// # Errors
     ///
@@ -307,11 +333,13 @@ impl RawConnection {
 }
 
 impl Clone for RawConnection {
+    /// Creates a new connection to the same database.
+    ///
     /// # Warning
     ///
-    /// Cloning a `RawConnection` creates a new DuckDB connection to the same underlying database.
-    /// This is a potentially expensive operation and may have side effects depending on your usage.
-    /// Prefer using a single connection or a connection pool if possible.
+    /// Cloning a `RawConnection` creates a new DuckDB connection to the same underlying
+    /// database. Prefer using [`try_clone`](RawConnection::try_clone) if you need to
+    /// handle connection errors explicitly.
     fn clone(&self) -> Self {
         match self.try_clone() {
             Ok(con) => con,

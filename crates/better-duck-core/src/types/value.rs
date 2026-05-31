@@ -104,17 +104,15 @@ pub enum DuckValue {
 
 // Macro to implement DuckDialect for types
 macro_rules! simple_type_conversion {
-    // This macro expects `val` (duckdb_vector pointer) and `row_idx` (usize)
-    // to be in scope where it is called.
-    // It also expects `Ok` to be a valid return type for the surrounding function.
     ($row_index:expr, $vector_ptr:expr, $rust_type:expr, $duck_primitive_type:ty) => {{
-        // Get the raw data pointer from the DuckDB vector
+        // SAFETY: `$vector_ptr` is a valid duckdb_vector obtained from
+        // `duckdb_data_chunk_get_vector`. `duckdb_vector_get_data` returns a pointer to the
+        // column's raw data buffer which is valid for at least the chunk's row count entries.
         let data_ptr = unsafe { duckdb_vector_get_data($vector_ptr) };
-        // Cast the raw pointer to a pointer of the expected DuckDB primitive type
         let values: *mut $duck_primitive_type = data_ptr as *mut $duck_primitive_type;
-        // Dereference the value at the specific row index
+        // SAFETY: `$row_index` is within [0, chunk row count), so `values.add($row_index)`
+        // is within the allocated column buffer for this type.
         let primitive_value = unsafe { *values.add($row_index as usize) as $duck_primitive_type };
-        // Wrap the primitive value in your Rust type and return Ok
         Ok($rust_type(primitive_value))
     }};
 }

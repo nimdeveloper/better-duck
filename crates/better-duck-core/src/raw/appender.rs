@@ -10,11 +10,24 @@ use crate::helpers::duck_result::result_from_duckdb_appender;
 use crate::raw::connection::RawConnection;
 use crate::types::appendable::AppendAble;
 
+/// A DuckDB appender for bulk-inserting rows into a table without going through
+/// the SQL parser.
+///
+/// Call [`append`](Appender::append) for each row and [`save`](Appender::save)
+/// to flush the data to the database. Rows are also flushed automatically on drop
+/// (errors during the implicit flush are logged to stderr).
 pub struct Appender {
     _con: RawConnection,
     inn: duckdb_appender,
 }
+
 impl Appender {
+    /// Creates a new `Appender` for the given table and schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the table does not exist or the DuckDB appender cannot
+    /// be created.
     pub fn new(
         con: RawConnection,
         table: &str,
@@ -23,6 +36,8 @@ impl Appender {
         let mut appender: duckdb_appender = ptr::null_mut();
         let c_table = CString::new(table).unwrap();
         let c_schema = CString::new(schema).unwrap();
+        // SAFETY: `con.con` is a valid open duckdb_connection. `c_schema` and `c_table`
+        // are valid null-terminated C strings. `appender` is a valid output pointer.
         let res = unsafe {
             duckdb_appender_create(
                 con.con,
@@ -35,25 +50,47 @@ impl Appender {
             .map(|_| Appender { _con: con, inn: appender })
     }
 
+    /// Appends a row to the table.
+    ///
+    /// Calls `duckdb_appender_begin_row`, then the value appender, then
+    /// `duckdb_appender_end_row`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the row cannot be appended.
+    #[must_use = "append result should be checked"]
     #[allow(dead_code)]
     pub fn append<T: AppendAble>(
         &mut self,
         row: &mut T,
     ) -> Result<()> {
+        // SAFETY: `self.inn` is a valid duckdb_appender created in `new`.
         let _ = unsafe { duckdb_appender_begin_row(self.inn) };
         row.appender_append(self.inn)?;
+        // SAFETY: `self.inn` is a valid duckdb_appender; `begin_row` was called above.
         let rc = unsafe { duckdb_appender_end_row(self.inn) };
         result_from_duckdb_appender(rc, &mut self.inn)
     }
 
-    /// Flush data into DB
+    /// Flushes all buffered rows to the database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the flush fails.
+    #[must_use = "save result should be checked"]
     #[allow(dead_code)]
     pub fn save(&mut self) -> Result<()> {
+        // SAFETY: `self.inn` is a valid duckdb_appender.
         unsafe { self.flush() }
     }
 
-    /// Flush data into DB
+    /// Flushes the appender's internal buffer.
+    ///
+    /// # Safety
+    ///
+    /// `self.inn` must be a valid, non-null `duckdb_appender`.
     unsafe fn flush(&mut self) -> Result<()> {
+        // SAFETY: `self.inn` is a valid duckdb_appender (enforced by the caller).
         let res = duckdb_appender_flush(self.inn);
         duckdb_appender_destroy(&mut self.inn);
         result_from_duckdb_appender(res, &mut self.inn)
@@ -90,6 +127,9 @@ mod appender_tests {
             &mut self,
             appender: duckdb_appender,
         ) -> crate::error::Result<()> {
+            // SAFETY: `appender` is a valid duckdb_appender from `Appender::new`;
+            // we are inside a begin_row/end_row pair. The int32 and varchar values are
+            // valid for their respective columns.
             unsafe {
                 duckdb_append_int32(appender, self.0);
                 let st = CString::new(self.1)
@@ -104,6 +144,8 @@ mod appender_tests {
             idx: u64,
             stmt: crate::ffi::duckdb_prepared_statement,
         ) -> Result<()> {
+            // SAFETY: `stmt` is a valid prepared statement; `idx` is a 1-based parameter
+            // index within the statement's parameter count.
             unsafe {
                 duckdb_bind_int32(stmt, idx, self.0);
                 let st = CString::new(self.1)
@@ -116,9 +158,6 @@ mod appender_tests {
     }
 
     fn get_test_connection() -> RawConnection {
-        // This should be replaced with a real connection setup for integration tests
-        // For now, this is a placeholder and will not work unless implemented
-        // Setup: create a connection (assuming test DB in memory)
         let c_path = path_to_cstring(":memory:".as_ref()).unwrap();
         let config = Config::default().with("duckdb_api", "rust").unwrap();
         RawConnection::open_with_flags(&c_path, config).unwrap()
@@ -128,11 +167,9 @@ mod appender_tests {
     fn test_appender_create_and_drop() {
         let mut con = get_test_connection();
 
-        // Create a table for testing
         let create_sql = "CREATE TABLE test_appender (id INTEGER, name VARCHAR)";
         con.execute(create_sql).unwrap();
 
-        // Test: create appender
         let appender = Appender::new(con.clone(), "test_appender", "main");
         assert!(appender.is_ok());
         // Drop happens automatically, should not panic
@@ -145,7 +182,6 @@ mod appender_tests {
         // Make sure table exists
         con.execute("CREATE TABLE test_append (id INTEGER, name VARCHAR)").unwrap();
 
-        // panic!("TES");
         let mut appender = Appender::new(con.clone(), "test_append", "main").unwrap();
         let mut row = Row(1, "Alice");
         let mut row2 = Row(2, "Sara");
@@ -156,14 +192,10 @@ mod appender_tests {
         appender.append(&mut row3).unwrap();
         appender.save().unwrap();
 
-        // Verify: query the table and check the inserted data
-
-        // Check non-existent row
         let mut stmt = con.prepare("SELECT id,name FROM test_append WHERE id=123").unwrap();
         let mut rows = stmt.fetch().unwrap().unwrap();
         assert!(rows.next().is_none(), "Row with id=123 should not exist");
 
-        // Verify all rows
         let mut stmt = con.prepare("SELECT id,name FROM test_append").unwrap();
 
         let rows = stmt.fetch().unwrap();
@@ -192,12 +224,10 @@ mod appender_tests {
 
     #[test]
     fn test_appender_error_on_invalid_table() {
-        // Setup: create a connection (assuming test DB in memory)
         let c_path = path_to_cstring(":memory:".as_ref()).unwrap();
         let config = Config::default().with("duckdb_api", "rust").unwrap();
         let con = RawConnection::open_with_flags(&c_path, config).unwrap();
 
-        // Try to create appender for non-existent table
         let appender = Appender::new(con, "nonexistent_table", "main");
         assert!(appender.is_err());
     }
