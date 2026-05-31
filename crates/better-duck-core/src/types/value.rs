@@ -1,33 +1,43 @@
 #![allow(non_snake_case)]
 #[cfg(feature = "chrono")]
-use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use std::ffi::CStr;
 use std::ptr;
 #[cfg(not(feature = "chrono"))]
 use std::time::{Duration, SystemTime};
 
-use crate::ffi::{
-    duckdb_destroy_logical_type, duckdb_get_type_id, duckdb_list_entry,
-    duckdb_list_vector_get_child, duckdb_list_vector_get_size, duckdb_logical_type,
-    duckdb_string_t, duckdb_string_t_data, duckdb_string_t_length, duckdb_type,
-    duckdb_validity_row_is_valid, duckdb_vector, duckdb_vector_get_column_type,
-    duckdb_vector_get_data, duckdb_vector_get_validity, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
-    DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_DATE, DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
-    DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT,
-    DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL,
-    DUCKDB_TYPE_DUCKDB_TYPE_INVALID, DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP,
-    DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL,
-    DUCKDB_TYPE_DUCKDB_TYPE_TIME, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP,
-    DUCKDB_TYPE_DUCKDB_TYPE_TINYINT, DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT,
-    DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER,
-    DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT,
-    DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
+use crate::{
+    ffi::{
+        duckdb_destroy_logical_type, duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
+        duckdb_free, duckdb_get_type_id, duckdb_interval, duckdb_list_entry,
+        duckdb_list_vector_get_child, duckdb_list_vector_get_size, duckdb_logical_type,
+        duckdb_string_t, duckdb_string_t_data, duckdb_string_t_length, duckdb_type,
+        duckdb_validity_row_is_valid, duckdb_vector, duckdb_vector_get_column_type,
+        duckdb_vector_get_data, duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
+        DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
+        DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE,
+        DUCKDB_TYPE_DUCKDB_TYPE_ENUM, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT,
+        DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
+        DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL, DUCKDB_TYPE_DUCKDB_TYPE_INVALID,
+        DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP,
+        DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL,
+        DUCKDB_TYPE_DUCKDB_TYPE_TIME, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP,
+        DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_MS, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_NS,
+        DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S, DUCKDB_TYPE_DUCKDB_TYPE_TINYINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER, DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT, DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
+    },
+    types::value_ref::DuckValueRef,
 };
 #[cfg(feature = "decimal")]
 use rust_decimal::Decimal;
 
 use super::*;
 
-#[derive(Debug)]
+/// Represents any value that can be stored in a DuckDB column.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DuckValue {
     /// The value is a `NULL` value.
     Null,
@@ -102,6 +112,57 @@ pub enum DuckValue {
     Union(Box<DuckValue>),
 }
 
+impl<'a> From<&DuckValueRef<'a>> for DuckValue {
+    /// Converts this DuckValueRef into a DuckValue, cloning data where necessary
+    fn from(value: &DuckValueRef<'a>) -> Self {
+        match value {
+            DuckValueRef::Null => DuckValue::Null,
+            DuckValueRef::Boolean(b) => DuckValue::Boolean(*b),
+            DuckValueRef::TinyInt(n) => DuckValue::TinyInt(*n),
+            DuckValueRef::SmallInt(n) => DuckValue::SmallInt(*n),
+            DuckValueRef::Int(n) => DuckValue::Int(*n),
+            DuckValueRef::BigInt(n) => DuckValue::BigInt(*n),
+            DuckValueRef::HugeInt(n) => DuckValue::HugeInt(*n),
+            DuckValueRef::UTinyInt(n) => DuckValue::UTinyInt(*n),
+            DuckValueRef::USmallInt(n) => DuckValue::USmallInt(*n),
+            DuckValueRef::UInt(n) => DuckValue::UInt(*n),
+            DuckValueRef::UBigInt(n) => DuckValue::UBigInt(*n),
+            DuckValueRef::UHugeInt(n) => DuckValue::UHugeInt(*n),
+            DuckValueRef::Float(n) => DuckValue::Float(*n),
+            DuckValueRef::Double(n) => DuckValue::Double(*n),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::Timestamp(t) => DuckValue::Timestamp(*t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::Timestamp(t) => DuckValue::Timestamp(*t),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::Date(d) => DuckValue::Date(*d),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::Date(d) => DuckValue::Date(*d),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::Time(t) => DuckValue::Time(*t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::Time(t) => DuckValue::Time(*t),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::Interval(i) => DuckValue::Interval(*i),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::Interval(i) => DuckValue::Interval(*i),
+            DuckValueRef::Text(s) => DuckValue::Text(s.to_string()),
+            #[cfg(feature = "decimal")]
+            DuckValueRef::Decimal(d) => DuckValue::Decimal(*d),
+            DuckValueRef::Blob(b) => DuckValue::Blob(b.to_vec()),
+            DuckValueRef::List(l) => DuckValue::List(l.iter().map(DuckValue::from).collect()),
+            DuckValueRef::Enum(e) => DuckValue::Enum(e.to_string()),
+            DuckValueRef::Array(a) => DuckValue::Array(
+                a.iter()
+                    .map(|v| DuckValue::from(&v.clone()))
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            ),
+            DuckValueRef::Union(u) => DuckValue::Union(Box::new(DuckValue::from(u.as_ref()))),
+        }
+    }
+}
+
 // Macro to implement DuckDialect for types
 macro_rules! simple_type_conversion {
     ($row_index:expr, $vector_ptr:expr, $rust_type:expr, $duck_primitive_type:ty) => {{
@@ -117,6 +178,21 @@ macro_rules! simple_type_conversion {
     }};
 }
 
+/// Converts microseconds since the Unix epoch to a `NaiveDateTime`.
+///
+/// Used by all TIMESTAMP variant chunk-read paths.
+#[cfg(feature = "chrono")]
+fn micros_to_naive_datetime(micros: i64) -> Result<NaiveDateTime, DuckDBConversionError> {
+    DateTime::<Utc>::from_timestamp(
+        micros / 1_000_000,
+        ((micros % 1_000_000).unsigned_abs() * 1_000) as u32,
+    )
+    .map(|dt| dt.naive_utc())
+    .ok_or_else(|| {
+        DuckDBConversionError::ConversionError(format!("timestamp {micros}µs out of range"))
+    })
+}
+
 impl DuckValue {
     // Converts the current value to a DuckDB-compatible format.
     // fn from_duck() -> ();
@@ -127,89 +203,96 @@ impl DuckValue {
         t: duckdb_type,
         row_idx: u64,
     ) -> Result<DuckValue, DuckDBConversionError> {
-        // Get data as i64 slice
-        let data_ptr = unsafe { duckdb_vector_get_data(val) as *mut i64 };
+        // SAFETY: `val` is a valid duckdb_vector; the validity bitmap is valid for at
+        // least the chunk's row count.
         let validity_ptr = unsafe { duckdb_vector_get_validity(val) };
-        // Check validity
+        // SAFETY: `row_idx` is within [0, chunk row count), so the validity bitmap access
+        // is in bounds.
         let is_valid = unsafe { duckdb_validity_row_is_valid(validity_ptr, row_idx) };
 
-        // Access data if valid
         if !is_valid {
             return Ok(DuckValue::Null);
         }
 
-        let value = unsafe { *data_ptr.add(row_idx as usize) as duckdb_value };
-
         match t {
             DUCKDB_TYPE_DUCKDB_TYPE_INVALID => {
-                Err(DuckDBConversionError::ConversionError(String::from("Invalid type!")))
+                Err(DuckDBConversionError::ConversionError(String::from("invalid type")))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN => {
-                // Ok(DuckValue::Boolean(bool::from_duck(value)?))
                 simple_type_conversion!(row_idx, val, DuckValue::Boolean, bool)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TINYINT => {
-                // Ok(DuckValue::TinyInt(i8::from_duck(value)?))
                 simple_type_conversion!(row_idx, val, DuckValue::TinyInt, i8)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT => {
-                // Ok(DuckValue::SmallInt(i16::from_duck(value)?))
                 simple_type_conversion!(row_idx, val, DuckValue::SmallInt, i16)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_INTEGER => {
-                // Ok(DuckValue::Int(i32::from_duck(value)?))
                 simple_type_conversion!(row_idx, val, DuckValue::Int, i32)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_BIGINT => {
                 simple_type_conversion!(row_idx, val, DuckValue::BigInt, i64)
-                // Ok(DuckValue::BigInt(i64::from_duck(value)?))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT => {
                 simple_type_conversion!(row_idx, val, DuckValue::HugeInt, i128)
-                // Ok(DuckValue::HugeInt(i128::from_duck(value)?))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT => {
                 simple_type_conversion!(row_idx, val, DuckValue::UTinyInt, u8)
-                // Ok(DuckValue::UTinyInt(u8::from_duck(value)?))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT => {
                 simple_type_conversion!(row_idx, val, DuckValue::USmallInt, u16)
-                // Ok(DuckValue::USmallInt(u16::from_duck(value)?))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER => {
                 simple_type_conversion!(row_idx, val, DuckValue::UInt, u32)
-                // Ok(DuckValue::UInt(u32::from_duck(value)?))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT => {
                 simple_type_conversion!(row_idx, val, DuckValue::UBigInt, u64)
-                // Ok(DuckValue::UBigInt(u64::from_duck(value)?))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT => {
                 simple_type_conversion!(row_idx, val, DuckValue::UHugeInt, u128)
-                // Ok(DuckValue::UHugeInt(u128::from_duck(val, t)?))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_FLOAT => {
                 simple_type_conversion!(row_idx, val, DuckValue::Float, f32)
-                // Ok(DuckValue::Float(f32::from_duck(value)?))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE => {
                 simple_type_conversion!(row_idx, val, DuckValue::Double, f64)
-                // Ok(DuckValue::Double(f64::from_duck(value)?))
-            },
-            DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP => {
-                #[cfg(feature = "chrono")]
-                {
-                    chrono::NaiveDateTime::from_duck(value).map(DuckValue::Timestamp)
-                }
-                #[cfg(not(feature = "chrono"))]
-                {
-                    SystemTime::from_duck(value).map(DuckValue::Timestamp)
-                }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_DATE => {
+                let value = unsafe {
+                    *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
+                        as duckdb_value
+                };
                 #[cfg(feature = "chrono")]
                 {
-                    chrono::NaiveDate::from_duck(value).map(DuckValue::Date)
+                    return chrono::NaiveDate::from_duck(value).map(DuckValue::Date);
+                    // return NaiveDate::from_num_days_from_ce_opt(days + 719_163)
+                    //     .map(DuckValue::Date)
+                    //     .ok_or_else(|| {
+                    //         DuckDBConversionError::ConversionError(format!(
+                    //             "date value {days} out of representable range"
+                    //         ))
+                    //     });
+                }
+                #[cfg(not(feature = "chrono"))]
+                todo!()
+            },
+            DUCKDB_TYPE_DUCKDB_TYPE_TIME => {
+                let value = unsafe {
+                    *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
+                        as duckdb_value
+                };
+                #[cfg(feature = "chrono")]
+                {
+                    return chrono::NaiveTime::from_duck(value).map(DuckValue::Time);
+                    // let secs = (micros / 1_000_000) as u32;
+                    // let nano = ((micros % 1_000_000) * 1_000) as u32;
+                    // NaiveTime::from_num_seconds_from_midnight_opt(secs, nano)
+                    //     .map(DuckValue::Time)
+                    //     .ok_or_else(|| {
+                    //         DuckDBConversionError::ConversionError(format!(
+                    //             "time {micros}µs out of range"
+                    //         ))
+                    //     })
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
@@ -217,57 +300,64 @@ impl DuckValue {
                     todo!()
                 }
             },
-            DUCKDB_TYPE_DUCKDB_TYPE_TIME => {
+            DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP => {
+                let value = unsafe {
+                    *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
+                        as duckdb_value
+                };
                 #[cfg(feature = "chrono")]
                 {
-                    chrono::NaiveTime::from_duck(value).map(DuckValue::Time)
+                    return chrono::NaiveDateTime::from_duck(value).map(DuckValue::Timestamp);
+                    // return micros_to_naive_datetime(micros).map(DuckValue::Timestamp);
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
                     // TODO
                     todo!()
+                    // use std::time::UNIX_EPOCH;
+                    // let secs = (micros / 1_000_000) as u64;
+                    // let sub_micros = (micros % 1_000_000) as u32;
+                    // return Ok(DuckValue::Timestamp(
+                    //     UNIX_EPOCH + std::time::Duration::new(secs, sub_micros * 1_000),
+                    // ));
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL => {
+                let value = unsafe {
+                    *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
+                        as duckdb_value
+                };
                 #[cfg(feature = "chrono")]
                 {
-                    chrono::Duration::from_duck(value).map(DuckValue::Interval)
+                    return chrono::Duration::from_duck(value).map(DuckValue::Interval);
+                    // let total_micros = (iv.months as i64)
+                    //     .saturating_mul(30 * 86_400 * 1_000_000)
+                    //     .saturating_add((iv.days as i64).saturating_mul(86_400 * 1_000_000))
+                    //     .saturating_add(iv.micros);
+                    // Ok(DuckValue::Interval(Duration::microseconds(total_micros)))
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    Duration::from_duck(val).map(DuckValue::Interval)
+                    return std::time::Duration::from_duck(val).map(DuckValue::Interval);
+                    // let total_micros = (iv.months as u64)
+                    //     .saturating_mul(30 * 86_400 * 1_000_000)
+                    //     .saturating_add((iv.days as u64).saturating_mul(86_400 * 1_000_000))
+                    //     .saturating_add(iv.micros as u64);
+                    // return Ok(DuckValue::Interval(std::time::Duration::from_micros(total_micros)));
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR | DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL => {
+                // SAFETY: VARCHAR columns store an array of `duckdb_string_t`. Each element
+                // contains either an inlined short string or a pointer to a heap string owned
+                // by DuckDB. `duckdb_string_t_data` returns a valid null-terminated UTF-8
+                // pointer for the lifetime of the result. We copy into an owned `String`
+                // before returning; no raw pointer escapes this block.
                 unsafe {
-                    let data_ptr = duckdb_vector_get_data(val);
-                    // Cast the raw pointer to a pointer of the expected DuckDB primitive type
-                    let values: *mut duckdb_string_t = data_ptr as *mut duckdb_string_t;
-
-                    // Dereference the value at the specific row index
-                    let mut duck_string_t: duckdb_string_t = *values.add(row_idx as usize);
-                    // Wrap the primitive value in your Rust type and return Ok
-
-                    // Use duckdb_string_t_data to get the raw C char pointer
-                    // NOTE: duckdb_string_t_data expects *mut duckdb_string_t.
-                    // We're passing a mutable pointer here.
+                    let values = duckdb_vector_get_data(val) as *mut duckdb_string_t;
+                    let mut duck_string_t = *values.add(row_idx as usize);
                     let char_ptr = duckdb_string_t_data(&mut duck_string_t);
 
-                    // Use duckdb_string_t_length to get the length
-                    let _length = duckdb_string_t_length(duck_string_t); // !NOTICE
-
-                    // Create a Rust slice from the raw pointer and length
-                    // The pointer might not be null-terminated for non-inlined strings,
-                    // so using CStr::from_ptr is not always safe without the length.
-                    // slice::from_raw_parts is the correct way here.
-                    // let byte_slice = slice::from_raw_parts(char_ptr as *const u8, length as usize);
-
-                    // Convert the byte slice to a Rust String
-                    // Assuming UTF-8, use String::from_utf8_lossy for safety
-                    let rust_string =
-                        std::ffi::CStr::from_ptr(char_ptr).to_string_lossy().into_owned();
-
-                    // let rust_string = String::from_utf8_lossy(byte_slice).into_owned();
+                    let rust_string = CStr::from_ptr(char_ptr).to_string_lossy().into_owned();
                     Ok(DuckValue::Text(rust_string))
                     // String::from_duck(rust_string).map(DuckValue::Text)
 
@@ -276,12 +366,30 @@ impl DuckValue {
                     //     std::ffi::CStr::from_ptr(c_str_ptr).to_string_lossy().into_owned();
                 }
             },
-            DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL => Decimal::from_duck(value).map(DuckValue::Decimal),
+            DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL => {
+                // SAFETY: `val` is a valid duckdb_vector; the data pointer is valid for
+                // the chunk's row count. We read the raw i64 at `row_idx` as a decimal.
+                let data_ptr = unsafe { duckdb_vector_get_data(val) as *mut i64 };
+                // SAFETY: `row_idx` is within [0, chunk_size).
+                let value = unsafe { *data_ptr.add(row_idx as usize) as crate::ffi::duckdb_value };
+                Decimal::from_duck(value).map(DuckValue::Decimal)
+            },
             DUCKDB_TYPE_DUCKDB_TYPE_LIST | DUCKDB_TYPE_DUCKDB_TYPE_ARRAY => {
+                // SAFETY: `val` is a valid duckdb_vector of LIST/ARRAY type.
+                // `duckdb_vector_get_data` returns a pointer to the column's raw data buffer
+                // which holds `duckdb_list_entry` values in packed array layout.
+                let data_ptr = unsafe { duckdb_vector_get_data(val) as *mut i64 };
+                // SAFETY: `row_idx` is within [0, chunk_size), so `data_ptr.add(row_idx)`
+                // is within the allocated column buffer. The reinterpret-cast to
+                // `*mut duckdb_list_entry` is valid because list/array vectors store that
+                // struct at each slot.
                 let list_data =
                     unsafe { *data_ptr.add(row_idx as usize) as *mut duckdb_list_entry };
+                // SAFETY: `val` is a valid duckdb_vector of list/array type.
                 let list_child = unsafe { duckdb_list_vector_get_child(val) as duckdb_vector };
+                // SAFETY: `list_child` is a valid duckdb_vector for the child column.
                 let child_validity = unsafe { duckdb_vector_get_validity(list_child) };
+                // SAFETY: `list_child` is a valid list-child vector.
                 let list_length = unsafe { duckdb_list_vector_get_size(list_child) };
                 // TODO: What happens for this var, if the function returns error? (Maybe using https://docs.rs/scopeguard/latest/scopeguard/)
                 let mut slice_data: Option<Box<[std::mem::MaybeUninit<DuckValue>]>> = None;
@@ -297,33 +405,40 @@ impl DuckValue {
                     vec_data = Some(tmp);
                 } else {
                     return Err(DuckDBConversionError::ConversionError(String::from(
-                        "Invalid type for List/Array!",
+                        "invalid type for list/array",
                     )));
                 }
 
+                // SAFETY: `list_data` is a valid pointer to the list entry for `row_idx`.
+                // `(*list_data).offset` gives the count of child elements. `iter_ptr`
+                // points to an allocation of at least `list_length` elements. `each` is
+                // within that bound, so `iter_ptr.add(each)` is in bounds.
                 unsafe {
                     for each in 0..(*list_data).offset {
-                        let mut val = DuckValue::Null;
+                        let mut elem = DuckValue::Null;
                         if duckdb_validity_row_is_valid(child_validity, each) {
                             let mut raw_child_type: duckdb_logical_type =
                                 duckdb_vector_get_column_type(list_child);
                             let child_type = duckdb_get_type_id(raw_child_type);
                             duckdb_destroy_logical_type(&mut raw_child_type);
-                            val = DuckValue::from_duckdb_vec(list_child, child_type, each)?;
-                        } // otherwise it's NULL value
-                        ptr::write(iter_ptr.add(each as usize), val);
+                            elem = DuckValue::from_duckdb_vec(list_child, child_type, each)?;
+                        }
+                        ptr::write(iter_ptr.add(each as usize), elem);
                     }
                 };
 
                 if t == DUCKDB_TYPE_DUCKDB_TYPE_ARRAY {
+                    // SAFETY: every element in `slice_data` was written in the loop above.
                     Ok(DuckValue::Array(unsafe { slice_data.unwrap().assume_init() }))
                 } else if t == DUCKDB_TYPE_DUCKDB_TYPE_LIST {
                     let mut vec_data = vec_data.unwrap();
+                    // SAFETY: all `list_length` elements were written into `vec_data`'s
+                    // allocation via `iter_ptr` in the loop above.
                     unsafe { vec_data.set_len(list_length as usize) };
                     Ok(DuckValue::List(vec_data))
                 } else {
                     Err(DuckDBConversionError::ConversionError(String::from(
-                        "Invalid type for List/Array!",
+                        "invalid type for list/array",
                     )))
                 }
             },
