@@ -170,19 +170,25 @@ impl Config {
     ) -> Result<()> {
         if self.config.is_none() {
             let mut config: ffi::duckdb_config = ptr::null_mut();
-            // SAFETY: `config` is a valid output pointer; `duckdb_create_config` initialises it.
+            // SAFETY: `config` is a valid output pointer; `duckdb_create_config` initializes it.
             let state = unsafe { ffi::duckdb_create_config(&mut config) };
-            assert_eq!(state, ffi::DuckDBSuccess);
+            if state != ffi::DuckDBSuccess {
+                return Err(Error::DuckDBFailure(
+                    ffi::Error::new(state),
+                    Some("failed to create duckdb_config".to_owned()),
+                ));
+            }
             self.config = Some(config);
         }
 
-        let c_key = CString::new(key).unwrap();
-        let c_value = CString::new(value).unwrap();
-        // SAFETY: `self.config.unwrap()` is a valid duckdb_config created above.
-        // `c_key` and `c_value` are valid null-terminated C strings that outlive this call.
+        let c_key = CString::new(key)?;
+        let c_value = CString::new(value)?;
+        // SAFETY: `self.config` is Some — either it was just initialized above or it was
+        // already Some. `c_key` and `c_value` are valid null-terminated C strings that
+        // outlive this call. `duckdb_set_config` does not retain the string pointers.
         let state = unsafe {
             ffi::duckdb_set_config(
-                self.config.unwrap(),
+                self.config.expect("config always initialized before this point"),
                 c_key.as_ptr() as *const c_char,
                 c_value.as_ptr() as *const c_char,
             )
@@ -199,11 +205,13 @@ impl Config {
 
 impl Drop for Config {
     fn drop(&mut self) {
-        if self.config.is_some() {
-            // SAFETY: `self.config.unwrap()` is a valid duckdb_config created in `set`.
-            // After this call the config handle is invalid and must not be used again.
-            // The `is_some` guard ensures we only call this once.
-            unsafe { ffi::duckdb_destroy_config(&mut self.config.unwrap()) };
+        // SAFETY: `cfg` is a valid duckdb_config created in `set` and not yet destroyed.
+        // `take()` sets `self.config` to None, so this runs at most once even if
+        // `Drop` is called multiple times (which Rust prevents, but belt-and-suspenders).
+        if let Some(mut cfg) = self.config.take() {
+            // SAFETY: `cfg` is a valid duckdb_config created in `set` and not yet
+            // destroyed. `take()` ensures this block runs at most once.
+            unsafe { ffi::duckdb_destroy_config(&mut cfg) };
         }
     }
 }

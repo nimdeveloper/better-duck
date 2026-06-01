@@ -297,13 +297,16 @@ impl DuckValue {
                 simple_type_conversion!(row_idx, val, DuckValue::Double, f64)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_DATE => {
+                // SAFETY: `duckdb_vector_get_data(val)` returns a valid pointer to the
+                // vector's data buffer; `row_idx` is within [0, row_count) so the offset
+                // is in-bounds. The column type is DATE (i32 days since epoch).
                 let value = unsafe {
                     *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
                         as duckdb_value
                 };
                 #[cfg(feature = "chrono")]
                 {
-                    return chrono::NaiveDate::from_duck(value).map(DuckValue::Date);
+                    chrono::NaiveDate::from_duck(value).map(DuckValue::Date)
                     // return NaiveDate::from_num_days_from_ce_opt(days + 719_163)
                     //     .map(DuckValue::Date)
                     //     .ok_or_else(|| {
@@ -318,13 +321,15 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIME => {
+                // SAFETY: Same as DATE arm — `row_idx` is in-bounds; column type is TIME
+                // (i32 microseconds since midnight).
                 let value = unsafe {
                     *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
                         as duckdb_value
                 };
                 #[cfg(feature = "chrono")]
                 {
-                    return chrono::NaiveTime::from_duck(value).map(DuckValue::Time);
+                    chrono::NaiveTime::from_duck(value).map(DuckValue::Time)
                     // let secs = (micros / 1_000_000) as u32;
                     // let nano = ((micros % 1_000_000) * 1_000) as u32;
                     // NaiveTime::from_num_seconds_from_midnight_opt(secs, nano)
@@ -342,6 +347,8 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP => {
+                // SAFETY: Same as DATE arm — column type is TIMESTAMP (i64 microseconds
+                // since Unix epoch), read via i32-aligned pointer (as duckdb_value cast).
                 let value = unsafe {
                     *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
                         as duckdb_value

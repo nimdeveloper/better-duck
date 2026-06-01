@@ -139,12 +139,14 @@ impl RawConnection {
     ///
     /// Returns an error if the connection cannot be established.
     #[inline]
-    unsafe fn new(db: Arc<RawDatabase>) -> Result<RawConnection> {
+    fn new(db: Arc<RawDatabase>) -> Result<RawConnection> {
         let mut con: duckdb_connection = ptr::null_mut();
         // SAFETY: `db.0` is a valid open duckdb_database; `con` is a valid output pointer.
-        let r = duckdb_connect(db.0, &mut con);
+        let r = unsafe { duckdb_connect(db.0, &mut con) };
         if r != DuckDBSuccess {
-            duckdb_disconnect(&mut con);
+            // SAFETY: `con` may be partially initialized on failure; `duckdb_disconnect`
+            // handles null/invalid handles gracefully.
+            unsafe { duckdb_disconnect(&mut con) };
             return Err(Error::DuckDBFailure(FFIError::new(r), Some("connect error".to_owned())));
         }
         Ok(RawConnection { db, con })
@@ -206,7 +208,7 @@ impl RawConnection {
     /// Returns `Error::DuckDBFailure` if the connection cannot be established.
     pub fn try_clone(&self) -> Result<Self> {
         // SAFETY: `self.db` is a valid Arc<RawDatabase> with a live database handle.
-        unsafe { RawConnection::new(self.db.clone()) }
+        RawConnection::new(self.db.clone())
     }
 
     /// Executes a SQL statement and returns the result.
@@ -305,7 +307,7 @@ impl RawConnection {
     ///
     /// Works for all statement types. Use [`DuckResult::changes()`] for affected rows
     /// (DML), or iterate the result for SELECT / RETURNING queries.
-    /// Pass `&mut []` for unparameterised queries.
+    /// Pass `&mut []` for not parameterized queries.
     ///
     /// # Errors
     ///

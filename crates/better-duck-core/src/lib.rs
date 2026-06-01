@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `better-duck-core` — a safe, low-level Rust wrapper around the
 //! [DuckDB](https://duckdb.org) C API (`libduckdb-sys`).
 //!
@@ -6,9 +7,6 @@
 //! - Low-level [`raw`] types (`RawConnection`, `DuckResult`, `DuckRow`) for advanced use.
 //! - Type conversion traits ([`types::DuckDialect`], [`types::appendable::AppendAble`]) for
 //!   mapping between Rust types and DuckDB values.
-
-#![warn(clippy::undocumented_unsafe_blocks)]
-#![warn(missing_docs)]
 
 pub extern crate libduckdb_sys;
 /// Re-export of the raw `libduckdb_sys` FFI bindings.
@@ -32,3 +30,9 @@ pub use raw::row::DuckRow;
 pub use raw::statement::CachedStatement;
 /// Trait for binding values to DuckDB prepared statements and appenders.
 pub use types::appendable::AppendAble;
+/// A calendar date value for use without the `chrono` feature.
+#[cfg(not(feature = "chrono"))]
+pub use types::date_native::DuckDate;
+/// A time-of-day value for use without the `chrono` feature.
+#[cfg(not(feature = "chrono"))]
+pub use types::date_native::DuckTime;

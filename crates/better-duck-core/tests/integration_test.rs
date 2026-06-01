@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use better_duck_core::{connection::Connection, types::value::DuckValue};
 
 #[test]
