@@ -10,10 +10,12 @@ use super::*;
 use crate::error::DuckDBConversionError;
 use crate::ffi::{
     duckdb_create_date, duckdb_create_interval, duckdb_create_time, duckdb_create_timestamp,
-    duckdb_date, duckdb_from_date, duckdb_get_date, duckdb_get_interval, duckdb_get_time,
-    duckdb_get_timestamp, duckdb_interval, duckdb_time, duckdb_timestamp,
+    duckdb_create_timestamp_ms, duckdb_create_timestamp_ns, duckdb_create_timestamp_s, duckdb_date,
+    duckdb_from_date, duckdb_get_date, duckdb_get_interval, duckdb_get_time, duckdb_get_timestamp,
+    duckdb_get_timestamp_ms, duckdb_get_timestamp_ns, duckdb_get_timestamp_s, duckdb_interval,
+    duckdb_time, duckdb_timestamp, duckdb_timestamp_ms, duckdb_timestamp_ns, duckdb_timestamp_s,
 };
-use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 
 impl DuckDialect for Duration {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
@@ -25,10 +27,6 @@ impl DuckDialect for Duration {
             let total_micros = total_days * 86_400_000_000 + interval.micros as i64;
             Ok(Duration::microseconds(total_micros))
         }
-        // match type_ {
-        //     DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL => ...,
-        //     _ => Err(DuckDBConversionError::ConversionError("Invalid duration".to_string())),
-        // }
     }
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
         let micros = self.num_microseconds().unwrap_or(0);
@@ -48,13 +46,6 @@ impl DuckDialect for NaiveDate {
             NaiveDate::from_ymd_opt(val.year, val.month as u32, val.day as u32)
                 .ok_or_else(|| DuckDBConversionError::ConversionError("Invalid date".to_string()))
         }
-        // match type_ {
-        //     DUCKDB_TYPE_DUCKDB_TYPE_DATE => ...,
-        //     _ => Err(DuckDBConversionError::TypeMismatch {
-        //         expected: DUCKDB_TYPE_DUCKDB_TYPE_DATE,
-        //         found: type_,
-        //     }),
-        // }
     }
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
         let days = self.num_days_from_ce() - 719163;
@@ -66,12 +57,6 @@ impl DuckDialect for NaiveDate {
 
 impl DuckDialect for NaiveTime {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
-        // if type_ != DUCKDB_TYPE_DUCKDB_TYPE_TIME {
-        //     return Err(DuckDBConversionError::TypeMismatch {
-        //         expected: DUCKDB_TYPE_DUCKDB_TYPE_TIME,
-        //         found: type_,
-        //     });
-        // }
         // SAFETY: `value` is a valid duckdb_value of type TIME. `duckdb_get_time` reads
         // the microseconds-since-midnight field.
         let raw_time = unsafe { duckdb_get_time(value) };
@@ -92,12 +77,6 @@ impl DuckDialect for NaiveTime {
 
 impl DuckDialect for NaiveDateTime {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
-        // if type_ != DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP {
-        //     return Err(DuckDBConversionError::TypeMismatch {
-        //         expected: DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP,
-        //         found: type_,
-        //     });
-        // }
         // SAFETY: `value` is a valid duckdb_value of type TIMESTAMP. `duckdb_get_timestamp`
         // reads the microseconds-since-epoch field.
         let raw_ts = unsafe { duckdb_get_timestamp(value) };
@@ -118,6 +97,88 @@ impl DuckDialect for NaiveDateTime {
         let raw_ts = duckdb_timestamp { micros };
         // SAFETY: `raw_ts` is a fully initialized `duckdb_timestamp` value.
         Ok(unsafe { duckdb_create_timestamp(raw_ts) })
+    }
+}
+
+/*
+* Precision-specific timestamp wrappers
+*/
+
+/// Private helper: convert microseconds since the Unix epoch to a `NaiveDateTime`.
+fn micros_to_naive_datetime_chrono(micros: i64) -> Result<NaiveDateTime, DuckDBConversionError> {
+    DateTime::<Utc>::from_timestamp(
+        micros / 1_000_000,
+        ((micros % 1_000_000).unsigned_abs() * 1_000) as u32,
+    )
+    .map(|dt| dt.naive_utc())
+    .ok_or_else(|| {
+        DuckDBConversionError::ConversionError(format!("timestamp {micros}µs out of range"))
+    })
+}
+
+/// A [`NaiveDateTime`] that maps to DuckDB's **second**-precision timestamp (`TIMESTAMP_S`).
+///
+/// Use `TimestampS::from_duck` / `TimestampS::to_duck` when reading or writing values from
+/// a `DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S` column via the `duckdb_value` API.
+pub struct TimestampS(pub NaiveDateTime);
+
+impl DuckDialect for TimestampS {
+    fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
+        // SAFETY: `value` is a valid duckdb_value of type TIMESTAMP_S.
+        // `duckdb_get_timestamp_s` reads the seconds-since-epoch field.
+        let raw = unsafe { duckdb_get_timestamp_s(value) };
+        micros_to_naive_datetime_chrono(raw.seconds.saturating_mul(1_000_000)).map(TimestampS)
+    }
+
+    fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
+        let secs = self.0.and_utc().timestamp();
+        let raw = duckdb_timestamp_s { seconds: secs };
+        // SAFETY: `raw` is a fully initialized `duckdb_timestamp_s` value.
+        Ok(unsafe { duckdb_create_timestamp_s(raw) })
+    }
+}
+
+/// A [`NaiveDateTime`] that maps to DuckDB's **millisecond**-precision timestamp
+/// (`TIMESTAMP_MS`).
+pub struct TimestampMs(pub NaiveDateTime);
+
+impl DuckDialect for TimestampMs {
+    fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
+        // SAFETY: `value` is a valid duckdb_value of type TIMESTAMP_MS.
+        // `duckdb_get_timestamp_ms` reads the milliseconds-since-epoch field.
+        let raw = unsafe { duckdb_get_timestamp_ms(value) };
+        micros_to_naive_datetime_chrono(raw.millis.saturating_mul(1_000)).map(TimestampMs)
+    }
+
+    fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
+        let millis = self.0.and_utc().timestamp() * 1_000
+            + self.0.and_utc().timestamp_subsec_millis() as i64;
+        let raw = duckdb_timestamp_ms { millis };
+        // SAFETY: `raw` is a fully initialized `duckdb_timestamp_ms` value.
+        Ok(unsafe { duckdb_create_timestamp_ms(raw) })
+    }
+}
+
+/// A [`NaiveDateTime`] that maps to DuckDB's **nanosecond**-precision timestamp
+/// (`TIMESTAMP_NS`).
+pub struct TimestampNs(pub NaiveDateTime);
+
+impl DuckDialect for TimestampNs {
+    fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
+        // SAFETY: `value` is a valid duckdb_value of type TIMESTAMP_NS.
+        // `duckdb_get_timestamp_ns` reads the nanoseconds-since-epoch field.
+        let raw = unsafe { duckdb_get_timestamp_ns(value) };
+        // truncate nanos → micros (chrono NaiveDateTime has microsecond precision)
+        micros_to_naive_datetime_chrono(raw.nanos / 1_000).map(TimestampNs)
+    }
+
+    fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
+        let micros = self.0.and_utc().timestamp() * 1_000_000
+            + self.0.and_utc().timestamp_subsec_micros() as i64;
+        let nanos = micros.saturating_mul(1_000);
+        let raw = duckdb_timestamp_ns { nanos };
+        // SAFETY: `raw` is a fully initialized `duckdb_timestamp_ns` value.
+        Ok(unsafe { duckdb_create_timestamp_ns(raw) })
     }
 }
 
@@ -163,6 +224,53 @@ mod test_chrono_conversion {
         let mut duck_value = datetime.to_duck().unwrap();
         let converted_datetime = NaiveDateTime::from_duck(duck_value).unwrap();
         assert_eq!(datetime, converted_datetime);
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+    }
+
+    #[test]
+    fn test_timestamp_s_conversion() {
+        use super::*;
+        let dt = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        );
+        let wrapper = TimestampS(dt);
+        let mut duck_value = wrapper.to_duck().unwrap();
+        let converted = TimestampS::from_duck(duck_value).unwrap();
+        // Seconds precision: sub-second part is truncated.
+        assert_eq!(converted.0.date(), dt.date());
+        assert_eq!(converted.0.second(), dt.second());
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+    }
+
+    #[test]
+    fn test_timestamp_ms_conversion() {
+        use super::*;
+        let dt = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2024, 6, 15).unwrap(),
+            NaiveTime::from_hms_milli_opt(12, 30, 45, 500).unwrap(),
+        );
+        let wrapper = TimestampMs(dt);
+        let mut duck_value = wrapper.to_duck().unwrap();
+        let converted = TimestampMs::from_duck(duck_value).unwrap();
+        // Millisecond precision: sub-millisecond part may be truncated.
+        assert_eq!(converted.0.date(), dt.date());
+        assert_eq!(converted.0.second(), dt.second());
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+    }
+
+    #[test]
+    fn test_timestamp_ns_conversion() {
+        use super::*;
+        let dt = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2024, 12, 31).unwrap(),
+            NaiveTime::from_hms_micro_opt(23, 59, 59, 123_456).unwrap(),
+        );
+        let wrapper = TimestampNs(dt);
+        let mut duck_value = wrapper.to_duck().unwrap();
+        let converted = TimestampNs::from_duck(duck_value).unwrap();
+        // Nanosecond precision: microsecond part is preserved.
+        assert_eq!(converted.0, dt);
         unsafe { duckdb_destroy_value(&mut duck_value) };
     }
 }

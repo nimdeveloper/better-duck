@@ -8,8 +8,9 @@ pub mod appendable;
 pub mod blob;
 #[cfg(feature = "chrono")]
 mod date_chrono;
+/// No-chrono date/time component types and DuckDialect implementations.
 #[cfg(not(feature = "chrono"))]
-mod date_native;
+pub mod date_native;
 /// Numeric DuckDB type conversions and `AppendAble` implementations.
 pub mod numeric;
 /// The `DuckValue` enum representing any DuckDB column value.
@@ -142,13 +143,13 @@ macro_rules! impl_duck_dialect {
     ($rust_type:ty, $duck_type:expr, $to_duck_fn:expr, $from_duck_fn:expr) => {
         impl DuckDialect for $rust_type {
             fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
-                // SAFETY: `value` is a valid duckdb_value of the matching DuckDB type.
                 // if type_ != $duck_type {
                 //     return Err(DuckDBConversionError::TypeMismatch {
                 //         expected: $duck_type,
                 //         found: type_,
                 //     });
                 // }
+                // SAFETY: `value` is a valid duckdb_value of the matching DuckDB type.
                 Ok(unsafe { $from_duck_fn(value) })
             }
 

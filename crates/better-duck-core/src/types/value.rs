@@ -8,13 +8,14 @@ use std::time::{Duration, SystemTime};
 
 use crate::{
     ffi::{
-        duckdb_destroy_logical_type, duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
-        duckdb_free, duckdb_get_type_id, duckdb_interval, duckdb_list_entry,
-        duckdb_list_vector_get_child, duckdb_list_vector_get_size, duckdb_logical_type,
-        duckdb_string_t, duckdb_string_t_data, duckdb_string_t_length, duckdb_type,
-        duckdb_validity_row_is_valid, duckdb_vector, duckdb_vector_get_column_type,
-        duckdb_vector_get_data, duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
-        DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
+        self as ffi, duckdb_destroy_logical_type, duckdb_enum_dictionary_size,
+        duckdb_enum_dictionary_value, duckdb_free, duckdb_from_date, duckdb_from_time,
+        duckdb_get_type_id, duckdb_list_entry, duckdb_list_vector_get_child,
+        duckdb_list_vector_get_size, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
+        duckdb_string_t_length, duckdb_type, duckdb_validity_row_is_valid, duckdb_vector,
+        duckdb_vector_get_column_type, duckdb_vector_get_data, duckdb_vector_get_validity, idx_t,
+        DUCKDB_TYPE_DUCKDB_TYPE_ARRAY, DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
         DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE,
         DUCKDB_TYPE_DUCKDB_TYPE_ENUM, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT,
         DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
@@ -67,27 +68,53 @@ pub enum DuckValue {
     Float(f32),
     /// The value is a f64.
     Double(f64),
-    /// The value is a timestamp.
+    /// The value is a microsecond-precision timestamp (`TIMESTAMP`).
     #[cfg(feature = "chrono")]
     Timestamp(NaiveDateTime),
+    /// The value is a microsecond-precision timestamp (`TIMESTAMP`).
     #[cfg(not(feature = "chrono"))]
     Timestamp(SystemTime),
 
-    /// The value is a date
+    /// The value is a second-precision timestamp (`TIMESTAMP_S`).
+    #[cfg(feature = "chrono")]
+    TimestampS(NaiveDateTime),
+    /// The value is a second-precision timestamp (`TIMESTAMP_S`).
+    #[cfg(not(feature = "chrono"))]
+    TimestampS(SystemTime),
+
+    /// The value is a millisecond-precision timestamp (`TIMESTAMP_MS`).
+    #[cfg(feature = "chrono")]
+    TimestampMs(NaiveDateTime),
+    /// The value is a millisecond-precision timestamp (`TIMESTAMP_MS`).
+    #[cfg(not(feature = "chrono"))]
+    TimestampMs(SystemTime),
+
+    /// The value is a nanosecond-precision timestamp (`TIMESTAMP_NS`).
+    #[cfg(feature = "chrono")]
+    TimestampNs(NaiveDateTime),
+    /// The value is a nanosecond-precision timestamp (`TIMESTAMP_NS`).
+    #[cfg(not(feature = "chrono"))]
+    TimestampNs(SystemTime),
+
+    /// The value is a date.
     #[cfg(feature = "chrono")]
     Date(NaiveDate),
+    /// The value is a date.
     #[cfg(not(feature = "chrono"))]
-    Date(NaiveDate), // TODO: We need a type for this!
+    Date(crate::types::date_native::DuckDate),
 
-    /// The value is a time
+    /// The value is a time.
     #[cfg(feature = "chrono")]
     Time(NaiveTime),
+    /// The value is a time.
+    // TODO: nanosecond TIME precision (`duckdb_get_time_ns`) unavailable in libduckdb-sys 1.3.1
     #[cfg(not(feature = "chrono"))]
-    Time(NaiveTime), // TODO: We need a type for this!
+    Time(crate::types::date_native::DuckTime),
 
-    /// The value is an interval (month, day, nano)
+    /// The value is an interval (months, days, microseconds).
     #[cfg(feature = "chrono")]
     Interval(Duration),
+    /// The value is an interval (months, days, microseconds).
     #[cfg(not(feature = "chrono"))]
     Interval(Duration),
 
@@ -134,6 +161,18 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
             DuckValueRef::Timestamp(t) => DuckValue::Timestamp(*t),
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::Timestamp(t) => DuckValue::Timestamp(*t),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::TimestampS(t) => DuckValue::TimestampS(*t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimestampS(t) => DuckValue::TimestampS(*t),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::TimestampMs(t) => DuckValue::TimestampMs(*t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimestampMs(t) => DuckValue::TimestampMs(*t),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::TimestampNs(t) => DuckValue::TimestampNs(*t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimestampNs(t) => DuckValue::TimestampNs(*t),
             #[cfg(feature = "chrono")]
             DuckValueRef::Date(d) => DuckValue::Date(*d),
             #[cfg(not(feature = "chrono"))]
@@ -274,7 +313,9 @@ impl DuckValue {
                     //     });
                 }
                 #[cfg(not(feature = "chrono"))]
-                todo!()
+                {
+                    todo!()
+                }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIME => {
                 let value = unsafe {
