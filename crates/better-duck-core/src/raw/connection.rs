@@ -301,37 +301,17 @@ impl RawConnection {
         }
     }
 
-    /// Prepares `sql`, binds `binds` in order, executes it as DML, and returns the
-    /// number of affected rows.
+    /// Prepares `sql`, binds `binds` in order, and executes the statement.
     ///
-    /// Returns `0` for DDL statements. Pass `&mut []` for not parameterized queries.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::DuckDBFailure`] if preparation, binding, or execution fails.
-    #[must_use = "the affected row count should be checked"]
-    pub fn execute_dml(
-        &mut self,
-        sql: impl AsRef<str>,
-        binds: &mut [&mut dyn AppendAble],
-    ) -> Result<u64> {
-        let mut stmt = CachedStatement::prepare(self, sql)?;
-        for (i, bind) in binds.iter_mut().enumerate() {
-            stmt.bind((i + 1) as u64, *bind)?;
-        }
-        stmt.execute_dml()
-    }
-
-    /// Prepares `sql`, binds `binds` in order, executes it as a query, and returns a
-    /// row iterator.
-    ///
-    /// Pass `&mut []` for not parameterized queries.
+    /// Works for all statement types. Use [`DuckResult::changes()`] for affected rows
+    /// (DML), or iterate the result for SELECT / RETURNING queries.
+    /// Pass `&mut []` for unparameterised queries.
     ///
     /// # Errors
     ///
     /// Returns [`Error::DuckDBFailure`] if preparation, binding, or execution fails.
-    #[must_use = "the DuckResult must be consumed to read rows"]
-    pub fn execute_query(
+    #[must_use = "the DuckResult carries both affected-row count (.changes()) and row iterator"]
+    pub fn execute(
         &mut self,
         sql: impl AsRef<str>,
         binds: &mut [&mut dyn AppendAble],
@@ -340,7 +320,7 @@ impl RawConnection {
         for (i, bind) in binds.iter_mut().enumerate() {
             stmt.bind((i + 1) as u64, *bind)?;
         }
-        stmt.execute_query()
+        stmt.execute()
     }
 }
 
