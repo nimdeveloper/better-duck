@@ -1,10 +1,8 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! DuckDB backend for the Diesel ORM.
 //!
 //! Provides [`DuckDbConnection`] and DuckDB-specific SQL types via the
 //! [`sql_types`] module.
-
-#![warn(clippy::undocumented_unsafe_blocks)]
-#![warn(missing_docs)]
 
 pub mod backend;
 pub mod qb;
