@@ -8,14 +8,16 @@ use std::time::{Duration, SystemTime};
 
 use crate::{
     ffi::{
-        self as ffi, duckdb_destroy_logical_type, duckdb_enum_dictionary_size,
-        duckdb_enum_dictionary_value, duckdb_free, duckdb_from_date, duckdb_from_time,
-        duckdb_get_type_id, duckdb_list_entry, duckdb_list_vector_get_child,
-        duckdb_list_vector_get_size, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
-        duckdb_string_t_length, duckdb_type, duckdb_validity_row_is_valid, duckdb_vector,
-        duckdb_vector_get_column_type, duckdb_vector_get_data, duckdb_vector_get_validity, idx_t,
-        DUCKDB_TYPE_DUCKDB_TYPE_ARRAY, DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
-        DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
+        duckdb_create_date, duckdb_create_interval, duckdb_create_time,
+        duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_date,
+        duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_enum_dictionary_size,
+        duckdb_enum_dictionary_value, duckdb_free, duckdb_get_type_id, duckdb_interval,
+        duckdb_list_entry, duckdb_list_vector_get_child, duckdb_list_vector_get_size,
+        duckdb_logical_type, duckdb_string_t, duckdb_string_t_data, duckdb_string_t_length,
+        duckdb_time, duckdb_time_tz, duckdb_timestamp, duckdb_type, duckdb_validity_row_is_valid,
+        duckdb_vector, duckdb_vector_get_column_type, duckdb_vector_get_data,
+        duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
+        DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
         DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE,
         DUCKDB_TYPE_DUCKDB_TYPE_ENUM, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT,
         DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
@@ -24,10 +26,12 @@ use crate::{
         DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL,
         DUCKDB_TYPE_DUCKDB_TYPE_TIME, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP,
         DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_MS, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_NS,
-        DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S, DUCKDB_TYPE_DUCKDB_TYPE_TINYINT,
-        DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT,
-        DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER, DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT,
-        DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT, DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
+        DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_TZ,
+        DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS, DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ,
+        DUCKDB_TYPE_DUCKDB_TYPE_TINYINT, DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER,
+        DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
     },
     types::value_ref::DuckValueRef,
 };
@@ -96,6 +100,13 @@ pub enum DuckValue {
     #[cfg(not(feature = "chrono"))]
     TimestampNs(SystemTime),
 
+    /// The value is a UTC timestamp with timezone (`TIMESTAMP_TZ`).
+    #[cfg(feature = "chrono")]
+    TimestampTz(DateTime<Utc>),
+    /// The value is a UTC timestamp with timezone (`TIMESTAMP_TZ`).
+    #[cfg(not(feature = "chrono"))]
+    TimestampTz(SystemTime),
+
     /// The value is a date.
     #[cfg(feature = "chrono")]
     Date(NaiveDate),
@@ -107,7 +118,6 @@ pub enum DuckValue {
     #[cfg(feature = "chrono")]
     Time(NaiveTime),
     /// The value is a time.
-    // TODO: nanosecond TIME precision (`duckdb_get_time_ns`) unavailable in libduckdb-sys 1.3.1
     #[cfg(not(feature = "chrono"))]
     Time(crate::types::date_native::DuckTime),
 
@@ -117,6 +127,20 @@ pub enum DuckValue {
     /// The value is an interval (months, days, microseconds).
     #[cfg(not(feature = "chrono"))]
     Interval(Duration),
+
+    /// The value is a microsecond-precision time with timezone (`TIME_TZ`).
+    #[cfg(feature = "chrono")]
+    TimeTz(crate::types::date_chrono::TimeTz),
+    /// The value is a microsecond-precision time with timezone (`TIME_TZ`).
+    #[cfg(not(feature = "chrono"))]
+    TimeTz(crate::types::date_native::DuckTimeTz),
+
+    /// The value is a nanosecond-precision time (`TIME_NS`).
+    #[cfg(feature = "chrono")]
+    TimeNs(NaiveTime),
+    /// The value is a nanosecond-precision time (`TIME_NS`).
+    #[cfg(not(feature = "chrono"))]
+    TimeNs(crate::types::date_native::DuckTimeNs),
 
     /// The value is a text string.
     Text(String),
@@ -174,6 +198,10 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::TimestampNs(t) => DuckValue::TimestampNs(*t),
             #[cfg(feature = "chrono")]
+            DuckValueRef::TimestampTz(t) => DuckValue::TimestampTz(*t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimestampTz(t) => DuckValue::TimestampTz(*t),
+            #[cfg(feature = "chrono")]
             DuckValueRef::Date(d) => DuckValue::Date(*d),
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::Date(d) => DuckValue::Date(*d),
@@ -185,6 +213,14 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
             DuckValueRef::Interval(i) => DuckValue::Interval(*i),
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::Interval(i) => DuckValue::Interval(*i),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::TimeTz(t) => DuckValue::TimeTz(*t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimeTz(t) => DuckValue::TimeTz(*t),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::TimeNs(t) => DuckValue::TimeNs(*t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimeNs(t) => DuckValue::TimeNs(*t),
             DuckValueRef::Text(s) => DuckValue::Text(s.to_string()),
             #[cfg(feature = "decimal")]
             DuckValueRef::Decimal(d) => DuckValue::Decimal(*d),
@@ -215,21 +251,6 @@ macro_rules! simple_type_conversion {
         let primitive_value = unsafe { *values.add($row_index as usize) as $duck_primitive_type };
         Ok($rust_type(primitive_value))
     }};
-}
-
-/// Converts microseconds since the Unix epoch to a `NaiveDateTime`.
-///
-/// Used by all TIMESTAMP variant chunk-read paths.
-#[cfg(feature = "chrono")]
-fn micros_to_naive_datetime(micros: i64) -> Result<NaiveDateTime, DuckDBConversionError> {
-    DateTime::<Utc>::from_timestamp(
-        micros / 1_000_000,
-        ((micros % 1_000_000).unsigned_abs() * 1_000) as u32,
-    )
-    .map(|dt| dt.naive_utc())
-    .ok_or_else(|| {
-        DuckDBConversionError::ConversionError(format!("timestamp {micros}µs out of range"))
-    })
 }
 
 impl DuckValue {
@@ -297,101 +318,129 @@ impl DuckValue {
                 simple_type_conversion!(row_idx, val, DuckValue::Double, f64)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_DATE => {
-                // SAFETY: `duckdb_vector_get_data(val)` returns a valid pointer to the
-                // vector's data buffer; `row_idx` is within [0, row_count) so the offset
-                // is in-bounds. The column type is DATE (i32 days since epoch).
-                let value = unsafe {
-                    *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
-                        as duckdb_value
-                };
+                // SAFETY: DATE stores i32 days-since-epoch in packed array layout.
+                // `row_idx` is within [0, chunk row count), so the offset is in-bounds.
+                let value =
+                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
+                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
                     chrono::NaiveDate::from_duck(value).map(DuckValue::Date)
-                    // return NaiveDate::from_num_days_from_ce_opt(days + 719_163)
-                    //     .map(DuckValue::Date)
-                    //     .ok_or_else(|| {
-                    //         DuckDBConversionError::ConversionError(format!(
-                    //             "date value {days} out of representable range"
-                    //         ))
-                    //     });
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    todo!()
+                    crate::types::date_native::DuckDate::from_duck(value).map(DuckValue::Date)
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIME => {
-                // SAFETY: Same as DATE arm — `row_idx` is in-bounds; column type is TIME
-                // (i32 microseconds since midnight).
-                let value = unsafe {
-                    *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
-                        as duckdb_value
-                };
+                // SAFETY: TIME stores i64 microseconds-since-midnight in packed array layout.
+                // `row_idx` is within [0, chunk row count), so the offset is in-bounds.
+                let value =
+                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
+                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
                     chrono::NaiveTime::from_duck(value).map(DuckValue::Time)
-                    // let secs = (micros / 1_000_000) as u32;
-                    // let nano = ((micros % 1_000_000) * 1_000) as u32;
-                    // NaiveTime::from_num_seconds_from_midnight_opt(secs, nano)
-                    //     .map(DuckValue::Time)
-                    //     .ok_or_else(|| {
-                    //         DuckDBConversionError::ConversionError(format!(
-                    //             "time {micros}µs out of range"
-                    //         ))
-                    //     })
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    // TODO
-                    todo!()
+                    crate::types::date_native::DuckTime::from_duck(value).map(DuckValue::Time)
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP => {
-                // SAFETY: Same as DATE arm — column type is TIMESTAMP (i64 microseconds
-                // since Unix epoch), read via i32-aligned pointer (as duckdb_value cast).
-                let value = unsafe {
-                    *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
-                        as duckdb_value
-                };
+                // SAFETY: TIMESTAMP stores i64 microseconds-since-epoch in packed array layout.
+                // `row_idx` is within [0, chunk row count), so the offset is in-bounds.
+                let value =
+                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
+                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
-                    return chrono::NaiveDateTime::from_duck(value).map(DuckValue::Timestamp);
-                    // return micros_to_naive_datetime(micros).map(DuckValue::Timestamp);
+                    chrono::NaiveDateTime::from_duck(value).map(DuckValue::Timestamp)
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    // TODO
-                    todo!()
-                    // use std::time::UNIX_EPOCH;
-                    // let secs = (micros / 1_000_000) as u64;
-                    // let sub_micros = (micros % 1_000_000) as u32;
-                    // return Ok(DuckValue::Timestamp(
-                    //     UNIX_EPOCH + std::time::Duration::new(secs, sub_micros * 1_000),
-                    // ));
+                    std::time::SystemTime::from_duck(value).map(DuckValue::Timestamp)
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL => {
-                let value = unsafe {
-                    *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
-                        as duckdb_value
-                };
+                // SAFETY: INTERVAL stores duckdb_interval { months: i32, days: i32, micros: i64 }
+                // (16 bytes) in packed array layout. `row_idx` is within [0, chunk row count).
+                let value =
+                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
+                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
                     return chrono::Duration::from_duck(value).map(DuckValue::Interval);
-                    // let total_micros = (iv.months as i64)
-                    //     .saturating_mul(30 * 86_400 * 1_000_000)
-                    //     .saturating_add((iv.days as i64).saturating_mul(86_400 * 1_000_000))
-                    //     .saturating_add(iv.micros);
-                    // Ok(DuckValue::Interval(Duration::microseconds(total_micros)))
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    return std::time::Duration::from_duck(val).map(DuckValue::Interval);
-                    // let total_micros = (iv.months as u64)
-                    //     .saturating_mul(30 * 86_400 * 1_000_000)
-                    //     .saturating_add((iv.days as u64).saturating_mul(86_400 * 1_000_000))
-                    //     .saturating_add(iv.micros as u64);
-                    // return Ok(DuckValue::Interval(std::time::Duration::from_micros(total_micros)));
+                    return std::time::Duration::from_duck(value).map(DuckValue::Interval);
+                }
+            },
+            DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S => {
+                // SAFETY: TIMESTAMP_S stores i64 seconds-since-epoch in packed array layout.
+                // `row_idx` is within [0, chunk_size).
+                let value =
+                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
+                        as duckdb_value;
+                #[cfg(feature = "chrono")]
+                {
+                    crate::types::date_chrono::TimestampS::from_duck(value)
+                        .map(|t| DuckValue::TimestampS(t.0))
+                }
+                #[cfg(not(feature = "chrono"))]
+                {
+                    use std::time::UNIX_EPOCH;
+                    let abs = secs.unsigned_abs();
+                    Ok(DuckValue::TimestampS(if secs >= 0 {
+                        UNIX_EPOCH + std::time::Duration::from_secs(abs)
+                    } else {
+                        UNIX_EPOCH - std::time::Duration::from_secs(abs)
+                    }))
+                }
+            },
+            DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_MS => {
+                // SAFETY: TIMESTAMP_MS stores i64 milliseconds-since-epoch in packed array layout.
+                // `row_idx` is within [0, chunk_size).
+                let value =
+                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
+                        as duckdb_value;
+                #[cfg(feature = "chrono")]
+                {
+                    crate::types::date_chrono::TimestampMs::from_duck(value)
+                        .map(|t| DuckValue::TimestampMs(t.0))
+                }
+                #[cfg(not(feature = "chrono"))]
+                {
+                    use std::time::UNIX_EPOCH;
+                    let abs = millis.unsigned_abs();
+                    Ok(DuckValue::TimestampMs(if millis >= 0 {
+                        UNIX_EPOCH + std::time::Duration::from_millis(abs)
+                    } else {
+                        UNIX_EPOCH - std::time::Duration::from_millis(abs)
+                    }))
+                }
+            },
+            DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_NS => {
+                // SAFETY: TIMESTAMP_NS stores i64 nanoseconds-since-epoch in packed array layout.
+                // `row_idx` is within [0, chunk_size). Full nanosecond precision is preserved.
+                let value =
+                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
+                        as duckdb_value;
+                #[cfg(feature = "chrono")]
+                {
+                    crate::types::date_chrono::TimestampNs::from_duck(value)
+                        .map(|t| DuckValue::TimestampNs(t.0))
+                }
+                #[cfg(not(feature = "chrono"))]
+                {
+                    use std::time::UNIX_EPOCH;
+                    let abs = nanos.unsigned_abs();
+                    Ok(DuckValue::TimestampNs(if nanos >= 0 {
+                        UNIX_EPOCH + std::time::Duration::from_nanos(abs)
+                    } else {
+                        UNIX_EPOCH - std::time::Duration::from_nanos(abs)
+                    }))
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR | DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL => {
@@ -490,31 +539,62 @@ impl DuckValue {
                     )))
                 }
             },
-            // DUCKDB_TYPE_DUCKDB_TYPE_ARRAY => {
-            // let list_data =
-            //     unsafe { *data_ptr.add(row_idx as usize) as *mut duckdb_list_entry };
-            // let list_child = unsafe { duckdb_list_vector_get_child(val) as duckdb_vector };
-            // let child_validity = unsafe { duckdb_vector_get_validity(list_child) };
-            // let list_length = unsafe { duckdb_list_vector_get_size(list_child) };
-            // // TODO: What happens for this var, if the function returns error? (Maybe using https://docs.rs/scopeguard/latest/scopeguard/)
-
-            // unsafe {
-            //     for each in 0..(*list_data).offset {
-            //         let val = DuckValue::Null;
-            //         if duckdb_validity_row_is_valid(child_validity, each) {
-            //             let mut raw_child_type: duckdb_logical_type =
-            //                 duckdb_vector_get_column_type(list_child);
-            //             let child_type = duckdb_get_type_id(raw_child_type);
-            //             duckdb_destroy_logical_type(&mut raw_child_type);
-            //             val = DuckValue::from_duckdb_vec(list_child, child_type, each)?;
-            //         } // otherwise it's NULL value
-            //         unsafe { ptr::write(vec_ptr.add(each as usize), val) };
-            //     }
-            // };
-            // Ok(DuckValue::Array(unsafe { vec_data.assume_init() }))
-            // TODO: We need to move the functionality outside!
-            //  as we need to handle the type and access the column itself (Also we need to destroy each Item after inserting them in rust data types!)
-            // },
+            DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_TZ => {
+                // SAFETY: TIMESTAMP_TZ stores i64 UTC microseconds-since-epoch in packed array
+                // layout (same wire format as TIMESTAMP). `row_idx` is within [0, chunk_size).
+                let value =
+                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
+                        as duckdb_value;
+                #[cfg(feature = "chrono")]
+                {
+                    crate::types::date_chrono::TimestampTz::from_duck(value)
+                        .map(|t| DuckValue::TimestampTz(t.0))
+                }
+                #[cfg(not(feature = "chrono"))]
+                {
+                    use std::time::UNIX_EPOCH;
+                    let secs = micros / 1_000_000;
+                    let sub_micros = (micros % 1_000_000).unsigned_abs() as u32;
+                    let abs_secs = secs.unsigned_abs();
+                    let st = if secs >= 0 {
+                        UNIX_EPOCH + std::time::Duration::new(abs_secs, sub_micros * 1_000)
+                    } else {
+                        UNIX_EPOCH - std::time::Duration::new(abs_secs, sub_micros * 1_000)
+                    };
+                    Ok(DuckValue::TimestampTz(st))
+                }
+            },
+            DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ => {
+                // SAFETY: TIME_TZ stores duckdb_time_tz { bits: u64 } (8 bytes) in packed array
+                // layout. `row_idx` is within [0, chunk_size).
+                let value =
+                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
+                        as duckdb_value;
+                #[cfg(feature = "chrono")]
+                {
+                    crate::types::date_chrono::TimeTz::from_duck(value).map(DuckValue::TimeTz)
+                }
+                #[cfg(not(feature = "chrono"))]
+                {
+                    crate::types::date_native::DuckTimeTz::from_duck(dv).map(DuckValue::TimeTz)
+                }
+            },
+            DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS => {
+                // SAFETY: TIME_NS stores i64 nanoseconds-since-midnight in packed array layout.
+                // `row_idx` is within [0, chunk_size). Full nanosecond precision is preserved.
+                let value =
+                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
+                        as duckdb_value;
+                #[cfg(feature = "chrono")]
+                {
+                    crate::types::date_chrono::TimeNs::from_duck(value)
+                        .map(|t| DuckValue::TimeNs(t.0))
+                }
+                #[cfg(not(feature = "chrono"))]
+                {
+                    crate::types::date_native::DuckTimeNs::from_duck(value).map(DuckValue::TimeNs)
+                }
+            },
             DUCKDB_TYPE_DUCKDB_TYPE_MAP => {
                 // TODO: We need to move the functionality outside!
                 //  as we need to handle the type and access the column itself (Also we need to destroy each Item after inserting them in rust data types!)

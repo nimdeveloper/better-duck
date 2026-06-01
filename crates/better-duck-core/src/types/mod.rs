@@ -6,8 +6,9 @@
 pub mod appendable;
 /// `Vec<u8>` DuckDB BLOB type conversion.
 pub mod blob;
+/// Chrono date/time types and `DuckDialect` implementations for the `chrono` feature.
 #[cfg(feature = "chrono")]
-mod date_chrono;
+pub mod date_chrono;
 /// No-chrono date/time component types and DuckDialect implementations.
 #[cfg(not(feature = "chrono"))]
 pub mod date_native;

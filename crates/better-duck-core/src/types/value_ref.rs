@@ -71,6 +71,13 @@ pub enum DuckValueRef<'a> {
     #[cfg(not(feature = "chrono"))]
     TimestampNs(SystemTime),
 
+    /// The value is a UTC timestamp with timezone (`TIMESTAMP_TZ`).
+    #[cfg(feature = "chrono")]
+    TimestampTz(chrono::DateTime<chrono::Utc>),
+    /// The value is a UTC timestamp with timezone (`TIMESTAMP_TZ`).
+    #[cfg(not(feature = "chrono"))]
+    TimestampTz(SystemTime),
+
     /// The value is a date.
     #[cfg(feature = "chrono")]
     Date(NaiveDate),
@@ -82,7 +89,6 @@ pub enum DuckValueRef<'a> {
     #[cfg(feature = "chrono")]
     Time(NaiveTime),
     /// The value is a time.
-    // TODO: nanosecond TIME precision (`duckdb_get_time_ns`) unavailable in libduckdb-sys 1.3.1
     #[cfg(not(feature = "chrono"))]
     Time(crate::types::date_native::DuckTime),
 
@@ -92,6 +98,20 @@ pub enum DuckValueRef<'a> {
     /// The value is an interval.
     #[cfg(not(feature = "chrono"))]
     Interval(Duration),
+
+    /// The value is a microsecond-precision time with timezone (`TIME_TZ`).
+    #[cfg(feature = "chrono")]
+    TimeTz(crate::types::date_chrono::TimeTz),
+    /// The value is a microsecond-precision time with timezone (`TIME_TZ`).
+    #[cfg(not(feature = "chrono"))]
+    TimeTz(crate::types::date_native::DuckTimeTz),
+
+    /// The value is a nanosecond-precision time (`TIME_NS`).
+    #[cfg(feature = "chrono")]
+    TimeNs(chrono::NaiveTime),
+    /// The value is a nanosecond-precision time (`TIME_NS`).
+    #[cfg(not(feature = "chrono"))]
+    TimeNs(crate::types::date_native::DuckTimeNs),
 
     /// The value is a text string, using Cow for zero-copy when possible
     Text(Cow<'a, str>),
@@ -146,6 +166,10 @@ impl From<&DuckValue> for DuckValueRef<'_> {
             #[cfg(not(feature = "chrono"))]
             DuckValue::TimestampNs(t) => DuckValueRef::TimestampNs(*t),
             #[cfg(feature = "chrono")]
+            DuckValue::TimestampTz(t) => DuckValueRef::TimestampTz(*t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::TimestampTz(t) => DuckValueRef::TimestampTz(*t),
+            #[cfg(feature = "chrono")]
             DuckValue::Date(d) => DuckValueRef::Date(*d),
             #[cfg(not(feature = "chrono"))]
             DuckValue::Date(d) => DuckValueRef::Date(*d),
@@ -157,6 +181,14 @@ impl From<&DuckValue> for DuckValueRef<'_> {
             DuckValue::Interval(i) => DuckValueRef::Interval(*i),
             #[cfg(not(feature = "chrono"))]
             DuckValue::Interval(i) => DuckValueRef::Interval(*i),
+            #[cfg(feature = "chrono")]
+            DuckValue::TimeTz(t) => DuckValueRef::TimeTz(*t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::TimeTz(t) => DuckValueRef::TimeTz(*t),
+            #[cfg(feature = "chrono")]
+            DuckValue::TimeNs(t) => DuckValueRef::TimeNs(*t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::TimeNs(t) => DuckValueRef::TimeNs(*t),
             DuckValue::Text(s) => DuckValueRef::Text(Cow::Owned(s.clone())),
             #[cfg(feature = "decimal")]
             DuckValue::Decimal(d) => DuckValueRef::Decimal(*d),

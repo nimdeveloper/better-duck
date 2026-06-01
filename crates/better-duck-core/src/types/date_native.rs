@@ -1,14 +1,18 @@
 use super::*;
 
 use crate::ffi::{
-    duckdb_create_date, duckdb_create_interval, duckdb_create_time, duckdb_create_timestamp,
-    duckdb_date, duckdb_date_struct, duckdb_from_date, duckdb_from_time, duckdb_get_date,
-    duckdb_get_interval, duckdb_get_time, duckdb_get_timestamp, duckdb_interval, duckdb_time,
-    duckdb_time_struct, duckdb_timestamp, duckdb_to_date, duckdb_to_time,
+    duckdb_create_date, duckdb_create_interval, duckdb_create_time, duckdb_create_time_ns,
+    duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_date, duckdb_date_struct,
+    duckdb_from_date, duckdb_from_time, duckdb_from_time_tz, duckdb_get_date, duckdb_get_interval,
+    duckdb_get_time, duckdb_get_time_ns, duckdb_get_time_tz, duckdb_get_timestamp, duckdb_interval,
+    duckdb_time, duckdb_time_ns, duckdb_time_struct, duckdb_time_tz, duckdb_timestamp,
+    duckdb_to_date, duckdb_to_time,
 };
 use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 
-// No-chrono date/time component types
+/*
+* No-chrono date/time component types
+*/
 
 /// A calendar date without time-zone awareness, for use without the `chrono` feature.
 ///
@@ -26,13 +30,12 @@ pub struct DuckDate {
     pub day: u8,
 }
 
-/// A time-of-day value without a date or time-zone, for use without the `chrono` feature.
+/// A microsecond-precision time-of-day value, for use without the `chrono` feature.
 ///
 /// Stores the hour/minute/second and sub-second microseconds decoded from DuckDB's
 /// `TIME` storage (int64 microseconds-since-midnight decoded via `duckdb_from_time`).
 ///
-// TODO: implement Display/arithmetic if needed by callers;
-// TODO: nanosecond TIME precision (`duckdb_get_time_ns`) is unavailable in libduckdb-sys 1.3.1
+// TODO: implement Display/arithmetic if needed by callers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DuckTime {
     /// Hour in `[0, 23]`.
@@ -44,6 +47,44 @@ pub struct DuckTime {
     /// Sub-second part in microseconds `[0, 999_999]`.
     pub micros: u32,
 }
+
+/// A nanosecond-precision time-of-day value, for use without the `chrono` feature.
+///
+/// Decoded from DuckDB's `TIME_NS` storage (int64 nanoseconds-since-midnight via
+/// `duckdb_get_time_ns`, available since libduckdb-sys 1.10503.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DuckTimeNs {
+    /// Hour in `[0, 23]`.
+    pub hour: u8,
+    /// Minute in `[0, 59]`.
+    pub min: u8,
+    /// Second in `[0, 59]`.
+    pub sec: u8,
+    /// Sub-second part in nanoseconds `[0, 999_999_999]`.
+    pub nanos: u32,
+}
+
+/// A microsecond-precision time-of-day with UTC offset, for use without the `chrono` feature.
+///
+/// Decoded from DuckDB's `TIME WITH TIME ZONE` (`TIME_TZ`) storage via `duckdb_get_time_tz`
+/// and `duckdb_from_time_tz`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DuckTimeTz {
+    /// Hour in `[0, 23]`.
+    pub hour: u8,
+    /// Minute in `[0, 59]`.
+    pub min: u8,
+    /// Second in `[0, 59]`.
+    pub sec: u8,
+    /// Sub-second part in microseconds `[0, 999_999]`.
+    pub micros: u32,
+    /// UTC offset in seconds (e.g. `3600` = UTC+1).
+    pub offset_secs: i32,
+}
+
+/*
+* DuckDialect implementations
+*/
 
 impl DuckDialect for DuckDate {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
@@ -60,7 +101,7 @@ impl DuckDialect for DuckDate {
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
         let date_struct =
             duckdb_date_struct { year: self.year, month: self.month as i8, day: self.day as i8 };
-        // SAFETY: `date_struct` is a fully initialised `duckdb_date_struct`.
+        // SAFETY: `date_struct` is a fully initialized `duckdb_date_struct`.
         // `duckdb_to_date` converts it to the packed `duckdb_date { days: i32 }` form.
         let raw_date = unsafe { duckdb_to_date(date_struct) };
         // SAFETY: `raw_date` is a valid `duckdb_date` value.
@@ -92,7 +133,7 @@ impl DuckDialect for DuckTime {
             sec: self.sec as i8,
             micros: self.micros as i32,
         };
-        // SAFETY: `time_struct` is a fully initialised `duckdb_time_struct`.
+        // SAFETY: `time_struct` is a fully initialized `duckdb_time_struct`.
         // `duckdb_to_time` converts it to the packed `duckdb_time { micros: i64 }` form.
         let raw_time = unsafe { duckdb_to_time(time_struct) };
         // SAFETY: `raw_time` is a valid `duckdb_time` value.
@@ -100,7 +141,62 @@ impl DuckDialect for DuckTime {
     }
 }
 
-// StdDuration (Interval)
+impl DuckDialect for DuckTimeNs {
+    fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
+        // SAFETY: `value` is a valid duckdb_value of type TIME_NS.
+        // `duckdb_get_time_ns` reads the nanoseconds-since-midnight field.
+        let raw = unsafe { duckdb_get_time_ns(value) };
+        let nanos = raw.nanos;
+        let total_secs = (nanos / 1_000_000_000) as u64;
+        let sub_nanos = (nanos % 1_000_000_000).unsigned_abs() as u32;
+        let hour = (total_secs / 3_600) as u8;
+        let min = ((total_secs % 3_600) / 60) as u8;
+        let sec = (total_secs % 60) as u8;
+        Ok(DuckTimeNs { hour, min, sec, nanos: sub_nanos })
+    }
+
+    fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
+        let total_nanos = (self.hour as i64) * 3_600_000_000_000
+            + (self.min as i64) * 60_000_000_000
+            + (self.sec as i64) * 1_000_000_000
+            + self.nanos as i64;
+        let raw = duckdb_time_ns { nanos: total_nanos };
+        // SAFETY: `raw` is a fully initialized `duckdb_time_ns` value.
+        Ok(unsafe { duckdb_create_time_ns(raw) })
+    }
+}
+
+impl DuckDialect for DuckTimeTz {
+    fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
+        // SAFETY: `value` is a valid duckdb_value of type TIME_TZ.
+        // `duckdb_get_time_tz` unpacks the 64-bit packed representation.
+        let raw_tz = unsafe { duckdb_get_time_tz(value) };
+        // `duckdb_from_time_tz` decomposes into duckdb_time_tz_struct { time, offset }.
+        // SAFETY: `raw_tz` is a valid `duckdb_time_tz` obtained from `duckdb_get_time_tz`.
+        let parts = unsafe { duckdb_from_time_tz(raw_tz) };
+        let ts = &parts.time;
+        Ok(DuckTimeTz {
+            hour: ts.hour as u8,
+            min: ts.min as u8,
+            sec: ts.sec as u8,
+            micros: ts.micros as u32,
+            offset_secs: parts.offset,
+        })
+    }
+
+    fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
+        let micros = (self.hour as i64) * 3_600_000_000
+            + (self.min as i64) * 60_000_000
+            + (self.sec as i64) * 1_000_000
+            + self.micros as i64;
+        // SAFETY: `duckdb_create_time_tz` packs micros + offset into a `duckdb_time_tz`.
+        let raw_tz = unsafe { crate::ffi::duckdb_create_time_tz(micros, self.offset_secs) };
+        // SAFETY: `raw_tz` is a valid `duckdb_time_tz` created above.
+        Ok(unsafe { duckdb_create_time_tz_value(raw_tz) })
+    }
+}
+
+// ── StdDuration (Interval) ────────────────────────────────────────────────────
 
 impl DuckDialect for StdDuration {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
@@ -108,32 +204,30 @@ impl DuckDialect for StdDuration {
         // `duckdb_get_interval` reads the months/days/micros fields.
         unsafe {
             let interval = duckdb_get_interval(value);
-            // DuckDB interval: months, days, micros
             let total_days = interval.months as u64 * 30 + interval.days as u64;
             let total_micros = total_days * 86_400_000_000 + interval.micros as u64;
             Ok(StdDuration::from_micros(total_micros))
         }
     }
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
-        // This is a simplification: only micros, no months/days
         let micros = self.as_micros();
         let interval = duckdb_interval { months: 0, days: 0, micros: micros as i64 };
-        // SAFETY: `interval` is a fully initialised `duckdb_interval` value.
+        // SAFETY: `interval` is a fully initialized `duckdb_interval` value.
         Ok(unsafe { duckdb_create_interval(interval) })
     }
 }
 
-// SystemTime (Timestamp, microsecond precision)
+// ── SystemTime (Timestamp, microsecond precision) ─────────────────────────────
 
 impl DuckDialect for SystemTime {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
-        // SAFETY: `value` is a valid duckdb_value of type TIMESTAMP.
+        // SAFETY: `value` is a valid duckdb_value of type TIMESTAMP (or TIMESTAMP_TZ).
         // `duckdb_get_timestamp` reads the microseconds-since-epoch field.
         let raw_ts = unsafe { duckdb_get_timestamp(value) };
         let micros = raw_ts.micros;
         let secs = micros / 1_000_000;
         let sub_micros = (micros % 1_000_000) as u32;
-        Ok(UNIX_EPOCH + StdDuration::new(secs as u64, sub_micros * 1000))
+        Ok(UNIX_EPOCH + StdDuration::new(secs as u64, sub_micros * 1_000))
     }
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
         let duration = self
@@ -141,7 +235,7 @@ impl DuckDialect for SystemTime {
             .map_err(|e| DuckDBConversionError::ConversionError(e.to_string()))?;
         let micros = duration.as_secs() as i64 * 1_000_000 + (duration.subsec_micros() as i64);
         let raw_ts = duckdb_timestamp { micros };
-        // SAFETY: `raw_ts` is a fully initialised `duckdb_timestamp` value.
+        // SAFETY: `raw_ts` is a fully initialized `duckdb_timestamp` value.
         Ok(unsafe { duckdb_create_timestamp(raw_ts) })
     }
 }
