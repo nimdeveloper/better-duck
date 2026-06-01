@@ -201,7 +201,7 @@ impl DuckDialect for Decimal {
         }
 
         let val = duckdb_decimal { scale, width: num_width as u8, value: hugeint_from_i128(value) };
-        // SAFETY: `val` is a fully initialised `duckdb_decimal` with valid scale/width.
+        // SAFETY: `val` is a fully initialized `duckdb_decimal` with valid scale/width.
         Ok(unsafe { duckdb_create_decimal(val) })
     }
 }

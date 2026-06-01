@@ -212,6 +212,10 @@ impl Connection {
     }
 }
 
+// SAFETY: DuckDB connections are safe to move between threads (they do not hold
+// thread-local state). Each `Connection` owns its `RawConnection` exclusively.
+unsafe impl Send for Connection {}
+
 #[cfg(test)]
 mod connection_tests {
     use super::*;

@@ -33,12 +33,7 @@ pub trait AppendAble {
         &mut self,
         _idx: u64,
         _stmt: duckdb_prepared_statement,
-    ) -> Result<()> {
-        unimplemented!(
-            "Statement bind is not implemented for this type: {}",
-            std::any::type_name::<Self>()
-        );
-    }
+    ) -> Result<()>;
 
     /// Appends this value to an appender row.
     ///
@@ -57,10 +52,5 @@ pub trait AppendAble {
     fn appender_append(
         &mut self,
         _appender: duckdb_appender,
-    ) -> Result<()> {
-        unimplemented!(
-            "Appender append is not implemented for this type: {}",
-            std::any::type_name::<Self>()
-        );
-    }
+    ) -> Result<()>;
 }
