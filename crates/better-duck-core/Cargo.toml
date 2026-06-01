@@ -1,8 +1,8 @@
 [package]
-name               = "better-duck-core"
-version.workspace  = true
-edition.workspace  = true
-license.workspace  = true
+name                  = "better-duck-core"
+version.workspace     = true
+edition.workspace     = true
+license.workspace     = true
 description.workspace = true
 repository.workspace  = true
 homepage.workspace    = true

@@ -21,16 +21,16 @@ diesel = { workspace = true, features = [
 ] }
 diesel_derives = { workspace = true }
 thiserror      = { workspace = true }
-itoa           = "1.0.0"
+itoa           = "1.0.18"
 rust_decimal   = { workspace = true, optional = true }
 chrono         = { workspace = true, optional = true }
 
 [features]
-default = ["bundled", "chrono", "decimal"]
+default = ["bundled", "decimal"]
 bundled = ["better-duck-core/bundled"]
 chrono  = ["better-duck-core/chrono", "diesel/chrono", "dep:chrono"]
 decimal = ["better-duck-core/decimal", "dep:rust_decimal"]
 r2d2    = ["diesel/r2d2"]
 
 [dev-dependencies]
-tempfile = "3.3"
+tempfile = "3.27.0"
