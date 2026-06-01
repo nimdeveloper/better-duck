@@ -391,6 +391,11 @@ impl DuckValue {
                 #[cfg(not(feature = "chrono"))]
                 {
                     use std::time::UNIX_EPOCH;
+                    let secs = unsafe {
+                        use libduckdb_sys::duckdb_get_timestamp_s;
+                        duckdb_get_timestamp_s(value)
+                    }
+                    .seconds;
                     let abs = secs.unsigned_abs();
                     Ok(DuckValue::TimestampS(if secs >= 0 {
                         UNIX_EPOCH + std::time::Duration::from_secs(abs)
@@ -413,6 +418,12 @@ impl DuckValue {
                 #[cfg(not(feature = "chrono"))]
                 {
                     use std::time::UNIX_EPOCH;
+
+                    let millis = unsafe {
+                        use libduckdb_sys::duckdb_get_timestamp_ms;
+                        duckdb_get_timestamp_ms(value)
+                    }
+                    .millis;
                     let abs = millis.unsigned_abs();
                     Ok(DuckValue::TimestampMs(if millis >= 0 {
                         UNIX_EPOCH + std::time::Duration::from_millis(abs)
@@ -435,6 +446,11 @@ impl DuckValue {
                 #[cfg(not(feature = "chrono"))]
                 {
                     use std::time::UNIX_EPOCH;
+                    let nanos = unsafe {
+                        use libduckdb_sys::duckdb_get_timestamp_ns;
+                        duckdb_get_timestamp_ns(value)
+                    }
+                    .nanos;
                     let abs = nanos.unsigned_abs();
                     Ok(DuckValue::TimestampNs(if nanos >= 0 {
                         UNIX_EPOCH + std::time::Duration::from_nanos(abs)
@@ -547,12 +563,20 @@ impl DuckValue {
                         as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
+                    // TODO: We need to use timezone here, but how?
                     crate::types::date_chrono::TimestampTz::from_duck(value)
                         .map(|t| DuckValue::TimestampTz(t.0))
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
+                    // TODO: We need to use timezone here, but how?
                     use std::time::UNIX_EPOCH;
+
+                    let micros = unsafe {
+                        use libduckdb_sys::duckdb_get_timestamp_tz;
+                        duckdb_get_timestamp_tz(value)
+                    }
+                    .micros;
                     let secs = micros / 1_000_000;
                     let sub_micros = (micros % 1_000_000).unsigned_abs() as u32;
                     let abs_secs = secs.unsigned_abs();
@@ -572,11 +596,13 @@ impl DuckValue {
                         as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
+                    // TODO: We need to use timezone here, but how?
                     crate::types::date_chrono::TimeTz::from_duck(value).map(DuckValue::TimeTz)
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    crate::types::date_native::DuckTimeTz::from_duck(dv).map(DuckValue::TimeTz)
+                    // TODO: We need to use timezone here, but how?
+                    crate::types::date_native::DuckTimeTz::from_duck(value).map(DuckValue::TimeTz)
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS => {

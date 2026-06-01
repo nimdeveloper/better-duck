@@ -2,11 +2,10 @@ use super::*;
 
 use crate::ffi::{
     duckdb_create_date, duckdb_create_interval, duckdb_create_time, duckdb_create_time_ns,
-    duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_date, duckdb_date_struct,
-    duckdb_from_date, duckdb_from_time, duckdb_from_time_tz, duckdb_get_date, duckdb_get_interval,
-    duckdb_get_time, duckdb_get_time_ns, duckdb_get_time_tz, duckdb_get_timestamp, duckdb_interval,
-    duckdb_time, duckdb_time_ns, duckdb_time_struct, duckdb_time_tz, duckdb_timestamp,
-    duckdb_to_date, duckdb_to_time,
+    duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_date_struct, duckdb_from_date,
+    duckdb_from_time, duckdb_from_time_tz, duckdb_get_date, duckdb_get_interval, duckdb_get_time,
+    duckdb_get_time_ns, duckdb_get_time_tz, duckdb_get_timestamp, duckdb_interval, duckdb_time_ns,
+    duckdb_time_struct, duckdb_timestamp, duckdb_to_date, duckdb_to_time,
 };
 use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 
@@ -196,7 +195,7 @@ impl DuckDialect for DuckTimeTz {
     }
 }
 
-// ── StdDuration (Interval) ────────────────────────────────────────────────────
+// StdDuration (Interval)
 
 impl DuckDialect for StdDuration {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
@@ -217,7 +216,7 @@ impl DuckDialect for StdDuration {
     }
 }
 
-// ── SystemTime (Timestamp, microsecond precision) ─────────────────────────────
+// SystemTime (Timestamp, microsecond precision)
 
 impl DuckDialect for SystemTime {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
@@ -225,9 +224,13 @@ impl DuckDialect for SystemTime {
         // `duckdb_get_timestamp` reads the microseconds-since-epoch field.
         let raw_ts = unsafe { duckdb_get_timestamp(value) };
         let micros = raw_ts.micros;
-        let secs = micros / 1_000_000;
-        let sub_micros = (micros % 1_000_000) as u32;
-        Ok(UNIX_EPOCH + StdDuration::new(secs as u64, sub_micros * 1_000))
+
+        let abs = micros.unsigned_abs();
+        Ok(if micros >= 0 {
+            UNIX_EPOCH + StdDuration::from_micros(abs)
+        } else {
+            UNIX_EPOCH - StdDuration::from_micros(abs)
+        })
     }
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
         let duration = self
