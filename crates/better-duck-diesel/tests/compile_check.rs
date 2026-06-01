@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Compile-only test that verifies the full Diesel DSL type-checks against
 //! [`DuckDbConnection`]. No database is opened; all functions are dead code.
 
