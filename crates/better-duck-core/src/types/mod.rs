@@ -34,7 +34,7 @@ use crate::ffi::{
 ///
 /// This trait provides methods to safely convert DuckDB values to Rust types and vice versa.
 /// Implementors must ensure that conversions are performed only between compatible types to
-/// avoid undefined behaviour.
+/// avoid undefined behavior.
 ///
 /// # Safety
 ///
@@ -143,12 +143,6 @@ macro_rules! impl_duck_dialect {
     ($rust_type:ty, $duck_type:expr, $to_duck_fn:expr, $from_duck_fn:expr) => {
         impl DuckDialect for $rust_type {
             fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
-                // if type_ != $duck_type {
-                //     return Err(DuckDBConversionError::TypeMismatch {
-                //         expected: $duck_type,
-                //         found: type_,
-                //     });
-                // }
                 // SAFETY: `value` is a valid duckdb_value of the matching DuckDB type.
                 Ok(unsafe { $from_duck_fn(value) })
             }

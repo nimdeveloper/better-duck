@@ -158,7 +158,7 @@ impl Statement<'_> {
         }
     }
 
-    /// Returns `true` if the prepared statement pointer is null (not initialised).
+    /// Returns `true` if the prepared statement pointer is null (not initialized).
     #[allow(unused)]
     #[inline]
     pub fn is_null(&self) -> bool {
@@ -261,7 +261,7 @@ impl CachedStatement {
     /// Returns [`Error::DuckDBFailure`] if execution fails.
     #[must_use = "the DuckResult carries both affected-row count (.changes()) and row iterator — consume it"]
     pub fn execute(&mut self) -> Result<DuckResult> {
-        // SAFETY: `mem::zeroed::<ffi::duckdb_result>()` is the correct initialisation
+        // SAFETY: `mem::zeroed::<ffi::duckdb_result>()` is the correct initialization
         // for a DuckDB result output parameter.
         let mut out = Box::new(unsafe { mem::zeroed::<ffi::duckdb_result>() });
         // SAFETY: `self.stmt` is a valid prepared statement. `&mut *out` provides a
