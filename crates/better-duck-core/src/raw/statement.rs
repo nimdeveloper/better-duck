@@ -180,6 +180,112 @@ impl Drop for Statement<'_> {
     }
 }
 
+/// A prepared statement that can be reset and re-executed with different bindings.
+///
+/// Unlike [`Statement`], `CachedStatement` is not tied to a connection's lifetime.
+/// It remains valid as long as the underlying database is open.
+///
+/// This type is used by Diesel statement cache
+/// (`StatementCache<DuckDb, CachedStatement>`).
+pub struct CachedStatement {
+    /// SQL source retained for statement-cache key comparisons.
+    ///
+    /// Not read within `better-duck-core` itself; consumed by
+    /// `StatementCache` implementation in `better-duck-diesel`.
+    #[allow(dead_code)]
+    pub(crate) sql: Box<str>,
+    /// Raw prepared-statement handle.
+    stmt: ffi::duckdb_prepared_statement,
+}
+
+impl CachedStatement {
+    /// Prepares `sql` against the given connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DuckDBFailure`] if DuckDB cannot parse or plan the query,
+    /// or [`Error::NulError`] if `sql` contains an interior nul byte.
+    pub fn prepare(
+        conn: &RawConnection,
+        sql: impl AsRef<str>,
+    ) -> Result<Self> {
+        let sql_str = sql.as_ref();
+        let mut stmt: ffi::duckdb_prepared_statement = ptr::null_mut();
+        let c_str = CString::new(sql_str)?;
+        // SAFETY: `conn.con` is a valid open duckdb_connection. `c_str` is a
+        // valid null-terminated CString that outlives this call. `&mut stmt` is a
+        // valid output pointer. `duckdb_prepare` does not retain either pointer.
+        let r = unsafe { ffi::duckdb_prepare(conn.con, c_str.as_ptr(), &mut stmt) };
+        result_from_duckdb_prepare(r, stmt)?;
+        Ok(CachedStatement { sql: sql_str.into(), stmt })
+    }
+
+    /// Resets all parameter bindings so the statement can be re-executed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DuckDBFailure`] if the DuckDB clear-bindings call fails.
+    pub fn reset_bindings(&mut self) -> Result<()> {
+        // SAFETY: `self.stmt` is a valid prepared statement — the Drop impl enforces this.
+        let r = unsafe { ffi::duckdb_clear_bindings(self.stmt) };
+        if r == ffi::DuckDBSuccess {
+            Ok(())
+        } else {
+            Err(Error::DuckDBFailure(ffi::Error::new(r), None))
+        }
+    }
+
+    /// Binds `value` at the given **1-based** parameter index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying DuckDB bind call fails or `idx` is out of range.
+    pub fn bind<T: AppendAble + ?Sized>(
+        &mut self,
+        idx: u64,
+        value: &mut T,
+    ) -> Result<()> {
+        value.stmt_append(idx, self.stmt)
+    }
+
+    /// Executes the prepared statement and returns the result.
+    ///
+    /// Works for all statement types:
+    /// - **SELECT** — iterate rows via the [`Iterator`] impl on [`DuckResult`].
+    /// - **INSERT / UPDATE / DELETE** — check [`DuckResult::changes()`] for affected rows.
+    /// - **DDL** (`CREATE TABLE` etc.) — `.changes()` returns `0`, no rows to iterate.
+    /// - **INSERT … RETURNING** — iterate rows and/or call `.changes()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DuckDBFailure`] if execution fails.
+    #[must_use = "the DuckResult carries both affected-row count (.changes()) and row iterator — consume it"]
+    pub fn execute(&mut self) -> Result<DuckResult> {
+        // SAFETY: `mem::zeroed::<ffi::duckdb_result>()` is the correct initialisation
+        // for a DuckDB result output parameter.
+        let mut out = Box::new(unsafe { mem::zeroed::<ffi::duckdb_result>() });
+        // SAFETY: `self.stmt` is a valid prepared statement. `&mut *out` provides a
+        // raw pointer to the heap-allocated zeroed duckdb_result output buffer.
+        // Ownership of `*out` transfers to DuckResult::new; its Drop calls
+        // duckdb_destroy_result exactly once.
+        let r = unsafe {
+            ffi::duckdb_execute_prepared(self.stmt, &mut *out as *mut ffi::duckdb_result)
+        };
+        result_from_duckdb_result(r, &mut *out as *mut ffi::duckdb_result)?;
+        Ok(DuckResult::new(*out))
+    }
+}
+
+impl Drop for CachedStatement {
+    fn drop(&mut self) {
+        if !self.stmt.is_null() {
+            // SAFETY: `self.stmt` is a valid prepared statement not yet destroyed.
+            // The null guard ensures this path runs at most once.
+            unsafe { ffi::duckdb_destroy_prepare(&mut self.stmt) };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
