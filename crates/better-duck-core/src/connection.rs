@@ -110,28 +110,53 @@ impl Connection {
         self.0.query(sql).map(|_| ())
     }
 
-    /// Executes a single SQL statement and discards the result.
+    /// Prepares and executes a SQL statement, returning the result.
+    ///
+    /// Works for all statement types:
+    /// - **SELECT** — iterate rows via the [`Iterator`](std::iter::Iterator) impl on
+    ///   [`DuckResult`].
+    /// - **INSERT / UPDATE / DELETE** — check [`DuckResult::changes()`] for affected rows.
+    /// - **DDL** (`CREATE TABLE`, `DROP TABLE`, etc.) — `.changes()` returns `0`, no rows.
+    /// - **INSERT … RETURNING** — both iterate rows and check `.changes()`.
+    ///
+    /// For parameterised statements use [`execute_with`](Connection::execute_with).
     ///
     /// # Errors
     ///
-    /// Returns an error if the statement fails to execute.
+    /// Returns an error if DuckDB cannot prepare or execute the statement.
     ///
-    /// # Example
+    /// # Examples
     ///
-    /// ```rust,no_run
-    /// use better_duck_core::connection::Connection;
-    ///
-    /// let mut conn = Connection::open_in_memory().unwrap();
-    /// conn.execute("CREATE TABLE foo (bar INTEGER)").unwrap();
-    /// conn.execute("INSERT INTO foo VALUES (42)").unwrap();
+    /// ```rust
+    /// # use better_duck_core::connection::Connection;
+    /// # fn main() -> better_duck_core::error::Result<()> {
+    /// let mut conn = Connection::open_in_memory()?;
+    /// conn.execute_batch("CREATE TABLE t (id INTEGER)")?;
+    /// let n = conn.execute("INSERT INTO t VALUES (1)")?.changes();
+    /// assert_eq!(n, 1);
+    /// # Ok(())
+    /// # }
     /// ```
-    #[must_use = "execute result should be checked"]
-    #[allow(unused)]
+    #[must_use = "the DuckResult carries both affected-row count (.changes()) and a row iterator — consume it"]
     pub fn execute(
         &mut self,
         sql: impl AsRef<str>,
-    ) -> Result<()> {
-        self.0.query(sql).map(|_| ())
+    ) -> Result<DuckResult> {
+        self.0.execute(sql, &mut [])
+    }
+
+    /// Prepares and executes a parameterised SQL statement, returning the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if preparation, binding, or execution fails.
+    #[must_use = "the DuckResult carries both affected-row count (.changes()) and a row iterator — consume it"]
+    pub fn execute_with(
+        &mut self,
+        sql: impl AsRef<str>,
+        binds: &mut [&mut dyn AppendAble],
+    ) -> Result<DuckResult> {
+        self.0.execute(sql, binds)
     }
 
     /// Creates an appender for bulk-inserting rows into the given table and schema.
@@ -147,95 +172,6 @@ impl Connection {
         schema: &str,
     ) -> Result<Appender> {
         self.0.appender(table, schema)
-    }
-}
-
-impl Connection {
-    /// Executes a DML statement and returns the number of affected rows.
-    ///
-    /// Returns `0` for DDL statements such as `CREATE TABLE`. For parameterised
-    /// statements use [`execute_dml_with`](Connection::execute_dml_with).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if DuckDB cannot prepare or execute the statement.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use better_duck_core::connection::Connection;
-    /// # fn main() -> better_duck_core::error::Result<()> {
-    /// let mut conn = Connection::open_in_memory()?;
-    /// conn.execute_batch("CREATE TABLE t (id INTEGER)")?;
-    /// let n = conn.execute_dml("INSERT INTO t VALUES (1)")?;
-    /// assert_eq!(n, 1);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use = "the affected row count should be checked"]
-    pub fn execute_dml(
-        &mut self,
-        sql: impl AsRef<str>,
-    ) -> Result<u64> {
-        self.0.execute_dml(sql, &mut [])
-    }
-
-    /// Executes a DML statement with bound parameters and returns the affected row count.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if preparation, binding, or execution fails.
-    #[must_use = "the affected row count should be checked"]
-    pub fn execute_dml_with(
-        &mut self,
-        sql: impl AsRef<str>,
-        binds: &mut [&mut dyn AppendAble],
-    ) -> Result<u64> {
-        self.0.execute_dml(sql, binds)
-    }
-
-    /// Executes a SELECT query and returns a row iterator.
-    ///
-    /// For parameterised queries use [`query_rows_with`](Connection::query_rows_with).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if preparation or execution fails.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use better_duck_core::{connection::Connection, types::value::DuckValue};
-    /// # fn main() -> better_duck_core::error::Result<()> {
-    /// let mut conn = Connection::open_in_memory()?;
-    /// conn.execute_batch("CREATE TABLE t (v INTEGER)")?;
-    /// conn.execute_batch("INSERT INTO t VALUES (7)")?;
-    /// let mut rows = conn.query_rows("SELECT v FROM t")?;
-    /// let row = rows.next().expect("expected a row")?;
-    /// assert_eq!(row.get("v"), Some(&DuckValue::Int(7)));
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use = "the DuckResult must be consumed to read rows"]
-    pub fn query_rows(
-        &mut self,
-        sql: impl AsRef<str>,
-    ) -> Result<DuckResult> {
-        self.0.execute_query(sql, &mut [])
-    }
-
-    /// Executes a SELECT query with bound parameters and returns a row iterator.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if preparation, binding, or execution fails.
-    #[must_use = "the DuckResult must be consumed to read rows"]
-    pub fn query_rows_with(
-        &mut self,
-        sql: impl AsRef<str>,
-        binds: &mut [&mut dyn AppendAble],
-    ) -> Result<DuckResult> {
-        self.0.execute_query(sql, binds)
     }
 }
 
