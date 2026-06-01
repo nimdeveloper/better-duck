@@ -1,0 +1,26 @@
+[package]
+name = "better-duck-diesel"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+better-duck-core = { path = "../better-duck-core", default-features = false, version = "0.1.0" }
+diesel = { workspace = true, features = [
+    "uuid",
+    "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
+] }
+diesel_derives = { workspace = true }
+thiserror = { workspace = true }
+itoa = "1.0.0"
+rust_decimal = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+
+[features]
+default = ["bundled", "chrono", "decimal"]
+bundled = ["better-duck-core/bundled"]
+chrono = ["better-duck-core/chrono", "diesel/chrono", "dep:chrono"]
+decimal = ["better-duck-core/decimal", "dep:rust_decimal"]
+r2d2 = ["diesel/r2d2"]
+
+[dev-dependencies]
+tempfile = "3.3"
