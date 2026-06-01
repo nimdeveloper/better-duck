@@ -12,14 +12,6 @@ impl DuckDialect for String {
         // SAFETY: `value` is a valid duckdb_value of VARCHAR type. `duckdb_get_varchar`
         // returns a heap-allocated null-terminated C string that must be freed with
         // `duckdb_free`. We copy the bytes before freeing.
-        // if type_ != DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR
-        //     && type_ != DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL
-        // {
-        //     return Err(DuckDBConversionError::TypeMismatch {
-        //         expected: DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
-        //         found: type_,
-        //     });
-        // }
         unsafe {
             let c_str = duckdb_get_varchar(value);
             if c_str.is_null() {

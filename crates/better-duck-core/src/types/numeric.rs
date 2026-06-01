@@ -35,12 +35,6 @@ macro_rules! impl_duck_dialect {
     ($rust_type:ty, $duck_type:expr, $to_duck_fn:expr, $from_duck_fn:expr) => {
         impl DuckDialect for $rust_type {
             fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
-                // if type_ != $duck_type {
-                //     return Err(DuckDBConversionError::TypeMismatch {
-                //         expected: $duck_type,
-                //         found: type_,
-                //     });
-                // }
                 // SAFETY: `value` is a valid duckdb_value of the matching DuckDB type.
                 // The caller is responsible for passing the correct type.
                 Ok(unsafe { $from_duck_fn(value) })
@@ -133,12 +127,6 @@ fn hugeint_from_i128(hugeint: i128) -> duckdb_hugeint {
 
 impl DuckDialect for i128 {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
-        // if type_ != DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT {
-        //     return Err(DuckDBConversionError::TypeMismatch {
-        //         expected: DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT,
-        //         found: type_,
-        //     });
-        // }
         // SAFETY: `value` is a valid duckdb_value of type HUGEINT. The caller ensures
         // the correct type is passed.
         let hugeint: duckdb_hugeint = unsafe { duckdb_get_hugeint(value) };
@@ -181,12 +169,6 @@ impl DuckDialect for Decimal {
     where
         Self: Sized,
     {
-        // if type_ != DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL {
-        //     return Err(super::DuckDBConversionError::TypeMismatch {
-        //         expected: DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
-        //         found: type_,
-        //     });
-        // }
         // SAFETY: `value` is a valid duckdb_value of type DECIMAL.
         let decimal_value = unsafe { duckdb_get_decimal(value) };
 
