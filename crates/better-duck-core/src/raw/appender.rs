@@ -81,7 +81,7 @@ impl Appender {
     #[allow(dead_code)]
     pub fn save(&mut self) -> Result<()> {
         // SAFETY: `self.inn` is a valid duckdb_appender.
-        unsafe { self.flush() }
+        self.flush()
     }
 
     /// Flushes the appender's internal buffer.
@@ -89,9 +89,9 @@ impl Appender {
     /// # Safety
     ///
     /// `self.inn` must be a valid, non-null `duckdb_appender`.
-    unsafe fn flush(&mut self) -> Result<()> {
+    fn flush(&mut self) -> Result<()> {
         // SAFETY: `self.inn` is a valid duckdb_appender (enforced by the caller).
-        let res = duckdb_appender_flush(self.inn);
+        let res = unsafe { duckdb_appender_flush(self.inn) };
         result_from_duckdb_appender(res, &mut self.inn)
     }
 }
@@ -105,7 +105,7 @@ impl Drop for Appender {
         // SAFETY: `self.inn` is non-null (checked above); it is a valid duckdb_appender
         // created in `new`. After close and destroy it is invalidated. The null guard
         // above ensures this runs at most once.
-        if let Err(e) = unsafe { self.flush() } {
+        if let Err(e) = self.flush() {
             eprintln!("[better-duck] appender flush on drop failed: {e}");
         }
         // SAFETY: `self.inn` is a valid, non-null duckdb_appender (null guard above).

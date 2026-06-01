@@ -15,7 +15,7 @@ pub struct DataChunk(
 
 impl DataChunk {
     #[inline]
-    pub unsafe fn new(data_chunk: ffi::duckdb_data_chunk) -> Result<DataChunk> {
+    pub fn new(data_chunk: ffi::duckdb_data_chunk) -> Result<DataChunk> {
         if data_chunk.is_null() {
             return Err(crate::error::Error::DuckDBFailure(
                 ffi::Error::new(ffi::DuckDBError),
@@ -25,11 +25,14 @@ impl DataChunk {
         Ok(DataChunk(data_chunk, 0))
     }
     #[inline]
-    pub unsafe fn from_result(result: &DuckResult) -> Option<Result<DataChunk>> {
-        let data_chunk = ffi::duckdb_fetch_chunk(**result);
+    pub fn from_result(result: &DuckResult) -> Option<Result<DataChunk>> {
+        // SAFETY: `result` is a valid duckdb_result; the returned chunk (if non-null)
+        // is owned by us and must be destroyed via `duckdb_destroy_data_chunk`.
+        let data_chunk = unsafe { ffi::duckdb_fetch_chunk(**result) };
         if data_chunk.is_null() {
             return None;
         }
+        // SAFETY: `data_chunk` is non-null and freshly obtained from `duckdb_fetch_chunk`.
         let res = DataChunk::new(data_chunk);
         Some(res)
     }
@@ -40,15 +43,18 @@ impl DataChunk {
         self.1
     }
     #[inline]
-    pub unsafe fn row_count(&self) -> u64 {
-        ffi::duckdb_data_chunk_get_size(self.0)
+    pub fn row_count(&self) -> u64 {
+        // SAFETY: `self.0` is a valid duckdb_data_chunk (enforced by the caller).
+        unsafe { ffi::duckdb_data_chunk_get_size(self.0) }
     }
 
     #[inline]
-    pub unsafe fn next_row(&mut self) -> Option<u64> {
+    pub fn next_row(&mut self) -> Option<u64> {
+        // SAFETY: `self.0` is a valid duckdb_data_chunk (enforced by the caller).
         if self.row_count() < 1 {
             return None;
         }
+        // SAFETY: same as above.
         if self.1 >= self.row_count() {
             // Reset the row index and fetch the next chunk
             self.1 = 0;

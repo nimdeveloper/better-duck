@@ -26,7 +26,7 @@ use super::data_chunk::DataChunk;
 /// # Safety
 ///
 /// This struct interacts directly with the DuckDB C API. The underlying
-/// `duckdb_result` must be a fully initialised result from a successful query.
+/// `duckdb_result` must be a fully initialized result from a successful query.
 pub struct DuckResult {
     res: ffi::duckdb_result,
     chunk: Option<DataChunk>,
@@ -44,7 +44,7 @@ impl DuckResult {
     /// an invalid state (should not happen for a result from a successful query).
     pub fn new(mut result: ffi::duckdb_result) -> DuckResult {
         let mut res = DuckResult {
-            // SAFETY: `result` is a valid, fully initialised `duckdb_result` that was
+            // SAFETY: `result` is a valid, fully initialized `duckdb_result` that was
             // returned by `duckdb_query` or `duckdb_execute_prepared` and is now moved
             // (heap-allocated by the caller). `duckdb_column_count` reads from this struct.
             col_count: unsafe { duckdb_column_count(&mut result) },
@@ -60,12 +60,12 @@ impl DuckResult {
 
     #[inline]
     // SAFETY: caller must ensure `col_index` is within [0, col_count).
-    unsafe fn get_col_type(
+    fn get_col_type(
         &mut self,
         col_index: u64,
     ) -> DUCKDB_TYPE {
         // SAFETY: `self.res` is valid; `col_index` is within bounds (enforced by caller).
-        ffi::duckdb_column_type(&mut self.res, col_index)
+        unsafe { ffi::duckdb_column_type(&mut self.res, col_index) }
     }
 
     #[inline]
@@ -76,14 +76,14 @@ impl DuckResult {
         for each in 0..self.col_count {
             // SAFETY: `each` is within [0, col_count), satisfying the invariant of
             // `get_col_type`.
-            let temp_col_type = unsafe { self.get_col_type(each) };
-            // SAFETY: `col_types[each]` is within the allocation; we write an initialised
+            let temp_col_type = self.get_col_type(each);
+            // SAFETY: `col_types[each]` is within the allocation; we write an initialized
             // `DUCKDB_TYPE` value.
             unsafe {
                 col_types[each as usize].as_mut_ptr().write(temp_col_type);
             }
         }
-        // SAFETY: every element in `col_types` has been initialised above.
+        // SAFETY: every element in `col_types` has been initialized above.
         self.column_types = unsafe { col_types.assume_init() };
         Ok(())
     }
@@ -125,7 +125,7 @@ impl DuckResult {
             if self.chunk.is_none() {
                 // SAFETY: `self.res` is a valid duckdb_result. `DataChunk::from_result`
                 // calls `duckdb_fetch_chunk` which returns null when exhausted.
-                let next_chunk = unsafe { DataChunk::from_result(self) };
+                let next_chunk = DataChunk::from_result(self);
                 match next_chunk {
                     None => return None,
                     Some(Err(_)) => {
@@ -139,12 +139,12 @@ impl DuckResult {
             }
             let the_chunk = self.chunk.as_mut().unwrap();
             // SAFETY: `the_chunk` wraps a valid duckdb_data_chunk.
-            if unsafe { the_chunk.row_count() } == 0 {
+            if the_chunk.row_count() == 0 {
                 self.chunk = None;
                 return None;
             }
             // SAFETY: `the_chunk` wraps a valid duckdb_data_chunk whose row count > 0.
-            if unsafe { the_chunk.next_row() }.is_some() {
+            if the_chunk.next_row().is_some() {
                 let row_chunk = **the_chunk;
                 if row_chunk.is_null() {
                     panic!("Data chunk is null");

@@ -51,7 +51,7 @@ impl Connection {
         config: Config,
     ) -> Result<Connection> {
         let c_path = path_to_cstring(path.as_ref())?;
-        let config = config.with("duckdb_api", "rust").unwrap();
+        let config = config.with("duckdb_api", "rust")?;
         RawConnection::open_with_flags(&c_path, config).map(Connection)
     }
 }
@@ -95,11 +95,14 @@ impl Connection {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
-    /// use better_duck_core::connection::Connection;
-    /// let mut conn = Connection::open_in_memory().unwrap();
-    /// conn.execute_batch("CREATE TABLE t (id INTEGER)").unwrap();
-    /// conn.execute_batch("INSERT INTO t VALUES (1)").unwrap();
+    /// ```rust
+    /// # use better_duck_core::connection::Connection;
+    /// # fn main() -> better_duck_core::error::Result<()> {
+    /// let mut conn = Connection::open_in_memory()?;
+    /// conn.execute_batch("CREATE TABLE t (id INTEGER)")?;
+    /// conn.execute_batch("INSERT INTO t VALUES (1)")?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use = "execute_batch result should be checked"]
     #[allow(unused)]
@@ -119,7 +122,7 @@ impl Connection {
     /// - **DDL** (`CREATE TABLE`, `DROP TABLE`, etc.) — `.changes()` returns `0`, no rows.
     /// - **INSERT … RETURNING** — both iterate rows and check `.changes()`.
     ///
-    /// For parameterised statements use [`execute_with`](Connection::execute_with).
+    /// For parameterized statements use [`execute_with`](Connection::execute_with).
     ///
     /// # Errors
     ///
@@ -145,7 +148,7 @@ impl Connection {
         self.0.execute(sql, &mut [])
     }
 
-    /// Prepares and executes a parameterised SQL statement, returning the result.
+    /// Prepares and executes a parameterized SQL statement, returning the result.
     ///
     /// # Errors
     ///
