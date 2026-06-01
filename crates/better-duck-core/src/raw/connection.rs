@@ -70,6 +70,13 @@ impl RawDatabase {
         Ok(RawDatabase(db))
     }
 }
+// SAFETY: The DuckDB database handle is internally reference-counted and thread-safe.
+// Multiple connections (each on its own thread) may share the same database handle.
+unsafe impl Send for RawDatabase {}
+// SAFETY: Read-only access to the database handle (`db.0`) does not mutate DuckDB state.
+// All mutation goes through `duckdb_connect`/`duckdb_close` which are themselves thread-safe.
+unsafe impl Sync for RawDatabase {}
+
 impl Drop for RawDatabase {
     #[inline]
     fn drop(&mut self) {

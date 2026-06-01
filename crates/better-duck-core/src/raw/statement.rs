@@ -286,6 +286,11 @@ impl Drop for CachedStatement {
     }
 }
 
+// SAFETY: A prepared statement is tied to its database, not to a thread.
+// The database handle is reference-counted via Arc<RawDatabase>, making it
+// safe to move a CachedStatement to another thread.
+unsafe impl Send for CachedStatement {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

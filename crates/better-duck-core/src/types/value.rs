@@ -479,6 +479,7 @@ impl DuckValue {
                     //     std::ffi::CStr::from_ptr(c_str_ptr).to_string_lossy().into_owned();
                 }
             },
+            #[cfg(feature = "decimal")]
             DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL => {
                 // SAFETY: `val` is a valid duckdb_vector; the data pointer is valid for
                 // the chunk's row count. We read the raw i64 at `row_idx` as a decimal.
