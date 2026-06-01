@@ -1,9 +1,9 @@
 #![allow(non_snake_case)]
 #[cfg(feature = "chrono")]
-use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use std::borrow::Cow;
 #[cfg(not(feature = "chrono"))]
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "decimal")]
 use rust_decimal::Decimal;
@@ -43,27 +43,53 @@ pub enum DuckValueRef<'a> {
     Float(f32),
     /// The value is a f64.
     Double(f64),
-    /// The value is a timestamp.
+    /// The value is a microsecond-precision timestamp (`TIMESTAMP`).
     #[cfg(feature = "chrono")]
     Timestamp(NaiveDateTime),
+    /// The value is a microsecond-precision timestamp (`TIMESTAMP`).
     #[cfg(not(feature = "chrono"))]
     Timestamp(SystemTime),
 
-    /// The value is a date
+    /// The value is a second-precision timestamp (`TIMESTAMP_S`).
+    #[cfg(feature = "chrono")]
+    TimestampS(NaiveDateTime),
+    /// The value is a second-precision timestamp (`TIMESTAMP_S`).
+    #[cfg(not(feature = "chrono"))]
+    TimestampS(SystemTime),
+
+    /// The value is a millisecond-precision timestamp (`TIMESTAMP_MS`).
+    #[cfg(feature = "chrono")]
+    TimestampMs(NaiveDateTime),
+    /// The value is a millisecond-precision timestamp (`TIMESTAMP_MS`).
+    #[cfg(not(feature = "chrono"))]
+    TimestampMs(SystemTime),
+
+    /// The value is a nanosecond-precision timestamp (`TIMESTAMP_NS`).
+    #[cfg(feature = "chrono")]
+    TimestampNs(NaiveDateTime),
+    /// The value is a nanosecond-precision timestamp (`TIMESTAMP_NS`).
+    #[cfg(not(feature = "chrono"))]
+    TimestampNs(SystemTime),
+
+    /// The value is a date.
     #[cfg(feature = "chrono")]
     Date(NaiveDate),
+    /// The value is a date.
     #[cfg(not(feature = "chrono"))]
-    Date(NaiveDate),
+    Date(crate::types::date_native::DuckDate),
 
-    /// The value is a time
+    /// The value is a time.
     #[cfg(feature = "chrono")]
     Time(NaiveTime),
+    /// The value is a time.
+    // TODO: nanosecond TIME precision (`duckdb_get_time_ns`) unavailable in libduckdb-sys 1.3.1
     #[cfg(not(feature = "chrono"))]
-    Time(NaiveTime),
+    Time(crate::types::date_native::DuckTime),
 
-    /// The value is an interval
+    /// The value is an interval.
     #[cfg(feature = "chrono")]
     Interval(Duration),
+    /// The value is an interval.
     #[cfg(not(feature = "chrono"))]
     Interval(Duration),
 

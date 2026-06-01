@@ -50,7 +50,7 @@ fn execute_dml_no_match_returns_zero() -> better_duck_core::error::Result<()> {
     Ok(())
 }
 
-// ── execute (query / row-returning paths) ────────────────────────────────────
+// execute (query / row-returning paths)
 
 #[test]
 fn query_rows_returns_values() -> better_duck_core::error::Result<()> {
@@ -77,7 +77,7 @@ fn query_rows_with_bound_parameter() -> better_duck_core::error::Result<()> {
     Ok(())
 }
 
-// ── CachedStatement ──────────────────────────────────────────────────────────
+// CachedStatement
 
 #[test]
 fn cached_statement_reuse() -> better_duck_core::error::Result<()> {

@@ -8,7 +8,7 @@ use crate::ffi::{
 };
 use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 
-// ── No-chrono date/time component types ──────────────────────────────────────
+// No-chrono date/time component types
 
 /// A calendar date without time-zone awareness, for use without the `chrono` feature.
 ///
@@ -123,7 +123,7 @@ impl DuckDialect for StdDuration {
     }
 }
 
-// ── SystemTime (Timestamp, microsecond precision) ─────────────────────────────
+// SystemTime (Timestamp, microsecond precision)
 
 impl DuckDialect for SystemTime {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
