@@ -208,6 +208,12 @@ pub enum Type {
     Time,
     /// The value is an interval (month, day, nano).
     Interval,
+    /// The value is a timestamp with timezone (`TIMESTAMP_TZ`).
+    TimestampTz,
+    /// The value is a time with timezone (`TIME_TZ`).
+    TimeTz,
+    /// The value is a nanosecond-precision time (`TIME_NS`).
+    TimeNs,
     /// The value is a text string.
     Text,
     #[cfg(feature = "decimal")]
