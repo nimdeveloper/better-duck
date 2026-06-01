@@ -28,5 +28,7 @@ pub mod types;
 pub use raw::result::DuckResult;
 /// A single row from a DuckDB query result.
 pub use raw::row::DuckRow;
+/// A prepared statement suitable for caching and re-execution.
+pub use raw::statement::CachedStatement;
 /// Trait for binding values to DuckDB prepared statements and appenders.
 pub use types::appendable::AppendAble;
