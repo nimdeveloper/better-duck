@@ -165,10 +165,6 @@ impl_duck_append_able!(
     duckdb_bind_boolean
 );
 
-// impl_duck_dialect_string!(str, DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR);
-
-// Implementations for other DuckDB types would follow the same pattern
-// (Date, Time, Timestamp, Decimal, etc. would need custom handling)
 /// Represents a DuckDB column data type for use in Rust.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Type {

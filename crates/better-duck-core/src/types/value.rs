@@ -8,16 +8,13 @@ use std::time::{Duration, SystemTime};
 
 use crate::{
     ffi::{
-        duckdb_create_date, duckdb_create_interval, duckdb_create_time,
-        duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_date,
-        duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_enum_dictionary_size,
-        duckdb_enum_dictionary_value, duckdb_free, duckdb_get_type_id, duckdb_interval,
-        duckdb_list_entry, duckdb_list_vector_get_child, duckdb_list_vector_get_size,
-        duckdb_logical_type, duckdb_string_t, duckdb_string_t_data, duckdb_string_t_length,
-        duckdb_time, duckdb_time_tz, duckdb_timestamp, duckdb_type, duckdb_validity_row_is_valid,
-        duckdb_vector, duckdb_vector_get_column_type, duckdb_vector_get_data,
-        duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
-        DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
+        duckdb_destroy_logical_type, duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
+        duckdb_free, duckdb_get_type_id, duckdb_list_entry, duckdb_list_vector_get_child,
+        duckdb_list_vector_get_size, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
+        duckdb_string_t_length, duckdb_type, duckdb_validity_row_is_valid, duckdb_vector,
+        duckdb_vector_get_column_type, duckdb_vector_get_data, duckdb_vector_get_validity, idx_t,
+        DUCKDB_TYPE_DUCKDB_TYPE_ARRAY, DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
         DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE,
         DUCKDB_TYPE_DUCKDB_TYPE_ENUM, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT,
         DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
@@ -487,6 +484,59 @@ impl DuckValue {
                 // SAFETY: `row_idx` is within [0, chunk_size).
                 let value = unsafe { *data_ptr.add(row_idx as usize) as crate::ffi::duckdb_value };
                 Decimal::from_duck(value).map(DuckValue::Decimal)
+            },
+            DUCKDB_TYPE_DUCKDB_TYPE_ENUM => {
+                // SAFETY: `val` is a valid duckdb_vector from an active DuckDB result.
+                // `duckdb_vector_get_column_type` returns a new logical type that the caller
+                // must destroy with `duckdb_destroy_logical_type`.
+                let mut logical_type = unsafe { duckdb_vector_get_column_type(val) };
+                // SAFETY: `logical_type` is a valid duckdb_logical_type of ENUM kind,
+                // as returned by `duckdb_vector_get_column_type` above.
+                let dict_size = unsafe { duckdb_enum_dictionary_size(logical_type) };
+
+                // SAFETY: The dictionary size determines storage width per the DuckDB spec.
+                // `row_idx` is within [0, chunk_size).
+                let raw_index: u32 = unsafe {
+                    let data = duckdb_vector_get_data(val);
+                    if dict_size <= u8::MAX as u32 {
+                        *(data as *const u8).add(row_idx as usize) as u32
+                    } else if dict_size <= u16::MAX as u32 {
+                        *(data as *const u16).add(row_idx as usize) as u32
+                    } else {
+                        *(data as *const u32).add(row_idx as usize)
+                    }
+                };
+
+                // SAFETY: `raw_index` is within [0, dict_size). The returned C string is a
+                // heap-allocated null-terminated UTF-8 string that we must free with
+                // `duckdb_free`.
+                let c_str_ptr =
+                    unsafe { duckdb_enum_dictionary_value(logical_type, raw_index as idx_t) };
+
+                let name = if c_str_ptr.is_null() {
+                    // Clean up before returning the error.
+                    // SAFETY: `logical_type` was obtained from `duckdb_vector_get_column_type`.
+                    unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+                    return Err(DuckDBConversionError::ConversionError(format!(
+                        "enum index {raw_index} out of range (dict size {dict_size})"
+                    )));
+                } else {
+                    // SAFETY: `duckdb_enum_dictionary_value` returns valid null-terminated
+                    // UTF-8 when the index is in range.
+                    let s = unsafe { CStr::from_ptr(c_str_ptr) }
+                        .to_str()
+                        .map(|s| s.to_owned())
+                        .map_err(|e| DuckDBConversionError::ConversionError(e.to_string()))?;
+                    // SAFETY: `c_str_ptr` was allocated by DuckDB and must be freed via
+                    // `duckdb_free`.
+                    unsafe { duckdb_free(c_str_ptr as *mut std::ffi::c_void) };
+                    s
+                };
+
+                // SAFETY: `logical_type` was obtained from `duckdb_vector_get_column_type`
+                // and must be destroyed exactly once.
+                unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+                Ok(DuckValue::Enum(name))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_LIST | DUCKDB_TYPE_DUCKDB_TYPE_ARRAY => {
                 // SAFETY: `val` is a valid duckdb_vector of LIST/ARRAY type.
