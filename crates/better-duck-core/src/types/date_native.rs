@@ -1,11 +1,16 @@
 use super::*;
 
-use crate::ffi::{
-    duckdb_create_date, duckdb_create_interval, duckdb_create_time, duckdb_create_time_ns,
-    duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_date_struct, duckdb_from_date,
-    duckdb_from_time, duckdb_from_time_tz, duckdb_get_date, duckdb_get_interval, duckdb_get_time,
-    duckdb_get_time_ns, duckdb_get_time_tz, duckdb_get_timestamp, duckdb_interval, duckdb_time_ns,
-    duckdb_time_struct, duckdb_timestamp, duckdb_to_date, duckdb_to_time,
+use crate::types::appendable::AppendAble;
+use crate::{
+    ffi::{
+        duckdb_create_date, duckdb_create_interval, duckdb_create_time, duckdb_create_time_ns,
+        duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_date_struct, duckdb_from_date,
+        duckdb_from_time, duckdb_from_time_tz, duckdb_get_date, duckdb_get_interval,
+        duckdb_get_time, duckdb_get_time_ns, duckdb_get_time_tz, duckdb_get_timestamp,
+        duckdb_interval, duckdb_time_ns, duckdb_time_struct, duckdb_timestamp, duckdb_to_date,
+        duckdb_to_time,
+    },
+    impl_appendable_via_to_duck_native,
 };
 use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 
@@ -242,3 +247,121 @@ impl DuckDialect for SystemTime {
         Ok(unsafe { duckdb_create_timestamp(raw_ts) })
     }
 }
+
+impl AppendAble for DuckDate {
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> crate::error::Result<()> {
+        let ds =
+            duckdb_date_struct { year: self.year, month: self.month as i8, day: self.day as i8 };
+        // SAFETY: `duckdb_to_date` is a pure arithmetic conversion on a valid struct.
+        let raw = unsafe { duckdb_to_date(ds) };
+        // SAFETY: `raw` is a valid duckdb_date; `appender` is a valid duckdb_appender.
+        unsafe { crate::ffi::duckdb_append_date(appender, raw) };
+        Ok(())
+    }
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> crate::error::Result<()> {
+        let ds =
+            duckdb_date_struct { year: self.year, month: self.month as i8, day: self.day as i8 };
+        // SAFETY: `duckdb_to_date` is a pure arithmetic conversion on a valid struct.
+        let raw = unsafe { duckdb_to_date(ds) };
+        // SAFETY: `raw` is a valid duckdb_date; `stmt`/`idx` are valid.
+        unsafe { crate::ffi::duckdb_bind_date(stmt, idx, raw) };
+        Ok(())
+    }
+}
+
+impl AppendAble for DuckTime {
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> crate::error::Result<()> {
+        let ts = duckdb_time_struct {
+            hour: self.hour as i8,
+            min: self.min as i8,
+            sec: self.sec as i8,
+            micros: self.micros as i32,
+        };
+        // SAFETY: `duckdb_to_time` is a pure arithmetic conversion on a valid struct.
+        let raw = unsafe { duckdb_to_time(ts) };
+        // SAFETY: `raw` is a valid duckdb_time; `appender` is valid.
+        unsafe { crate::ffi::duckdb_append_time(appender, raw) };
+        Ok(())
+    }
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> crate::error::Result<()> {
+        let ts = duckdb_time_struct {
+            hour: self.hour as i8,
+            min: self.min as i8,
+            sec: self.sec as i8,
+            micros: self.micros as i32,
+        };
+        // SAFETY: `duckdb_to_time` is a pure arithmetic conversion on a valid struct.
+        let raw = unsafe { duckdb_to_time(ts) };
+        // SAFETY: `raw` is a valid duckdb_time; `stmt`/`idx` are valid.
+        unsafe { crate::ffi::duckdb_bind_time(stmt, idx, raw) };
+        Ok(())
+    }
+}
+
+impl AppendAble for StdDuration {
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> crate::error::Result<()> {
+        let micros = self.as_micros().min(i64::MAX as u128) as i64;
+        let raw = duckdb_interval { months: 0, days: 0, micros };
+        // SAFETY: `raw` is a valid duckdb_interval; `appender` is valid.
+        unsafe { crate::ffi::duckdb_append_interval(appender, raw) };
+        Ok(())
+    }
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> crate::error::Result<()> {
+        let micros = self.as_micros().min(i64::MAX as u128) as i64;
+        let raw = duckdb_interval { months: 0, days: 0, micros };
+        // SAFETY: `raw` is a valid duckdb_interval; `stmt`/`idx` are valid.
+        unsafe { crate::ffi::duckdb_bind_interval(stmt, idx, raw) };
+        Ok(())
+    }
+}
+
+impl AppendAble for SystemTime {
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> crate::error::Result<()> {
+        let dur = self.duration_since(UNIX_EPOCH).unwrap_or_default();
+        let micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
+        let raw = duckdb_timestamp { micros };
+        // SAFETY: `raw` is a valid duckdb_timestamp; `appender` is valid.
+        unsafe { crate::ffi::duckdb_append_timestamp(appender, raw) };
+        Ok(())
+    }
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> crate::error::Result<()> {
+        let dur = self.duration_since(UNIX_EPOCH).unwrap_or_default();
+        let micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
+        let raw = duckdb_timestamp { micros };
+        // SAFETY: `raw` is a valid duckdb_timestamp; `stmt`/`idx` are valid.
+        unsafe { crate::ffi::duckdb_bind_timestamp(stmt, idx, raw) };
+        Ok(())
+    }
+}
+
+// `DuckTimeNs` and `DuckTimeTz` have no dedicated append/bind function; use the value path.
+impl_appendable_via_to_duck_native!(DuckTimeNs);
+impl_appendable_via_to_duck_native!(DuckTimeTz);

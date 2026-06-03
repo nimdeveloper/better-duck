@@ -371,7 +371,7 @@ impl DuckValue {
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    return std::time::Duration::from_duck(value).map(DuckValue::Interval);
+                    std::time::Duration::from_duck(value).map(DuckValue::Interval)
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S => {
@@ -387,12 +387,11 @@ impl DuckValue {
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
+                    use crate::ffi::duckdb_get_timestamp_s;
                     use std::time::UNIX_EPOCH;
-                    let secs = unsafe {
-                        use libduckdb_sys::duckdb_get_timestamp_s;
-                        duckdb_get_timestamp_s(value)
-                    }
-                    .seconds;
+                    // SAFETY: `value` was cast from an i32 read at `row_idx`; valid for
+                    // the lifetime of the result set.
+                    let secs = unsafe { duckdb_get_timestamp_s(value) }.seconds;
                     let abs = secs.unsigned_abs();
                     Ok(DuckValue::TimestampS(if secs >= 0 {
                         UNIX_EPOCH + std::time::Duration::from_secs(abs)
@@ -414,13 +413,11 @@ impl DuckValue {
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
+                    use crate::ffi::duckdb_get_timestamp_ms;
                     use std::time::UNIX_EPOCH;
-
-                    let millis = unsafe {
-                        use libduckdb_sys::duckdb_get_timestamp_ms;
-                        duckdb_get_timestamp_ms(value)
-                    }
-                    .millis;
+                    // SAFETY: `value` was cast from an i32 read at `row_idx`; valid for
+                    // the lifetime of the result set.
+                    let millis = unsafe { duckdb_get_timestamp_ms(value) }.millis;
                     let abs = millis.unsigned_abs();
                     Ok(DuckValue::TimestampMs(if millis >= 0 {
                         UNIX_EPOCH + std::time::Duration::from_millis(abs)
@@ -442,12 +439,11 @@ impl DuckValue {
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
+                    use crate::ffi::duckdb_get_timestamp_ns;
                     use std::time::UNIX_EPOCH;
-                    let nanos = unsafe {
-                        use libduckdb_sys::duckdb_get_timestamp_ns;
-                        duckdb_get_timestamp_ns(value)
-                    }
-                    .nanos;
+                    // SAFETY: `value` was cast from an i32 read at `row_idx`; valid for
+                    // the lifetime of the result set.
+                    let nanos = unsafe { duckdb_get_timestamp_ns(value) }.nanos;
                     let abs = nanos.unsigned_abs();
                     Ok(DuckValue::TimestampNs(if nanos >= 0 {
                         UNIX_EPOCH + std::time::Duration::from_nanos(abs)
@@ -622,9 +618,10 @@ impl DuckValue {
                 {
                     // TODO: We need to use timezone here, but how?
                     use std::time::UNIX_EPOCH;
-
+                    // SAFETY: `value` was cast from an i32 read at `row_idx`; valid for
+                    // the lifetime of the result set.
                     let micros = unsafe {
-                        use libduckdb_sys::duckdb_get_timestamp_tz;
+                        use crate::ffi::duckdb_get_timestamp_tz;
                         duckdb_get_timestamp_tz(value)
                     }
                     .micros;
@@ -679,29 +676,9 @@ impl DuckValue {
             },
             _ => {
                 todo!()
-            }, // DUCKDB_TYPE_DUCKDB_TYPE_BLOB => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_MS => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_NS => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_ENUM => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_STRUCT => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_UUID => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_UNION => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_BIT => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_TZ => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_ANY => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_VARINT => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_SQLNULL => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL => {},
-               // DUCKDB_TYPE_DUCKDB_TYPE_INTEGER_LITERAL => {},
+            },
         }
     }
-}
-
-impl Drop for DuckValue {
-    fn drop(&mut self) {}
 }
 
 impl From<DuckValue> for String {
