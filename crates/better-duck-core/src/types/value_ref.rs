@@ -377,12 +377,13 @@ impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
             DuckValue::TimeNs(t) => DuckValueRef::TimeNs(*t),
             #[cfg(not(feature = "chrono"))]
             DuckValue::TimeNs(t) => DuckValueRef::TimeNs(*t),
-            DuckValue::Text(s) => DuckValueRef::Text(Cow::Owned(s.clone())),
+            // Zero-copy borrows for text/blob/enum.
+            DuckValue::Text(s) => DuckValueRef::Text(Cow::Borrowed(s.as_str())),
             #[cfg(feature = "decimal")]
             DuckValue::Decimal(d) => DuckValueRef::Decimal(*d),
-            DuckValue::Blob(b) => DuckValueRef::Blob(Cow::Owned(b.clone())),
+            DuckValue::Blob(b) => DuckValueRef::Blob(Cow::Borrowed(b.as_bytes())),
             DuckValue::List(l) => DuckValueRef::List(l.iter().map(DuckValueRef::from).collect()),
-            DuckValue::Enum(e) => DuckValueRef::Enum(Cow::Owned(e.clone())),
+            DuckValue::Enum(e) => DuckValueRef::Enum(Cow::Borrowed(e.as_str())),
             DuckValue::Struct(m) => DuckValueRef::Struct(
                 m.iter().map(|(k, v)| (k.clone(), DuckValueRef::from(v))).collect(),
             ),
@@ -591,8 +592,11 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             },
             DuckValueRef::Float(v) => v.stmt_append(idx, stmt),
             DuckValueRef::Double(v) => v.stmt_append(idx, stmt),
-            DuckValueRef::Text(s) => s.into_owned().stmt_append(idx, stmt),
-            DuckValueRef::Blob(b) => Blob::new(b.into_owned()).stmt_append(idx, stmt),
+            DuckValueRef::Text(s) => {
+                let mut owned: String = s.as_ref().to_owned();
+                owned.stmt_append(idx, stmt)
+            },
+            DuckValueRef::Blob(b) => Blob::new(b.to_vec()).stmt_append(idx, stmt),
             #[cfg(feature = "chrono")]
             DuckValueRef::Date(d) => d.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
