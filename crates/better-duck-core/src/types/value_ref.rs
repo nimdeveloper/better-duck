@@ -825,4 +825,25 @@ mod tests {
         let string_val: String = value_ref.into();
         assert_eq!(string_val, "hello");
     }
+
+    #[test]
+    fn test_from_duck_value_owned() {
+        // From<DuckValue> should produce any lifetime.
+        let v = DuckValue::Text("world".to_string());
+        let r: DuckValueRef<'_> = DuckValueRef::from(v);
+        match r {
+            DuckValueRef::Text(s) => assert_eq!(s, "world"),
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_eq_and_hash() {
+        use std::collections::HashMap;
+        let mut map: HashMap<DuckValueRef<'_>, i32> = HashMap::new();
+        map.insert(DuckValueRef::Int(1), 10);
+        map.insert(DuckValueRef::Text(Cow::Borrowed("key")), 20);
+        assert_eq!(map.get(&DuckValueRef::Int(1)), Some(&10));
+        assert_eq!(map.get(&DuckValueRef::Text(Cow::Borrowed("key"))), Some(&20));
+    }
 }
