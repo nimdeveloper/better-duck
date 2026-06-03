@@ -48,8 +48,8 @@ fn read_map_string_keys() -> better_duck_core::error::Result<()> {
     let val = row.get("m").expect("column 'm' missing");
     if let DuckValue::Map(ref m) = val {
         assert_eq!(m.len(), 2, "expected 2 map entries");
-        assert_eq!(m.get("k1"), Some(&DuckValue::Int(10)));
-        assert_eq!(m.get("k2"), Some(&DuckValue::Int(20)));
+        assert_eq!(m.get(&DuckValue::Text("k1".to_string())), Some(&DuckValue::Int(10)));
+        assert_eq!(m.get(&DuckValue::Text("k2".to_string())), Some(&DuckValue::Int(20)));
     } else {
         panic!("expected DuckValue::Map, got {:?}", val);
     }
@@ -68,8 +68,9 @@ fn read_map_integer_keys() -> better_duck_core::error::Result<()> {
     let val = row.get("m").expect("column 'm' missing");
     if let DuckValue::Map(ref m) = val {
         assert_eq!(m.len(), 2);
-        assert_eq!(m.get("1"), Some(&DuckValue::Text("one".to_string())));
-        assert_eq!(m.get("2"), Some(&DuckValue::Text("two".to_string())));
+        // Integer-keyed MAP: keys are now real DuckValue::Int, not stringified.
+        assert_eq!(m.get(&DuckValue::Int(1)), Some(&DuckValue::Text("one".to_string())));
+        assert_eq!(m.get(&DuckValue::Int(2)), Some(&DuckValue::Text("two".to_string())));
     } else {
         panic!("expected DuckValue::Map, got {:?}", val);
     }
