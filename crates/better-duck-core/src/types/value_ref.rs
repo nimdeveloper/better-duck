@@ -141,7 +141,183 @@ pub enum DuckValueRef<'a> {
     Union(Box<DuckValueRef<'a>>),
 }
 
-// Implement From<DuckValue> for DuckValueRef
+// PartialEq / Eq / Hash
+//
+// DuckValueRef contains f32/f64 and HashMap fields.  We hand-implement all three
+// using the same canonicalization strategy as DuckValue.
+// `Cow<'a, str>`: already implements PartialEq/Hash as `&str`.
+// `SystemTime`: hashed via duration_since(UNIX_EPOCH) (no std Hash impl).
+
+impl<'a> PartialEq for DuckValueRef<'a> {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        use DuckValueRef::*;
+        match (self, other) {
+            (Null, Null) => true,
+            (Boolean(a), Boolean(b)) => a == b,
+            (TinyInt(a), TinyInt(b)) => a == b,
+            (SmallInt(a), SmallInt(b)) => a == b,
+            (Int(a), Int(b)) => a == b,
+            (BigInt(a), BigInt(b)) => a == b,
+            (HugeInt(a), HugeInt(b)) => a == b,
+            (UTinyInt(a), UTinyInt(b)) => a == b,
+            (USmallInt(a), USmallInt(b)) => a == b,
+            (UInt(a), UInt(b)) => a == b,
+            (UBigInt(a), UBigInt(b)) => a == b,
+            (UHugeInt(a), UHugeInt(b)) => a == b,
+            (Float(a), Float(b)) => canonical_f32(*a) == canonical_f32(*b),
+            (Double(a), Double(b)) => canonical_f64(*a) == canonical_f64(*b),
+            #[cfg(feature = "chrono")]
+            (Timestamp(a), Timestamp(b)) => a == b,
+            #[cfg(not(feature = "chrono"))]
+            (Timestamp(a), Timestamp(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (TimestampS(a), TimestampS(b)) => a == b,
+            #[cfg(not(feature = "chrono"))]
+            (TimestampS(a), TimestampS(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (TimestampMs(a), TimestampMs(b)) => a == b,
+            #[cfg(not(feature = "chrono"))]
+            (TimestampMs(a), TimestampMs(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (TimestampNs(a), TimestampNs(b)) => a == b,
+            #[cfg(not(feature = "chrono"))]
+            (TimestampNs(a), TimestampNs(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (TimestampTz(a), TimestampTz(b)) => a == b,
+            #[cfg(not(feature = "chrono"))]
+            (TimestampTz(a), TimestampTz(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (Date(a), Date(b)) => a == b,
+            #[cfg(not(feature = "chrono"))]
+            (Date(a), Date(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (Time(a), Time(b)) => a == b,
+            #[cfg(not(feature = "chrono"))]
+            (Time(a), Time(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (Interval(a), Interval(b)) => a == b,
+            #[cfg(not(feature = "chrono"))]
+            (Interval(a), Interval(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (TimeTz(a), TimeTz(b)) => a == b,
+            #[cfg(not(feature = "chrono"))]
+            (TimeTz(a), TimeTz(b)) => a == b,
+            #[cfg(feature = "chrono")]
+            (TimeNs(a), TimeNs(b)) => a == b,
+            #[cfg(not(feature = "chrono"))]
+            (TimeNs(a), TimeNs(b)) => a == b,
+            (Text(a), Text(b)) => a == b,
+            (Enum(a), Enum(b)) => a == b,
+            #[cfg(feature = "decimal")]
+            (Decimal(a), Decimal(b)) => a == b,
+            (Blob(a), Blob(b)) => a == b,
+            (List(a), List(b)) => a == b,
+            (Array(a), Array(b)) => a == b,
+            (Struct(a), Struct(b)) => a == b,
+            (Map(a), Map(b)) => a == b,
+            (Union(a), Union(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl<'a> Eq for DuckValueRef<'a> {}
+
+impl<'a> Hash for DuckValueRef<'a> {
+    fn hash<H: Hasher>(
+        &self,
+        state: &mut H,
+    ) {
+        mem::discriminant(self).hash(state);
+        match self {
+            DuckValueRef::Null => {},
+            DuckValueRef::Boolean(v) => v.hash(state),
+            DuckValueRef::TinyInt(v) => v.hash(state),
+            DuckValueRef::SmallInt(v) => v.hash(state),
+            DuckValueRef::Int(v) => v.hash(state),
+            DuckValueRef::BigInt(v) => v.hash(state),
+            DuckValueRef::HugeInt(v) => v.hash(state),
+            DuckValueRef::UTinyInt(v) => v.hash(state),
+            DuckValueRef::USmallInt(v) => v.hash(state),
+            DuckValueRef::UInt(v) => v.hash(state),
+            DuckValueRef::UBigInt(v) => v.hash(state),
+            DuckValueRef::UHugeInt(v) => v.hash(state),
+            DuckValueRef::Float(f) => canonical_f32(*f).hash(state),
+            DuckValueRef::Double(d) => canonical_f64(*d).hash(state),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::Timestamp(t) => t.hash(state),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::Timestamp(t) => hash_system_time(t, state),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::TimestampS(t) => t.hash(state),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimestampS(t) => hash_system_time(t, state),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::TimestampMs(t) => t.hash(state),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimestampMs(t) => hash_system_time(t, state),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::TimestampNs(t) => t.hash(state),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimestampNs(t) => hash_system_time(t, state),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::TimestampTz(t) => t.hash(state),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimestampTz(t) => hash_system_time(t, state),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::Date(d) => d.hash(state),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::Date(d) => d.hash(state),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::Time(t) => t.hash(state),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::Time(t) => t.hash(state),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::Interval(i) => i.hash(state),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::Interval(i) => i.hash(state),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::TimeTz(t) => t.hash(state),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimeTz(t) => t.hash(state),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::TimeNs(t) => t.hash(state),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::TimeNs(t) => t.hash(state),
+            DuckValueRef::Text(s) => s.hash(state),
+            DuckValueRef::Enum(s) => s.hash(state),
+            #[cfg(feature = "decimal")]
+            DuckValueRef::Decimal(d) => d.hash(state),
+            DuckValueRef::Blob(b) => b.hash(state),
+            DuckValueRef::List(items) => items.hash(state),
+            DuckValueRef::Array(items) => items.hash(state),
+            DuckValueRef::Map(m) => {
+                map::map_entries_hash_ref(m.iter(), m.len(), state);
+            },
+            DuckValueRef::Struct(m) => {
+                // String keys — use order-independent combine for consistency.
+                m.len().hash(state);
+                let xor_fold: u64 = m
+                    .iter()
+                    .map(|(k, v)| {
+                        let mut h = DefaultHasher::new();
+                        k.hash(&mut h);
+                        v.hash(&mut h);
+                        h.finish()
+                    })
+                    .fold(0u64, |acc, x| acc ^ x);
+                xor_fold.hash(state);
+            },
+            DuckValueRef::Union(u) => u.hash(state),
+        }
+    }
+}
+
+// From<&'a DuckValue> — borrows for Text/Enum/Blob
+
 impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
     /// Creates a `DuckValueRef` from a `&DuckValue`, borrowing `Text`/`Enum`/`Blob` data
     /// for genuine zero-copy.

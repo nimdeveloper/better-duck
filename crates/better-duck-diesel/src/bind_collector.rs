@@ -94,10 +94,11 @@ impl MoveableBindCollector<DuckDb> for DuckDbBindCollector<'_> {
         from: &Self::BindData,
     ) {
         self.binds.reserve_exact(from.binds.len());
-        // Clone each DuckValue and convert to a fully-owned DuckValueRef.
-        // `from_value` accepts any lifetime 'a, so type inference picks the bind
-        // collector's lifetime directly — no 'static / invariance issue.
-        self.binds.extend(from.binds.iter().cloned().map(DuckValueRef::from_value));
+        // Clone each DuckValue and convert via From<DuckValue> for DuckValueRef<'a>.
+        // The owned-input From<DuckValue> impl produces fully-owned Cow::Owned data, so
+        // Rust infers the bind-collector's lifetime 'a from the Vec context — no
+        // 'static / invariance issue.
+        self.binds.extend(from.binds.iter().cloned().map(DuckValueRef::from));
     }
 
     #[doc = " Push bind data as debug representation"]
