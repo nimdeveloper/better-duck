@@ -157,7 +157,7 @@ const UNKNOWN_COLUMN: usize = usize::MAX;
 /// The conversion isn't precise, but it's convenient to have it
 /// to allow use of `get_raw(…).as_…()?` in callbacks that take `Error`.
 /// ```
-// impl From<FromSqlError> for Error {
+/// impl From<FromSqlError> for Error {
 ///     #[cold]
 ///     fn from(err: FromSqlError) -> Error {
 ///         // The error type requires index and type fields, but they aren't known in this
