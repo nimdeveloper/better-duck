@@ -40,10 +40,7 @@ use crate::error::Result;
 use crate::ffi::duckdb_bind_boolean;
 use appendable::AppendAble;
 
-use crate::ffi::{
-    duckdb_append_bool, duckdb_create_bool, duckdb_get_bool, duckdb_value,
-    DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN,
-};
+use crate::ffi::{duckdb_append_bool, duckdb_create_bool, duckdb_get_bool, duckdb_value};
 
 /// Trait for converting between DuckDB values and Rust types.
 ///

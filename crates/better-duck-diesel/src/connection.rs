@@ -5,10 +5,9 @@ use std::{marker::PhantomData, sync::Arc};
 use better_duck_core::CachedStatement;
 use diesel::{
     connection::{
-        get_default_instrumentation,
-        statement_cache::{PrepareForCache, StatementCache},
-        AnsiTransactionManager, ConnectionSealed, Instrumentation, InstrumentationEvent,
-        LoadConnection, SimpleConnection, StrQueryHelper, TransactionManager,
+        get_default_instrumentation, statement_cache::StatementCache, AnsiTransactionManager,
+        ConnectionSealed, Instrumentation, InstrumentationEvent, LoadConnection, SimpleConnection,
+        StrQueryHelper, TransactionManager,
     },
     expression::QueryMetadata,
     query_builder::{Query, QueryFragment, QueryId},

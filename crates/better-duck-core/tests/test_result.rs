@@ -1,5 +1,8 @@
 #![allow(missing_docs)]
-use better_duck_core::{connection::Connection, types::value::DuckValue};
+use better_duck_core::{
+    connection::Connection,
+    types::{value::DuckValue, Blob},
+};
 #[cfg(feature = "chrono")]
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 
@@ -147,7 +150,7 @@ fn round_trip_blob() -> better_duck_core::error::Result<()> {
     let mut stmt = conn.db().prepare("SELECT b FROM t")?;
     let mut result = stmt.execute()?;
     let row = result.next().expect("expected one row")?;
-    assert_eq!(row.get("b"), Some(&DuckValue::Blob(vec![0xDE, 0xAD, 0xBE, 0xEF])));
+    assert_eq!(row.get("b"), Some(&DuckValue::Blob(Blob::new(vec![0xDE, 0xAD, 0xBE, 0xEF]))));
     assert!(result.next().is_none());
     Ok(())
 }
