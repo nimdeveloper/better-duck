@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ptr;
 #[cfg(not(feature = "chrono"))]
@@ -8,10 +9,17 @@ use std::time::{Duration, SystemTime};
 
 use crate::{
     ffi::{
-        duckdb_destroy_logical_type, duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
+        duckdb_create_array_type, duckdb_create_array_value, duckdb_create_blob,
+        duckdb_create_list_type, duckdb_create_list_value, duckdb_create_logical_type,
+        duckdb_create_map_type, duckdb_create_map_value, duckdb_create_null_value,
+        duckdb_create_struct_type, duckdb_create_struct_value, duckdb_create_uhugeint,
+        duckdb_create_union_type, duckdb_create_union_value, duckdb_destroy_logical_type,
+        duckdb_destroy_value, duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
         duckdb_free, duckdb_get_type_id, duckdb_list_entry, duckdb_list_vector_get_child,
         duckdb_list_vector_get_size, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
-        duckdb_string_t_length, duckdb_type, duckdb_validity_row_is_valid, duckdb_vector,
+        duckdb_string_t_length, duckdb_struct_type_child_count, duckdb_struct_type_child_name,
+        duckdb_struct_vector_get_child, duckdb_type, duckdb_uhugeint,
+        duckdb_union_type_member_count, duckdb_validity_row_is_valid, duckdb_vector,
         duckdb_vector_get_column_type, duckdb_vector_get_data, duckdb_vector_get_validity, idx_t,
         DUCKDB_TYPE_DUCKDB_TYPE_ARRAY, DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
         DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
@@ -20,15 +28,16 @@ use crate::{
         DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
         DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL, DUCKDB_TYPE_DUCKDB_TYPE_INVALID,
         DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP,
-        DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL,
+        DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_SQLNULL,
+        DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL, DUCKDB_TYPE_DUCKDB_TYPE_STRUCT,
         DUCKDB_TYPE_DUCKDB_TYPE_TIME, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP,
         DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_MS, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_NS,
         DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_TZ,
         DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS, DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ,
         DUCKDB_TYPE_DUCKDB_TYPE_TINYINT, DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT,
         DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER,
-        DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT,
-        DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
+        DUCKDB_TYPE_DUCKDB_TYPE_UNION, DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT, DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
     },
     types::value_ref::DuckValueRef,
 };
@@ -150,13 +159,13 @@ pub enum DuckValue {
     List(Vec<DuckValue>),
     /// The value is an enum
     Enum(String),
-    /// The value is a struct
-    // Struct(OrderedMap<String, Value>), // TODO: We need to complete this
+    /// The value is a struct (string-keyed field map with a fixed schema).
+    Struct(HashMap<String, DuckValue>),
     /// The value is an array with fixed length
     Array(Box<[DuckValue]>),
-    /// The value is a map
-    // Map(OrderedMap<Value, Value>), // TODO: We need to complete this
-    /// The value is a union
+    /// The value is a map (string-keyed value map with a dynamic schema).
+    Map(HashMap<String, DuckValue>),
+    /// The value is a union (tagged sum type; holds the active member value).
     Union(Box<DuckValue>),
 }
 
@@ -224,12 +233,18 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
             DuckValueRef::Blob(b) => DuckValue::Blob(b.to_vec()),
             DuckValueRef::List(l) => DuckValue::List(l.iter().map(DuckValue::from).collect()),
             DuckValueRef::Enum(e) => DuckValue::Enum(e.to_string()),
+            DuckValueRef::Struct(m) => {
+                DuckValue::Struct(m.iter().map(|(k, v)| (k.clone(), DuckValue::from(v))).collect())
+            },
             DuckValueRef::Array(a) => DuckValue::Array(
                 a.iter()
                     .map(|v| DuckValue::from(&v.clone()))
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),
             ),
+            DuckValueRef::Map(m) => {
+                DuckValue::Map(m.iter().map(|(k, v)| (k.clone(), DuckValue::from(v))).collect())
+            },
             DuckValueRef::Union(u) => DuckValue::Union(Box::new(DuckValue::from(u.as_ref()))),
         }
     }
@@ -669,14 +684,224 @@ impl DuckValue {
                     crate::types::date_native::DuckTimeNs::from_duck(value).map(DuckValue::TimeNs)
                 }
             },
+            DUCKDB_TYPE_DUCKDB_TYPE_STRUCT => {
+                // SAFETY: `val` is a valid struct vector.  The column logical type is
+                // heap-allocated by DuckDB and must be destroyed exactly once with
+                // `duckdb_destroy_logical_type`.
+                let mut lt = unsafe { duckdb_vector_get_column_type(val) };
+                // SAFETY: `lt` is a valid logical type of STRUCT kind.
+                let n: idx_t = unsafe { duckdb_struct_type_child_count(lt) };
+                let mut pairs: HashMap<String, DuckValue> = HashMap::with_capacity(n as usize);
+                let mut read_err: Option<DuckDBConversionError> = None;
+
+                for i in 0..n {
+                    // SAFETY: `lt` is valid; `i` is within [0, n).
+                    // The returned C string is heap-allocated by DuckDB and must be
+                    // freed with `duckdb_free`.
+                    let name_ptr = unsafe { duckdb_struct_type_child_name(lt, i) };
+                    let name = if name_ptr.is_null() {
+                        read_err = Some(DuckDBConversionError::ConversionError(format!(
+                            "struct child name at index {i} is null"
+                        )));
+                        break;
+                    } else {
+                        // SAFETY: `name_ptr` is a valid null-terminated C string.
+                        let s = unsafe { std::ffi::CStr::from_ptr(name_ptr) }
+                            .to_str()
+                            .map(str::to_owned);
+                        // SAFETY: `name_ptr` was allocated by DuckDB and must be freed
+                        // with `duckdb_free`.
+                        unsafe { duckdb_free(name_ptr as *mut std::ffi::c_void) };
+                        match s {
+                            Ok(s) => s,
+                            Err(e) => {
+                                read_err =
+                                    Some(DuckDBConversionError::ConversionError(e.to_string()));
+                                break;
+                            },
+                        }
+                    };
+
+                    // SAFETY: `val` is a valid struct vector; `i` is within [0, n).
+                    // The child vector shares the parent's lifetime and must not be
+                    // independently freed.
+                    let child_vec = unsafe { duckdb_struct_vector_get_child(val, i) };
+                    // SAFETY: `child_vec` is a valid vector for this struct child.
+                    // The returned logical type must be destroyed with
+                    // `duckdb_destroy_logical_type`.
+                    let mut child_lt = unsafe { duckdb_vector_get_column_type(child_vec) };
+                    // SAFETY: `child_lt` is a valid logical type.
+                    let child_tid = unsafe { duckdb_get_type_id(child_lt) };
+                    // SAFETY: `child_lt` was returned by `duckdb_vector_get_column_type`
+                    // and must be destroyed exactly once.
+                    unsafe { duckdb_destroy_logical_type(&mut child_lt) };
+
+                    // Recurse: validity is checked inside `from_duckdb_vec`; a null
+                    // child field comes back as `DuckValue::Null`.
+                    match DuckValue::from_duckdb_vec(child_vec, child_tid, row_idx) {
+                        Ok(v) => {
+                            pairs.insert(name, v);
+                        },
+                        Err(e) => {
+                            read_err = Some(e);
+                            break;
+                        },
+                    }
+                }
+
+                // SAFETY: `lt` was returned by `duckdb_vector_get_column_type` and
+                // must be destroyed exactly once, even on the error path.
+                unsafe { duckdb_destroy_logical_type(&mut lt) };
+
+                match read_err {
+                    Some(e) => Err(e),
+                    None => Ok(DuckValue::Struct(pairs)),
+                }
+            },
+            DUCKDB_TYPE_DUCKDB_TYPE_UNION => {
+                // DuckDB UNION is physically a STRUCT where:
+                //   child 0 = union tag discriminant (UTINYINT or USMALLINT)
+                //   child 1..=N = member values (only the active member is valid)
+                //
+                // SAFETY: `val` is a valid union vector.  The logical type is
+                // heap-allocated and must be destroyed exactly once.
+                let mut lt = unsafe { duckdb_vector_get_column_type(val) };
+                // SAFETY: `lt` is a valid logical type of UNION kind.
+                let member_count: idx_t = unsafe { duckdb_union_type_member_count(lt) };
+
+                // SAFETY: Child 0 of the underlying struct layout is the tag vector.
+                let tag_vec = unsafe { duckdb_struct_vector_get_child(val, 0) };
+
+                // Read the discriminant. DuckDB uses UTINYINT (u8) for ≤ 255 members
+                // and USMALLINT (u16) otherwise.
+                // SAFETY: `tag_vec` is a valid data vector; `row_idx` is within
+                // [0, chunk_size).
+                let tag: idx_t = unsafe {
+                    let data = duckdb_vector_get_data(tag_vec);
+                    if member_count <= u8::MAX as idx_t {
+                        *(data as *const u8).add(row_idx as usize) as idx_t
+                    } else {
+                        *(data as *const u16).add(row_idx as usize) as idx_t
+                    }
+                };
+
+                if tag >= member_count {
+                    // SAFETY: `lt` must be destroyed even on this error path.
+                    unsafe { duckdb_destroy_logical_type(&mut lt) };
+                    return Err(DuckDBConversionError::ConversionError(format!(
+                        "union tag {tag} out of range (member count {member_count})"
+                    )));
+                }
+
+                // The active member sits at child index (tag + 1) in the underlying struct.
+                // SAFETY: `val` is a valid union vector; `tag + 1` is within
+                // [1, member_count + 1).
+                let member_vec = unsafe { duckdb_struct_vector_get_child(val, tag + 1) };
+                // SAFETY: `member_vec` is a valid vector for the active member.
+                let mut member_lt = unsafe { duckdb_vector_get_column_type(member_vec) };
+                // SAFETY: `member_lt` is a valid logical type.
+                let member_tid = unsafe { duckdb_get_type_id(member_lt) };
+                // SAFETY: `member_lt` was returned by `duckdb_vector_get_column_type`.
+                unsafe { duckdb_destroy_logical_type(&mut member_lt) };
+
+                // Recurse into the active member.
+                let inner = DuckValue::from_duckdb_vec(member_vec, member_tid, row_idx);
+
+                // SAFETY: `lt` was returned by `duckdb_vector_get_column_type` and
+                // must be destroyed exactly once.
+                unsafe { duckdb_destroy_logical_type(&mut lt) };
+
+                inner.map(|v| DuckValue::Union(Box::new(v)))
+            },
             DUCKDB_TYPE_DUCKDB_TYPE_MAP => {
-                // TODO: We need to move the functionality outside!
-                //  as we need to handle the type and access the column itself (Also we need to destroy each Item after inserting them in rust data types!)
-                todo!()
+                // MAP is physically stored as LIST<STRUCT(key, value)> in DuckDB.
+                // Read it like a LIST: fetch the list entry for `row_idx`, then iterate
+                // the flat STRUCT child vector using key child 0 and value child 1.
+                //
+                // SAFETY: `val` is a valid MAP vector.  MAP data is laid out identically
+                // to LIST: each row slot holds a `duckdb_list_entry { offset, length }`.
+                let data_ptr = unsafe { duckdb_vector_get_data(val) as *const duckdb_list_entry };
+                // SAFETY: `row_idx` is within [0, chunk_size).
+                let entry: duckdb_list_entry = unsafe { *data_ptr.add(row_idx as usize) };
+
+                // `entries` is the flat STRUCT(key, value) child vector.
+                // SAFETY: `val` is a valid MAP/LIST vector.
+                let entries_vec = unsafe { duckdb_list_vector_get_child(val) };
+                // SAFETY: `entries_vec` is a valid STRUCT vector; child 0 = keys.
+                let key_vec = unsafe { duckdb_struct_vector_get_child(entries_vec, 0) };
+                // SAFETY: `entries_vec` is a valid STRUCT vector; child 1 = values.
+                let val_vec_map = unsafe { duckdb_struct_vector_get_child(entries_vec, 1) };
+
+                // SAFETY: `key_vec` is a valid vector.
+                let mut key_lt = unsafe { duckdb_vector_get_column_type(key_vec) };
+                // SAFETY: `key_lt` was returned by `duckdb_vector_get_column_type`.
+                let key_tid = unsafe { duckdb_get_type_id(key_lt) };
+                // SAFETY: `key_lt` was allocated by `duckdb_vector_get_column_type` above.
+                unsafe { duckdb_destroy_logical_type(&mut key_lt) };
+
+                // SAFETY: `val_vec_map` is a valid vector.
+                let mut vlt = unsafe { duckdb_vector_get_column_type(val_vec_map) };
+                // SAFETY: `vlt` was returned by `duckdb_vector_get_column_type`.
+                let val_tid = unsafe { duckdb_get_type_id(vlt) };
+                // SAFETY: `vlt` was allocated by `duckdb_vector_get_column_type` above.
+                unsafe { duckdb_destroy_logical_type(&mut vlt) };
+
+                let mut pairs: HashMap<String, DuckValue> =
+                    HashMap::with_capacity(entry.length as usize);
+                let mut read_err: Option<DuckDBConversionError> = None;
+
+                for j in entry.offset..entry.offset + entry.length {
+                    let k = match DuckValue::from_duckdb_vec(key_vec, key_tid, j) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            read_err = Some(e);
+                            break;
+                        },
+                    };
+                    let v = match DuckValue::from_duckdb_vec(val_vec_map, val_tid, j) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            read_err = Some(e);
+                            break;
+                        },
+                    };
+                    pairs.insert(k.to_map_key(), v);
+                }
+
+                match read_err {
+                    Some(e) => Err(e),
+                    None => Ok(DuckValue::Map(pairs)),
+                }
             },
             _ => {
                 todo!()
             },
+        }
+    }
+
+    /// Converts this value to a string key suitable for use as a MAP entry key.
+    ///
+    /// - `Text` and `Enum` variants yield the string directly (zero-copy clone).
+    /// - Scalar variants use their standard display representation.
+    /// - Complex values (`List`, `Struct`, `Map`, temporal, …) fall back to `Debug` format.
+    pub fn to_map_key(&self) -> String {
+        match self {
+            DuckValue::Text(s) | DuckValue::Enum(s) => s.clone(),
+            DuckValue::Null => "null".to_owned(),
+            DuckValue::Boolean(b) => b.to_string(),
+            DuckValue::TinyInt(n) => n.to_string(),
+            DuckValue::SmallInt(n) => n.to_string(),
+            DuckValue::Int(n) => n.to_string(),
+            DuckValue::BigInt(n) => n.to_string(),
+            DuckValue::HugeInt(n) => n.to_string(),
+            DuckValue::UTinyInt(n) => n.to_string(),
+            DuckValue::USmallInt(n) => n.to_string(),
+            DuckValue::UInt(n) => n.to_string(),
+            DuckValue::UBigInt(n) => n.to_string(),
+            DuckValue::UHugeInt(n) => n.to_string(),
+            DuckValue::Float(f) => f.to_string(),
+            DuckValue::Double(d) => d.to_string(),
+            other => format!("{other:?}"),
         }
     }
 }
