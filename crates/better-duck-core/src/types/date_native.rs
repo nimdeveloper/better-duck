@@ -12,6 +12,7 @@ use crate::{
     },
     impl_appendable_via_to_duck_native,
 };
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 
 /*
@@ -365,3 +366,14 @@ impl AppendAble for SystemTime {
 // `DuckTimeNs` and `DuckTimeTz` have no dedicated append/bind function; use the value path.
 impl_appendable_via_to_duck_native!(DuckTimeNs);
 impl_appendable_via_to_duck_native!(DuckTimeTz);
+
+/// Hash `SystemTime` by converting to `Duration` since UNIX_EPOCH (platform-stable).
+#[cfg(not(feature = "chrono"))]
+#[inline]
+fn hash_system_time<H: Hasher>(
+    st: &SystemTime,
+    state: &mut H,
+) {
+    let d = st.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    d.hash(state);
+}

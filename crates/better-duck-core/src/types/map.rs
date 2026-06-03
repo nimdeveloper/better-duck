@@ -10,7 +10,9 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
+use crate::types::value_ref::DuckValueRef;
 use crate::{
     error::{DuckDBConversionError, Error, Result},
     ffi::{
@@ -233,4 +235,45 @@ impl AppendAble for HashMap<DuckValue, DuckValue> {
         unsafe { duckdb_destroy_value(&mut dv) };
         Ok(())
     }
+}
+
+/// Order-independent hash for map/struct entries: XOR of per-entry hashes.
+///
+/// We hash each `(k, v)` pair with a fresh `DefaultHasher`, then XOR-fold the
+/// results so that insertion order does not affect the combined hash.
+pub(super) fn map_entries_hash<H: Hasher, K: Hash, V: Hash>(
+    entries: impl Iterator<Item = (K, V)>,
+    len: usize,
+    state: &mut H,
+) {
+    len.hash(state);
+    let xor_fold: u64 = entries
+        .map(|(k, v)| {
+            let mut h = DefaultHasher::new();
+            k.hash(&mut h);
+            v.hash(&mut h);
+            h.finish()
+        })
+        .fold(0u64, |acc, x| acc ^ x);
+    xor_fold.hash(state);
+}
+
+/// Order-independent hash for map/struct entries.
+pub(super) fn map_entries_hash_ref<'a, H: Hasher>(
+    entries: impl Iterator<Item = (&'a DuckValueRef<'a>, &'a DuckValueRef<'a>)>,
+    len: usize,
+    state: &mut H,
+) where
+    DuckValueRef<'a>: Hash,
+{
+    len.hash(state);
+    let xor_fold: u64 = entries
+        .map(|(k, v)| {
+            let mut h = DefaultHasher::new();
+            k.hash(&mut h);
+            v.hash(&mut h);
+            h.finish()
+        })
+        .fold(0u64, |acc, x| acc ^ x);
+    xor_fold.hash(state);
 }
