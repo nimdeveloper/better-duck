@@ -1,9 +1,12 @@
 use std::{
     ffi::{CStr, CString},
-    os::raw::c_void,
+    os::raw::{c_char, c_void},
 };
 
-use crate::ffi::{duckdb_create_varchar, duckdb_free, duckdb_get_varchar, duckdb_value};
+use crate::{
+    ffi::{duckdb_create_varchar, duckdb_free, duckdb_get_varchar, duckdb_value},
+    types::appendable::AppendAble,
+};
 
 use super::{DuckDBConversionError, DuckDialect};
 
@@ -32,5 +35,43 @@ impl DuckDialect for String {
         // SAFETY: `c_str` is a valid null-terminated C string. `duckdb_create_varchar`
         // copies the string contents internally.
         Ok(unsafe { duckdb_create_varchar(c_str.as_ptr()) })
+    }
+}
+
+impl AppendAble for String {
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> crate::error::Result<()> {
+        let bytes = self.as_bytes();
+        // SAFETY: `bytes.as_ptr()` is valid UTF-8 data of `bytes.len()` bytes.
+        // `duckdb_append_varchar_length` copies the data and does not retain the pointer.
+        unsafe {
+            crate::ffi::duckdb_append_varchar_length(
+                appender,
+                bytes.as_ptr() as *const c_char,
+                bytes.len() as u64,
+            )
+        };
+        Ok(())
+    }
+
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> crate::error::Result<()> {
+        let bytes = self.as_bytes();
+        // SAFETY: `bytes.as_ptr()` is valid UTF-8 of `bytes.len()` bytes.
+        // `duckdb_bind_varchar_length` copies the data and does not retain the pointer.
+        unsafe {
+            crate::ffi::duckdb_bind_varchar_length(
+                stmt,
+                idx,
+                bytes.as_ptr() as *const c_char,
+                bytes.len() as u64,
+            )
+        };
+        Ok(())
     }
 }
