@@ -5,9 +5,10 @@ use std::{marker::PhantomData, sync::Arc};
 use better_duck_core::CachedStatement;
 use diesel::{
     connection::{
-        get_default_instrumentation, statement_cache::StatementCache, AnsiTransactionManager,
-        ConnectionSealed, Instrumentation, InstrumentationEvent, LoadConnection, SimpleConnection,
-        StrQueryHelper, TransactionManager,
+        get_default_instrumentation,
+        statement_cache::{PrepareForCache, StatementCache},
+        AnsiTransactionManager, ConnectionSealed, Instrumentation, InstrumentationEvent,
+        LoadConnection, SimpleConnection, StrQueryHelper, TransactionManager,
     },
     expression::QueryMetadata,
     query_builder::{Query, QueryFragment, QueryId},
@@ -102,13 +103,17 @@ impl Connection for DuckDbConnection {
 
         // Split-field borrows: &self.inner (shared) + &mut self.statement_cache
         // + &mut self.instrumentation are three different struct fields.
-        let inner = &self.inner;
         let mut stmt = self.statement_cache.cached_statement(
             source,
             &DuckDb,
             &[], // SQL text is the primary cache key; empty bind_types is sufficient.
-            |sql, _| {
-                CachedStatement::prepare(inner.db(), sql)
+            &self.inner,
+            |conn, sql, _prepare_for_cache, _| {
+                // match prepare_for_cache {
+                //     PrepareForCache::No => todo!("prepare for cache: no"),
+                //     PrepareForCache::Yes { .. } => todo!("prepare for cache: yes"),
+                // }
+                CachedStatement::prepare(conn.db(), sql)
                     .map_err(|e| diesel::result::Error::from(DuckDbError::new(e)))
             },
             &mut self.instrumentation,
@@ -140,6 +145,60 @@ impl Connection for DuckDbConnection {
         i: impl Instrumentation,
     ) {
         self.instrumentation = Some(Box::new(i));
+    }
+
+    fn transaction<T, E, F>(
+        &mut self,
+        f: F,
+    ) -> Result<T, E>
+    where
+        F: FnOnce(&mut Self) -> Result<T, E>,
+        E: From<diesel::result::Error>,
+    {
+        Self::TransactionManager::transaction(self, f)
+    }
+
+    fn begin_test_transaction(&mut self) -> QueryResult<()> {
+        match Self::TransactionManager::transaction_manager_status_mut(self) {
+            diesel::connection::TransactionManagerStatus::Valid(valid_status) => {
+                std::assert_eq!(None, valid_status.transaction_depth())
+            },
+            diesel::connection::TransactionManagerStatus::InError => {
+                std::panic!("Transaction manager in error")
+            },
+        };
+        Self::TransactionManager::begin_transaction(self)?;
+        // set the test transaction flag
+        // to prevent that this connection gets dropped in connection pools
+        // Tests commonly set the poolsize to 1 and use `begin_test_transaction`
+        // to prevent modifications to the schema
+        Self::TransactionManager::transaction_manager_status_mut(self).set_test_transaction_flag();
+        Ok(())
+    }
+
+    fn test_transaction<T, E, F>(
+        &mut self,
+        f: F,
+    ) -> T
+    where
+        F: FnOnce(&mut Self) -> Result<T, E>,
+        E: std::fmt::Debug,
+    {
+        let mut user_result = None;
+        let _ = self.transaction::<(), _, _>(|conn| {
+            user_result = Some(f(conn));
+            Err(diesel::result::Error::RollbackTransaction)
+        });
+        user_result
+            .expect("Transaction never executed")
+            .unwrap_or_else(|e| std::panic!("Transaction did not succeed: {:?}", e))
+    }
+
+    fn set_prepared_statement_cache_size(
+        &mut self,
+        size: diesel::connection::CacheSize,
+    ) {
+        self.statement_cache.set_cache_size(size);
     }
 }
 
@@ -197,13 +256,17 @@ impl LoadConnection for DuckDbConnection {
         let mut bc = DuckDbBindCollector::default();
         source.collect_binds(&mut bc, &mut (), &DuckDb)?;
 
-        let inner = &self.inner;
         let mut stmt = self.statement_cache.cached_statement(
             &source,
             &DuckDb,
             &[],
-            |sql, _| {
-                CachedStatement::prepare(inner.db(), sql)
+            &self.inner,
+            |conn, sql, _prepare_for_cache, _| {
+                // match prepare_for_cache {
+                //     PrepareForCache::No => todo!("prepare for cache: no"),
+                //     PrepareForCache::Yes { .. } => todo!("prepare for cache: yes"),
+                // }
+                CachedStatement::prepare(conn.db(), sql)
                     .map_err(|e| diesel::result::Error::from(DuckDbError::new(e)))
             },
             &mut self.instrumentation,
@@ -219,17 +282,6 @@ impl LoadConnection for DuckDbConnection {
         let result =
             stmt.execute().map_err(|e| diesel::result::Error::from(DuckDbError::new(e)))?;
         Ok(DuckDbCursor::new(result))
-    }
-}
-
-// Statement cache accessor
-
-impl DuckDbConnection {
-    /// Returns the number of prepared statements currently in the cache.
-    ///
-    /// Primarily useful for testing that cache hits are working correctly.
-    pub fn statement_cache_len(&self) -> usize {
-        self.statement_cache.len()
     }
 }
 
