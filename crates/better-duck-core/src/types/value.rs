@@ -153,8 +153,8 @@ pub enum DuckValue {
     #[cfg(feature = "decimal")]
     /// The value is a Decimal.
     Decimal(Decimal),
-    /// The value is a blob of data
-    Blob(Vec<u8>),
+    /// The value is a blob of data (raw byte sequence).
+    Blob(Blob),
     /// The value is a list
     List(Vec<DuckValue>),
     /// The value is an enum
@@ -230,7 +230,7 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
             DuckValueRef::Text(s) => DuckValue::Text(s.to_string()),
             #[cfg(feature = "decimal")]
             DuckValueRef::Decimal(d) => DuckValue::Decimal(*d),
-            DuckValueRef::Blob(b) => DuckValue::Blob(b.to_vec()),
+            DuckValueRef::Blob(b) => DuckValue::Blob(Blob::new(b.to_vec())),
             DuckValueRef::List(l) => DuckValue::List(l.iter().map(DuckValue::from).collect()),
             DuckValueRef::Enum(e) => DuckValue::Enum(e.to_string()),
             DuckValueRef::Struct(m) => {
@@ -266,10 +266,6 @@ macro_rules! simple_type_conversion {
 }
 
 impl DuckValue {
-    // Converts the current value to a DuckDB-compatible format.
-    // fn from_duck() -> ();
-    // Converts a DuckDB-compatible format to the current value.
-    // fn to_duck() -> ();
     pub(crate) fn from_duckdb_vec(
         val: duckdb_vector,
         t: duckdb_type,
@@ -278,8 +274,7 @@ impl DuckValue {
         // SAFETY: `val` is a valid duckdb_vector; the validity bitmap is valid for at
         // least the chunk's row count.
         let validity_ptr = unsafe { duckdb_vector_get_validity(val) };
-        // SAFETY: `row_idx` is within [0, chunk row count), so the validity bitmap access
-        // is in bounds.
+        // SAFETY: `row_idx` is within [0, chunk row count).
         let is_valid = unsafe { duckdb_validity_row_is_valid(validity_ptr, row_idx) };
 
         if !is_valid {
@@ -290,8 +285,6 @@ impl DuckValue {
             DUCKDB_TYPE_DUCKDB_TYPE_INVALID => {
                 Err(DuckDBConversionError::ConversionError(String::from("invalid type")))
             },
-            // SQLNULL is a typed-null sentinel used internally by DuckDB (e.g., for
-            // untyped NULL literals in struct_pack).  The value is always null.
             DUCKDB_TYPE_DUCKDB_TYPE_SQLNULL => Ok(DuckValue::Null),
             DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN => {
                 simple_type_conversion!(row_idx, val, DuckValue::Boolean, bool)
@@ -333,8 +326,8 @@ impl DuckValue {
                 simple_type_conversion!(row_idx, val, DuckValue::Double, f64)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_DATE => {
-                // SAFETY: DATE stores i32 days-since-epoch in packed array layout.
-                // `row_idx` is within [0, chunk row count), so the offset is in-bounds.
+                // SAFETY: The temporal type stores its raw value in packed array layout.
+                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
                 let value =
                     unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
                         as duckdb_value;
@@ -348,8 +341,8 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIME => {
-                // SAFETY: TIME stores i64 microseconds-since-midnight in packed array layout.
-                // `row_idx` is within [0, chunk row count), so the offset is in-bounds.
+                // SAFETY: The temporal type stores its raw value in packed array layout.
+                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
                 let value =
                     unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
                         as duckdb_value;
@@ -363,8 +356,8 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP => {
-                // SAFETY: TIMESTAMP stores i64 microseconds-since-epoch in packed array layout.
-                // `row_idx` is within [0, chunk row count), so the offset is in-bounds.
+                // SAFETY: The temporal type stores its raw value in packed array layout.
+                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
                 let value =
                     unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
                         as duckdb_value;
@@ -378,14 +371,14 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL => {
-                // SAFETY: INTERVAL stores duckdb_interval { months: i32, days: i32, micros: i64 }
-                // (16 bytes) in packed array layout. `row_idx` is within [0, chunk row count).
+                // SAFETY: The temporal type stores its raw value in packed array layout.
+                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
                 let value =
                     unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
                         as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
-                    return chrono::Duration::from_duck(value).map(DuckValue::Interval);
+                    chrono::Duration::from_duck(value).map(DuckValue::Interval)
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
@@ -393,8 +386,8 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S => {
-                // SAFETY: TIMESTAMP_S stores i64 seconds-since-epoch in packed array layout.
-                // `row_idx` is within [0, chunk_size).
+                // SAFETY: The temporal type stores its raw value in packed array layout.
+                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
                 let value =
                     unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
                         as duckdb_value;
@@ -407,8 +400,7 @@ impl DuckValue {
                 {
                     use crate::ffi::duckdb_get_timestamp_s;
                     use std::time::UNIX_EPOCH;
-                    // SAFETY: `value` was cast from an i32 read at `row_idx`; valid for
-                    // the lifetime of the result set.
+                    // SAFETY: `value` was cast from a packed-array read; valid as TIMESTAMP_S.
                     let secs = unsafe { duckdb_get_timestamp_s(value) }.seconds;
                     let abs = secs.unsigned_abs();
                     Ok(DuckValue::TimestampS(if secs >= 0 {
@@ -419,8 +411,8 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_MS => {
-                // SAFETY: TIMESTAMP_MS stores i64 milliseconds-since-epoch in packed array layout.
-                // `row_idx` is within [0, chunk_size).
+                // SAFETY: The temporal type stores its raw value in packed array layout.
+                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
                 let value =
                     unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
                         as duckdb_value;
@@ -433,8 +425,7 @@ impl DuckValue {
                 {
                     use crate::ffi::duckdb_get_timestamp_ms;
                     use std::time::UNIX_EPOCH;
-                    // SAFETY: `value` was cast from an i32 read at `row_idx`; valid for
-                    // the lifetime of the result set.
+                    // SAFETY: `value` was cast from a packed-array read; valid as TIMESTAMP_MS.
                     let millis = unsafe { duckdb_get_timestamp_ms(value) }.millis;
                     let abs = millis.unsigned_abs();
                     Ok(DuckValue::TimestampMs(if millis >= 0 {
@@ -445,8 +436,8 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_NS => {
-                // SAFETY: TIMESTAMP_NS stores i64 nanoseconds-since-epoch in packed array layout.
-                // `row_idx` is within [0, chunk_size). Full nanosecond precision is preserved.
+                // SAFETY: The temporal type stores its raw value in packed array layout.
+                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
                 let value =
                     unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
                         as duckdb_value;
@@ -459,8 +450,7 @@ impl DuckValue {
                 {
                     use crate::ffi::duckdb_get_timestamp_ns;
                     use std::time::UNIX_EPOCH;
-                    // SAFETY: `value` was cast from an i32 read at `row_idx`; valid for
-                    // the lifetime of the result set.
+                    // SAFETY: `value` was cast from a packed-array read; valid as TIMESTAMP_NS.
                     let nanos = unsafe { duckdb_get_timestamp_ns(value) }.nanos;
                     let abs = nanos.unsigned_abs();
                     Ok(DuckValue::TimestampNs(if nanos >= 0 {
@@ -471,16 +461,12 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR | DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL => {
-                // SAFETY: VARCHAR columns store an array of `duckdb_string_t`. Each element
-                // contains either an inlined short string or a pointer to a heap string owned
-                // by DuckDB. `duckdb_string_t_data` returns a valid null-terminated UTF-8
-                // pointer for the lifetime of the result. We copy into an owned `String`
-                // before returning; no raw pointer escapes this block.
+                // SAFETY: VARCHAR columns store an array of `duckdb_string_t`.
+                // We copy into an owned `String` before returning.
                 unsafe {
                     let values = duckdb_vector_get_data(val) as *mut duckdb_string_t;
                     let mut duck_string_t = *values.add(row_idx as usize);
                     let char_ptr = duckdb_string_t_data(&mut duck_string_t);
-
                     let rust_string = CStr::from_ptr(char_ptr).to_string_lossy().into_owned();
                     Ok(DuckValue::Text(rust_string))
                     // String::from_duck(rust_string).map(DuckValue::Text)
@@ -492,9 +478,6 @@ impl DuckValue {
             },
             DUCKDB_TYPE_DUCKDB_TYPE_BLOB => {
                 // SAFETY: BLOB columns use the same `duckdb_string_t` layout as VARCHAR.
-                // `duckdb_string_t_data` returns a pointer valid for `duckdb_string_t_length`
-                // bytes. We copy the bytes immediately; neither pointer is retained after
-                // this block.
                 let bytes = unsafe {
                     // TODO: use duckdb_get_blob(value)
                     let values = duckdb_vector_get_data(val) as *mut duckdb_string_t;
@@ -503,12 +486,12 @@ impl DuckValue {
                     let len = duckdb_string_t_length(s) as usize;
                     std::slice::from_raw_parts(ptr as *const u8, len).to_vec()
                 };
-                Ok(DuckValue::Blob(bytes))
+                Ok(DuckValue::Blob(Blob::new(bytes)))
             },
             #[cfg(feature = "decimal")]
             DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL => {
-                // SAFETY: `val` is a valid duckdb_vector; the data pointer is valid for
-                // the chunk's row count. We read the raw i64 at `row_idx` as a decimal.
+                // SAFETY: `val` is a valid duckdb_vector; the data pointer is valid for the
+                // chunk's row count. We read the raw i64 at `row_idx` as a decimal.
                 let data_ptr = unsafe { duckdb_vector_get_data(val) as *mut i64 };
                 // SAFETY: `row_idx` is within [0, chunk_size).
                 let value = unsafe { *data_ptr.add(row_idx as usize) as crate::ffi::duckdb_value };
@@ -519,10 +502,8 @@ impl DuckValue {
                 // `duckdb_vector_get_column_type` returns a new logical type that the caller
                 // must destroy with `duckdb_destroy_logical_type`.
                 let mut logical_type = unsafe { duckdb_vector_get_column_type(val) };
-                // SAFETY: `logical_type` is a valid duckdb_logical_type of ENUM kind,
-                // as returned by `duckdb_vector_get_column_type` above.
+                // SAFETY: `logical_type` is a valid duckdb_logical_type of ENUM kind.
                 let dict_size = unsafe { duckdb_enum_dictionary_size(logical_type) };
-
                 // SAFETY: The dictionary size determines storage width per the DuckDB spec.
                 // `row_idx` is within [0, chunk_size).
                 let raw_index: u32 = unsafe {
@@ -535,33 +516,26 @@ impl DuckValue {
                         *(data as *const u32).add(row_idx as usize)
                     }
                 };
-
                 // SAFETY: `raw_index` is within [0, dict_size). The returned C string is a
-                // heap-allocated null-terminated UTF-8 string that we must free with
-                // `duckdb_free`.
+                // heap-allocated null-terminated UTF-8 string that we must free with `duckdb_free`.
                 let c_str_ptr =
                     unsafe { duckdb_enum_dictionary_value(logical_type, raw_index as idx_t) };
-
                 let name = if c_str_ptr.is_null() {
-                    // Clean up before returning the error.
                     // SAFETY: `logical_type` was obtained from `duckdb_vector_get_column_type`.
                     unsafe { duckdb_destroy_logical_type(&mut logical_type) };
                     return Err(DuckDBConversionError::ConversionError(format!(
                         "enum index {raw_index} out of range (dict size {dict_size})"
                     )));
                 } else {
-                    // SAFETY: `duckdb_enum_dictionary_value` returns valid null-terminated
-                    // UTF-8 when the index is in range.
+                    // SAFETY: `duckdb_enum_dictionary_value` returns valid null-terminated UTF-8.
                     let s = unsafe { CStr::from_ptr(c_str_ptr) }
                         .to_str()
                         .map(|s| s.to_owned())
                         .map_err(|e| DuckDBConversionError::ConversionError(e.to_string()))?;
-                    // SAFETY: `c_str_ptr` was allocated by DuckDB and must be freed via
-                    // `duckdb_free`.
+                    // SAFETY: `c_str_ptr` was allocated by DuckDB and must be freed via `duckdb_free`.
                     unsafe { duckdb_free(c_str_ptr as *mut std::ffi::c_void) };
                     s
                 };
-
                 // SAFETY: `logical_type` was obtained from `duckdb_vector_get_column_type`
                 // and must be destroyed exactly once.
                 unsafe { duckdb_destroy_logical_type(&mut logical_type) };
@@ -636,8 +610,8 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_TZ => {
-                // SAFETY: TIMESTAMP_TZ stores i64 UTC microseconds-since-epoch in packed array
-                // layout (same wire format as TIMESTAMP). `row_idx` is within [0, chunk_size).
+                // SAFETY: The temporal type stores its raw value in packed array layout.
+                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
                 let value =
                     unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
                         as duckdb_value;
@@ -651,8 +625,7 @@ impl DuckValue {
                 {
                     // TODO: We need to use timezone here, but how?
                     use std::time::UNIX_EPOCH;
-                    // SAFETY: `value` was cast from an i32 read at `row_idx`; valid for
-                    // the lifetime of the result set.
+                    // SAFETY: `value` was cast from a packed-array read; valid as TIMESTAMP_TZ.
                     let micros = unsafe {
                         use crate::ffi::duckdb_get_timestamp_tz;
                         duckdb_get_timestamp_tz(value)
@@ -670,8 +643,8 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ => {
-                // SAFETY: TIME_TZ stores duckdb_time_tz { bits: u64 } (8 bytes) in packed array
-                // layout. `row_idx` is within [0, chunk_size).
+                // SAFETY: The temporal type stores its raw value in packed array layout.
+                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
                 let value =
                     unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
                         as duckdb_value;
@@ -687,8 +660,8 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS => {
-                // SAFETY: TIME_NS stores i64 nanoseconds-since-midnight in packed array layout.
-                // `row_idx` is within [0, chunk_size). Full nanosecond precision is preserved.
+                // SAFETY: The temporal type stores its raw value in packed array layout.
+                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
                 let value =
                     unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
                         as duckdb_value;
@@ -957,7 +930,6 @@ impl DuckValue {
             DuckValue::Float(f) => f.to_duck(),
             DuckValue::Double(d) => d.to_duck(),
 
-            // Temporal (chrono)
             #[cfg(feature = "chrono")]
             DuckValue::Timestamp(dt) => dt.to_duck(),
             #[cfg(feature = "chrono")]
@@ -979,7 +951,6 @@ impl DuckValue {
             #[cfg(feature = "chrono")]
             DuckValue::TimeNs(t) => crate::types::date_chrono::TimeNs(*t).to_duck(),
 
-            // Temporal (no-chrono)
             #[cfg(not(feature = "chrono"))]
             DuckValue::Timestamp(st)
             | DuckValue::TimestampS(st)
@@ -997,12 +968,8 @@ impl DuckValue {
             #[cfg(not(feature = "chrono"))]
             DuckValue::TimeNs(t) => t.to_duck(),
 
-            // Text / Blob / Enum
             DuckValue::Text(s) | DuckValue::Enum(s) => s.to_duck(),
-            DuckValue::Blob(b) => {
-                // SAFETY: `b.as_ptr()` is valid for `b.len()` bytes; duckdb copies internally.
-                Ok(unsafe { duckdb_create_blob(b.as_ptr(), b.len() as idx_t) })
-            },
+            DuckValue::Blob(b) => b.to_duck(),
 
             #[cfg(feature = "decimal")]
             DuckValue::Decimal(d) => d.to_duck(),
@@ -1459,6 +1426,7 @@ impl DuckValue {
         }
     }
 }
+
 impl From<DuckValue> for String {
     fn from(val: DuckValue) -> Self {
         match val {
