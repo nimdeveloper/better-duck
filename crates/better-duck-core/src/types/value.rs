@@ -10,20 +10,14 @@ use std::time::{Duration, SystemTime};
 
 use crate::{
     ffi::{
-        duckdb_create_array_type, duckdb_create_array_value, duckdb_create_blob,
-        duckdb_create_list_type, duckdb_create_list_value, duckdb_create_logical_type,
-        duckdb_create_map_type, duckdb_create_map_value, duckdb_create_null_value,
-        duckdb_create_struct_type, duckdb_create_struct_value, duckdb_create_uhugeint,
-        duckdb_create_union_type, duckdb_create_union_value, duckdb_destroy_logical_type,
-        duckdb_destroy_value, duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
-        duckdb_free, duckdb_get_type_id, duckdb_list_entry, duckdb_list_vector_get_child,
-        duckdb_list_vector_get_size, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
-        duckdb_string_t_length, duckdb_struct_type_child_count, duckdb_struct_type_child_name,
-        duckdb_struct_vector_get_child, duckdb_type, duckdb_uhugeint,
-        duckdb_union_type_member_count, duckdb_validity_row_is_valid, duckdb_vector,
-        duckdb_vector_get_column_type, duckdb_vector_get_data, duckdb_vector_get_validity, idx_t,
-        DUCKDB_TYPE_DUCKDB_TYPE_ARRAY, DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
-        DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
+        duckdb_create_logical_type, duckdb_create_null_value, duckdb_create_uhugeint,
+        duckdb_destroy_logical_type, duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
+        duckdb_free, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
+        duckdb_string_t_length, duckdb_type, duckdb_uhugeint, duckdb_validity_row_is_valid,
+        duckdb_value, duckdb_vector, duckdb_vector_get_column_type, duckdb_vector_get_data,
+        duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
+        DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB,
+        DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
         DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE,
         DUCKDB_TYPE_DUCKDB_TYPE_ENUM, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT,
         DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
@@ -928,125 +922,11 @@ impl DuckValue {
             DuckValue::Decimal(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL),
             DuckValue::Blob(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_BLOB),
 
-            DuckValue::List(items) => {
-                if items.is_empty() {
-                    return Err(DuckDBConversionError::ConversionError(
-                        "cannot determine element type of empty List".into(),
-                    ));
-                }
-                let mut child_lt = DuckValue::logical_type_of(&items[0])?;
-                // SAFETY: `child_lt` is a valid logical type; `duckdb_create_list_type` copies it.
-                let lt = unsafe { duckdb_create_list_type(child_lt) };
-                // SAFETY: `child_lt` was allocated above and must be freed exactly once.
-                unsafe { duckdb_destroy_logical_type(&mut child_lt) };
-                Ok(lt)
-            },
-
-            DuckValue::Array(items) => {
-                if items.is_empty() {
-                    return Err(DuckDBConversionError::ConversionError(
-                        "cannot determine element type of empty Array".into(),
-                    ));
-                }
-                let mut child_lt = DuckValue::logical_type_of(&items[0])?;
-                // SAFETY: `child_lt` is valid; `duckdb_create_array_type` copies it.
-                let lt = unsafe { duckdb_create_array_type(child_lt, items.len() as idx_t) };
-                // SAFETY: `child_lt` was allocated above.
-                unsafe { duckdb_destroy_logical_type(&mut child_lt) };
-                Ok(lt)
-            },
-
-            DuckValue::Struct(m) => {
-                let n = m.len();
-                if n == 0 {
-                    return Err(DuckDBConversionError::ConversionError(
-                        "cannot determine type of empty Struct".into(),
-                    ));
-                }
-                let entries: Vec<(&String, &DuckValue)> = m.iter().collect();
-                let mut member_types: Vec<duckdb_logical_type> = Vec::with_capacity(n);
-                let mut c_names: Vec<std::ffi::CString> = Vec::with_capacity(n);
-                let mut err: Option<DuckDBConversionError> = None;
-
-                for (k, v) in &entries {
-                    match DuckValue::logical_type_of(v) {
-                        Ok(lt) => member_types.push(lt),
-                        Err(e) => {
-                            err = Some(e);
-                            break;
-                        },
-                    }
-                    match std::ffi::CString::new(k.as_str()) {
-                        Ok(c) => c_names.push(c),
-                        Err(e) => {
-                            err = Some(DuckDBConversionError::ConversionError(e.to_string()));
-                            break;
-                        },
-                    }
-                }
-                if let Some(e) = err {
-                    for mut lt in member_types {
-                        // SAFETY: each `lt` was allocated by `logical_type_of` above.
-                        unsafe { duckdb_destroy_logical_type(&mut lt) };
-                    }
-                    return Err(e);
-                }
-                let mut name_ptrs: Vec<*const std::os::raw::c_char> =
-                    c_names.iter().map(|c| c.as_ptr()).collect();
-                // SAFETY: `member_types` and `name_ptrs` are valid arrays of `n` elements;
-                // `duckdb_create_struct_type` copies both.
-                let lt = unsafe {
-                    duckdb_create_struct_type(
-                        member_types.as_mut_ptr(),
-                        name_ptrs.as_mut_ptr(),
-                        n as idx_t,
-                    )
-                };
-                for mut mt in member_types {
-                    // SAFETY: each `mt` was allocated by `logical_type_of` above.
-                    unsafe { duckdb_destroy_logical_type(&mut mt) };
-                }
-                Ok(lt)
-            },
-
-            DuckValue::Map(m) => {
-                if m.is_empty() {
-                    return Err(DuckDBConversionError::ConversionError(
-                        "cannot determine value type of empty Map".into(),
-                    ));
-                }
-                // Keys are always VARCHAR (HashMap<String, _> keys).
-                // SAFETY: the type constant is always a valid duckdb_type.
-                let mut key_lt =
-                    unsafe { duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR) };
-                let first_val = m.values().next().unwrap();
-                let mut val_lt = match DuckValue::logical_type_of(first_val) {
-                    Ok(lt) => lt,
-                    Err(e) => {
-                        // SAFETY: `key_lt` was allocated above.
-                        unsafe { duckdb_destroy_logical_type(&mut key_lt) };
-                        return Err(e);
-                    },
-                };
-                // SAFETY: both types are valid; `duckdb_create_map_type` copies them.
-                let lt = unsafe { duckdb_create_map_type(key_lt, val_lt) };
-                // SAFETY: `key_lt` was allocated above; destroy exactly once.
-                unsafe { duckdb_destroy_logical_type(&mut key_lt) };
-                // SAFETY: `val_lt` was allocated by `logical_type_of` above.
-                unsafe { duckdb_destroy_logical_type(&mut val_lt) };
-                Ok(lt)
-            },
-
-            DuckValue::Union(inner) => {
-                let mut member_lt = DuckValue::logical_type_of(inner)?;
-                let c_name = std::ffi::CString::new("value").unwrap();
-                let mut name_ptr: *const std::os::raw::c_char = c_name.as_ptr();
-                // SAFETY: single-element arrays of valid pointers; create copies both.
-                let lt = unsafe { duckdb_create_union_type(&mut member_lt, &mut name_ptr, 1) };
-                // SAFETY: `member_lt` was allocated by `logical_type_of` above.
-                unsafe { duckdb_destroy_logical_type(&mut member_lt) };
-                Ok(lt)
-            },
+            DuckValue::List(items) => crate::types::array::list_logical_type(items),
+            DuckValue::Array(items) => crate::types::array::array_logical_type(items),
+            DuckValue::Struct(m) => crate::types::duck_struct::struct_logical_type(m),
+            DuckValue::Map(m) => crate::types::map::map_logical_type(m),
+            DuckValue::Union(inner) => crate::types::union::union_logical_type(inner),
         }
     }
 }
