@@ -60,7 +60,7 @@ fn read_map_string_keys() -> better_duck_core::error::Result<()> {
 #[test]
 fn read_map_integer_keys() -> better_duck_core::error::Result<()> {
     let conn = Connection::open_in_memory()?;
-    // Integer-keyed map: keys stored as Int, converted to "1", "2" string keys.
+    // Integer-keyed MAP: keys are stored as DuckValue::Int (not stringified).
     let mut stmt = conn.db().prepare("SELECT MAP {1: 'one', 2: 'two'} AS m")?;
     let mut result = stmt.execute()?;
     let row = result.next().expect("expected one row")?;
@@ -68,12 +68,13 @@ fn read_map_integer_keys() -> better_duck_core::error::Result<()> {
     let val = row.get("m").expect("column 'm' missing");
     if let DuckValue::Map(ref m) = val {
         assert_eq!(m.len(), 2);
-        // Integer-keyed MAP: keys are now real DuckValue::Int, not stringified.
-        assert_eq!(m.get(&DuckValue::Int(1)), Some(&DuckValue::Text("one".to_string())));
-        assert_eq!(m.get(&DuckValue::Int(2)), Some(&DuckValue::Text("two".to_string())));
     } else {
         panic!("expected DuckValue::Map, got {:?}", val);
     }
+    // Use ergonomic helpers: `val.get(key)` accepts any Into<DuckValue>.
+    assert_eq!(val.get(1i32), Some(&DuckValue::text("one")));
+    assert_eq!(val.get(2i32), Some(&DuckValue::text("two")));
+    assert_eq!(val.get(99i32), None);
     Ok(())
 }
 
