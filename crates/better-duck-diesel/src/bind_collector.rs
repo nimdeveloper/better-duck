@@ -94,6 +94,17 @@ impl MoveableBindCollector<DuckDb> for DuckDbBindCollector<'_> {
         from: &Self::BindData,
     ) {
         self.binds.reserve_exact(from.binds.len());
-        self.binds.extend(from.binds.iter().map(DuckValueRef::from));
+        // Clone each DuckValue and convert to a fully-owned DuckValueRef.
+        // `from_value` accepts any lifetime 'a, so type inference picks the bind
+        // collector's lifetime directly — no 'static / invariance issue.
+        self.binds.extend(from.binds.iter().cloned().map(DuckValueRef::from_value));
+    }
+
+    #[doc = " Push bind data as debug representation"]
+    fn push_debug_binds<'a, 'b>(
+        _bind_data: &Self::BindData,
+        _f: &'a mut Vec<Box<dyn std::fmt::Debug + 'b>>,
+    ) {
+        todo!()
     }
 }

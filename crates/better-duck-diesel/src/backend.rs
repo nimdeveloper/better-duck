@@ -80,6 +80,15 @@ impl SqlDialect for DuckDb {
     type ExistsSyntax = sql_dialect::exists_syntax::AnsiSqlExistsSyntax;
     type ArrayComparison = AnsiSqlArrayComparison;
     type AliasSyntax = sql_dialect::alias_syntax::AsAliasSyntax;
+
+    type WindowFrameClauseGroupSupport =
+        sql_dialect::window_frame_clause_group_support::IsoGroupWindowFrameUnit;
+    type WindowFrameExclusionSupport =
+        sql_dialect::window_frame_exclusion_support::FrameExclusionSupport;
+    type AggregateFunctionExpressions =
+        sql_dialect::aggregate_function_expressions::PostgresLikeAggregateFunctionExpressions;
+    type BuiltInWindowFunctionRequireOrder =
+        sql_dialect::built_in_window_function_require_order::NoOrderRequired;
 }
 
 impl TypeMetadata for DuckDb {
