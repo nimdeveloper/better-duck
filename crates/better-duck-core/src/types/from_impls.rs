@@ -111,7 +111,7 @@ impl From<&str> for DuckValue {
 
 impl From<super::blob::Blob> for DuckValue {
     fn from(b: super::blob::Blob) -> Self {
-        DuckValue::Blob(b.0)
+        DuckValue::Blob(b)
     }
 }
 
