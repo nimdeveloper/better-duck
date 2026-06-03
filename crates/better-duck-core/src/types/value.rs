@@ -3,7 +3,8 @@
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use std::collections::HashMap;
 use std::ffi::CStr;
-use std::ptr;
+use std::hash::{Hash, Hasher};
+use std::mem;
 #[cfg(not(feature = "chrono"))]
 use std::time::{Duration, SystemTime};
 
@@ -45,6 +46,7 @@ use crate::{
 use rust_decimal::Decimal;
 
 use super::*;
+use crate::types::cmp::{canonical_f32, canonical_f64};
 
 /// Represents any value that can be stored in a DuckDB column.
 #[non_exhaustive]
@@ -163,8 +165,8 @@ pub enum DuckValue {
     Struct(HashMap<String, DuckValue>),
     /// The value is an array with fixed length
     Array(Box<[DuckValue]>),
-    /// The value is a map (string-keyed value map with a dynamic schema).
-    Map(HashMap<String, DuckValue>),
+    /// The value is a map (arbitrary key → value pairs with a dynamic schema).
+    Map(HashMap<DuckValue, DuckValue>),
     /// The value is a union (tagged sum type; holds the active member value).
     Union(Box<DuckValue>),
 }
@@ -242,9 +244,9 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),
             ),
-            DuckValueRef::Map(m) => {
-                DuckValue::Map(m.iter().map(|(k, v)| (k.clone(), DuckValue::from(v))).collect())
-            },
+            DuckValueRef::Map(m) => DuckValue::Map(
+                m.iter().map(|(k, v)| (DuckValue::from(k), DuckValue::from(v))).collect(),
+            ),
             DuckValueRef::Union(u) => DuckValue::Union(Box::new(DuckValue::from(u.as_ref()))),
         }
     }
