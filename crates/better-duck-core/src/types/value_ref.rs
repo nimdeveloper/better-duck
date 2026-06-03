@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 #[cfg(feature = "chrono")]
-use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -10,8 +10,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "decimal")]
 use rust_decimal::Decimal;
-
-use std::collections::HashMap;
 
 use crate::types::Blob;
 
@@ -137,8 +135,8 @@ pub enum DuckValueRef<'a> {
     Struct(HashMap<String, DuckValueRef<'a>>),
     /// The value is an array with fixed length
     Array(Box<[DuckValueRef<'a>]>),
-    /// The value is a map (string-keyed value map with a dynamic schema).
-    Map(HashMap<String, DuckValueRef<'a>>),
+    /// The value is a map (arbitrary key → value pairs with a dynamic schema).
+    Map(HashMap<DuckValueRef<'a>, DuckValueRef<'a>>),
     /// The value is a union (tagged sum type; holds the active member value).
     Union(Box<DuckValueRef<'a>>),
 }
@@ -216,7 +214,7 @@ impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
                 a.iter().map(DuckValueRef::from).collect::<Vec<_>>().into_boxed_slice(),
             ),
             DuckValue::Map(m) => DuckValueRef::Map(
-                m.iter().map(|(k, v)| (k.clone(), DuckValueRef::from(v))).collect(),
+                m.iter().map(|(k, v)| (DuckValueRef::from(k), DuckValueRef::from(v))).collect(),
             ),
             DuckValue::Union(u) => DuckValueRef::Union(Box::new(DuckValueRef::from(u.as_ref()))),
         }
