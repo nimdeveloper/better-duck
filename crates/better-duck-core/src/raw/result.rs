@@ -4,7 +4,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use libduckdb_sys::{duckdb_column_count, duckdb_column_name, duckdb_destroy_result, DUCKDB_TYPE};
+use crate::ffi::{duckdb_column_count, duckdb_column_name, duckdb_destroy_result, DUCKDB_TYPE};
 
 use crate::{
     error::{DuckDBConversionError, Error, Result},

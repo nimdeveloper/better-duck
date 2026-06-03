@@ -9,7 +9,7 @@ use crate::{
 /// Use `Blob` anywhere you need to read or write a DuckDB `BLOB` column. The inner
 /// `Vec<u8>` is always an owned copy of the bytes stored in DuckDB.
 ///
-/// `DuckValue::Blob` still holds `Vec<u8>` directly; this newtype is provided so that
+/// `DuckValue::Blob` still holds `Vec<u8>` directly; this new type is provided so that
 /// a plain `Vec<u8>` is **not** forced to map to `BLOB`, freeing `Vec<T>` for use in
 /// a generic `LIST` `From` impl (Phase F).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
