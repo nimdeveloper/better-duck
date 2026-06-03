@@ -290,6 +290,9 @@ impl DuckValue {
             DUCKDB_TYPE_DUCKDB_TYPE_INVALID => {
                 Err(DuckDBConversionError::ConversionError(String::from("invalid type")))
             },
+            // SQLNULL is a typed-null sentinel used internally by DuckDB (e.g., for
+            // untyped NULL literals in struct_pack).  The value is always null.
+            DUCKDB_TYPE_DUCKDB_TYPE_SQLNULL => Ok(DuckValue::Null),
             DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN => {
                 simple_type_conversion!(row_idx, val, DuckValue::Boolean, bool)
             },
