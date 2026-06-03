@@ -215,6 +215,97 @@ impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
     }
 }
 
+impl<'a> DuckValueRef<'a> {
+    /// Converts an owned [`DuckValue`] into a fully-owned `DuckValueRef<'a>`.
+    ///
+    /// All borrowed slots (`Text`, `Blob`, `Enum`) use [`Cow::Owned`]; scalars are
+    /// copied; composites are converted recursively. Because no external data is
+    /// borrowed, the caller may choose **any** lifetime `'a` — Rust will infer it
+    /// from the call context. This sidesteps the invariance issue that arises when
+    /// extending a `Vec<DuckValueRef<'a>>` with `DuckValueRef<'static>` items.
+    pub fn from_value(v: DuckValue) -> DuckValueRef<'a> {
+        match v {
+            DuckValue::Null => DuckValueRef::Null,
+            DuckValue::Boolean(b) => DuckValueRef::Boolean(b),
+            DuckValue::TinyInt(n) => DuckValueRef::TinyInt(n),
+            DuckValue::SmallInt(n) => DuckValueRef::SmallInt(n),
+            DuckValue::Int(n) => DuckValueRef::Int(n),
+            DuckValue::BigInt(n) => DuckValueRef::BigInt(n),
+            DuckValue::HugeInt(n) => DuckValueRef::HugeInt(n),
+            DuckValue::UTinyInt(n) => DuckValueRef::UTinyInt(n),
+            DuckValue::USmallInt(n) => DuckValueRef::USmallInt(n),
+            DuckValue::UInt(n) => DuckValueRef::UInt(n),
+            DuckValue::UBigInt(n) => DuckValueRef::UBigInt(n),
+            DuckValue::UHugeInt(n) => DuckValueRef::UHugeInt(n),
+            DuckValue::Float(f) => DuckValueRef::Float(f),
+            DuckValue::Double(d) => DuckValueRef::Double(d),
+            #[cfg(feature = "chrono")]
+            DuckValue::Timestamp(t) => DuckValueRef::Timestamp(t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::Timestamp(t) => DuckValueRef::Timestamp(t),
+            #[cfg(feature = "chrono")]
+            DuckValue::TimestampS(t) => DuckValueRef::TimestampS(t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::TimestampS(t) => DuckValueRef::TimestampS(t),
+            #[cfg(feature = "chrono")]
+            DuckValue::TimestampMs(t) => DuckValueRef::TimestampMs(t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::TimestampMs(t) => DuckValueRef::TimestampMs(t),
+            #[cfg(feature = "chrono")]
+            DuckValue::TimestampNs(t) => DuckValueRef::TimestampNs(t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::TimestampNs(t) => DuckValueRef::TimestampNs(t),
+            #[cfg(feature = "chrono")]
+            DuckValue::TimestampTz(t) => DuckValueRef::TimestampTz(t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::TimestampTz(t) => DuckValueRef::TimestampTz(t),
+            #[cfg(feature = "chrono")]
+            DuckValue::Date(d) => DuckValueRef::Date(d),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::Date(d) => DuckValueRef::Date(d),
+            #[cfg(feature = "chrono")]
+            DuckValue::Time(t) => DuckValueRef::Time(t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::Time(t) => DuckValueRef::Time(t),
+            #[cfg(feature = "chrono")]
+            DuckValue::Interval(i) => DuckValueRef::Interval(i),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::Interval(i) => DuckValueRef::Interval(i),
+            #[cfg(feature = "chrono")]
+            DuckValue::TimeTz(t) => DuckValueRef::TimeTz(t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::TimeTz(t) => DuckValueRef::TimeTz(t),
+            #[cfg(feature = "chrono")]
+            DuckValue::TimeNs(t) => DuckValueRef::TimeNs(t),
+            #[cfg(not(feature = "chrono"))]
+            DuckValue::TimeNs(t) => DuckValueRef::TimeNs(t),
+            DuckValue::Text(s) => DuckValueRef::Text(Cow::Owned(s)),
+            DuckValue::Enum(s) => DuckValueRef::Enum(Cow::Owned(s)),
+            DuckValue::Blob(b) => DuckValueRef::Blob(Cow::Owned(b)),
+            #[cfg(feature = "decimal")]
+            DuckValue::Decimal(d) => DuckValueRef::Decimal(d),
+            DuckValue::List(items) => {
+                DuckValueRef::List(items.into_iter().map(DuckValueRef::from_value).collect())
+            },
+            DuckValue::Array(items) => DuckValueRef::Array(
+                items
+                    .into_vec()
+                    .into_iter()
+                    .map(DuckValueRef::from_value)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            ),
+            DuckValue::Struct(m) => DuckValueRef::Struct(
+                m.into_iter().map(|(k, v)| (k, DuckValueRef::from_value(v))).collect(),
+            ),
+            DuckValue::Map(m) => DuckValueRef::Map(
+                m.into_iter().map(|(k, v)| (k, DuckValueRef::from_value(v))).collect(),
+            ),
+            DuckValue::Union(b) => DuckValueRef::Union(Box::new(DuckValueRef::from_value(*b))),
+        }
+    }
+}
+
 // Common conversions for primitive types
 impl<'a> From<DuckValueRef<'a>> for String {
     fn from(val: DuckValueRef<'_>) -> Self {

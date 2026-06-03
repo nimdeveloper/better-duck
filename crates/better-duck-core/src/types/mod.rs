@@ -4,7 +4,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 /// Public type modules.
 pub mod appendable;
-/// DuckDB BLOB type — [`Blob`] newtype wrapping `Vec<u8>`.
+/// DuckDB BLOB type — [`Blob`] new type wrapping `Vec<u8>`.
 pub mod blob;
 pub use blob::Blob;
 /// Chrono date/time types and `DuckDialect` implementations for the `chrono` feature.
@@ -13,6 +13,8 @@ pub mod date_chrono;
 /// No-chrono date/time component types and DuckDialect implementations.
 #[cfg(not(feature = "chrono"))]
 pub mod date_native;
+/// Ergonomic `From<T>` conversions into `DuckValue`.
+pub mod from_impls;
 /// Numeric DuckDB type conversions and `AppendAble` implementations.
 pub mod numeric;
 /// The `DuckValue` enum representing any DuckDB column value.
@@ -24,8 +26,8 @@ pub mod varchar;
 use crate::error::DuckDBConversionError;
 
 use crate::error::Result;
+use crate::ffi::duckdb_bind_boolean;
 use appendable::AppendAble;
-use libduckdb_sys::duckdb_bind_boolean;
 
 use crate::ffi::{
     duckdb_append_bool, duckdb_create_bool, duckdb_get_bool, duckdb_value,
@@ -222,9 +224,13 @@ pub enum Type {
     List,
     /// The value is an enum.
     Enum,
+    /// The value is a struct (ordered key–value pairs with a fixed schema).
+    Struct,
+    /// The value is a map (ordered key–value pairs with a dynamic schema).
+    Map,
     /// The value is an array with fixed length.
     Array(Box<[Type]>),
-    /// The value is a union.
+    /// The value is a union (tagged sum type).
     Union(Box<Type>),
     /// Any DuckDB type.
     Any,
