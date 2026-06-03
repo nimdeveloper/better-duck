@@ -1,5 +1,4 @@
 #![allow(missing_docs)]
-//! Integration tests for Phase 5 production features:
 //! statement cache, transactions, and migration support.
 
 use better_duck_diesel::DuckDbConnection;

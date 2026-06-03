@@ -11,7 +11,7 @@ use crate::{
 ///
 /// `DuckValue::Blob` still holds `Vec<u8>` directly; this new type is provided so that
 /// a plain `Vec<u8>` is **not** forced to map to `BLOB`, freeing `Vec<T>` for use in
-/// a generic `LIST` `From` impl (Phase F).
+/// a generic `LIST` `From` impl
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Blob(pub Vec<u8>);
 
