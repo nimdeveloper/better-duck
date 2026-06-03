@@ -41,6 +41,7 @@ use crate::{
 use rust_decimal::Decimal;
 
 use super::*;
+use crate::types::appendable::AppendAble;
 use crate::types::cmp::{canonical_f32, canonical_f64};
 
 /// Represents any value that can be stored in a DuckDB column.
@@ -400,7 +401,7 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
             DuckValueRef::Text(s) => DuckValue::Text(s.to_string()),
             #[cfg(feature = "decimal")]
             DuckValueRef::Decimal(d) => DuckValue::Decimal(*d),
-            DuckValueRef::Blob(b) => DuckValue::Blob(Blob::new(b.to_vec())),
+            DuckValueRef::Blob(b) => DuckValue::Blob(b.clone()),
             DuckValueRef::List(l) => DuckValue::List(l.iter().map(DuckValue::from).collect()),
             DuckValueRef::Enum(e) => DuckValue::Enum(e.to_string()),
             DuckValueRef::Struct(m) => {
@@ -938,6 +939,104 @@ impl DuckValue {
             DuckValue::Map(m) => crate::types::map::map_logical_type(m),
             DuckValue::Union(inner) => crate::types::union::union_logical_type(inner),
         }
+    }
+}
+
+impl DuckValue {
+    /// Creates a `Text` value from any string-like type.
+    ///
+    /// Accepts `&str`, `String`, or anything else that converts into `String`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use better_duck_core::types::value::DuckValue;
+    ///
+    /// let a = DuckValue::text("hello");
+    /// let b = DuckValue::text(String::from("hello"));
+    /// assert_eq!(a, b);
+    /// ```
+    #[inline]
+    pub fn text(s: impl Into<String>) -> DuckValue {
+        DuckValue::Text(s.into())
+    }
+
+    /// Looks up a value in a `Map` variant by any key convertible into [`DuckValue`].
+    ///
+    /// Returns `None` for non-`Map` variants or a missing key.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use better_duck_core::types::value::DuckValue;
+    /// use std::collections::HashMap;
+    ///
+    /// let m: DuckValue = HashMap::from([
+    ///     (DuckValue::Int(1), DuckValue::text("one")),
+    /// ]).into();
+    /// assert_eq!(m.get(1i32), Some(&DuckValue::text("one")));
+    /// assert_eq!(m.get(99i32), None);
+    /// ```
+    #[inline]
+    pub fn get(
+        &self,
+        key: impl Into<DuckValue>,
+    ) -> Option<&DuckValue> {
+        match self {
+            DuckValue::Map(m) => m.get(&key.into()),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the value for the given key in a `Map` variant.
+    ///
+    /// Returns `None` for non-`Map` variants or missing keys.
+    #[inline]
+    pub fn get_mut(
+        &mut self,
+        key: impl Into<DuckValue>,
+    ) -> Option<&mut DuckValue> {
+        match self {
+            DuckValue::Map(m) => m.get_mut(&key.into()),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if the `Map` variant contains the given key.
+    ///
+    /// Always returns `false` for non-`Map` variants.
+    #[inline]
+    pub fn contains_key(
+        &self,
+        key: impl Into<DuckValue>,
+    ) -> bool {
+        match self {
+            DuckValue::Map(m) => m.contains_key(&key.into()),
+            _ => false,
+        }
+    }
+}
+
+impl AppendAble for DuckValue {
+    /// Binds this value to a prepared-statement parameter at the 1-based index `idx`.
+    ///
+    /// Delegates to the [`DuckValueRef`] implementation to avoid duplicating per-variant logic.
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> crate::error::Result<()> {
+        DuckValueRef::from(&*self).stmt_append(idx, stmt)
+    }
+
+    /// Appends this value to a DuckDB appender row.
+    ///
+    /// Delegates to the [`DuckValueRef`] implementation to avoid duplicating per-variant logic.
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> crate::error::Result<()> {
+        DuckValueRef::from(&*self).appender_append(appender)
     }
 }
 

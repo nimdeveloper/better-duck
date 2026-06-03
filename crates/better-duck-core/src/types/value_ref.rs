@@ -127,8 +127,8 @@ pub enum DuckValueRef<'a> {
     #[cfg(feature = "decimal")]
     /// The value is a Decimal.
     Decimal(Decimal),
-    /// The value is a blob of data, using Cow for zero-copy when possible
-    Blob(Cow<'a, [u8]>),
+    /// The value is a blob of data.
+    Blob(Blob),
     /// The value is a list
     List(Vec<DuckValueRef<'a>>),
     /// The value is an enum
@@ -379,11 +379,11 @@ impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
             DuckValue::TimeNs(t) => DuckValueRef::TimeNs(*t),
             #[cfg(not(feature = "chrono"))]
             DuckValue::TimeNs(t) => DuckValueRef::TimeNs(*t),
-            // Zero-copy borrows for text/blob/enum.
+            // Zero-copy borrows for text/enum; Blob is always cloned (owned).
             DuckValue::Text(s) => DuckValueRef::Text(Cow::Borrowed(s.as_str())),
             #[cfg(feature = "decimal")]
             DuckValue::Decimal(d) => DuckValueRef::Decimal(*d),
-            DuckValue::Blob(b) => DuckValueRef::Blob(Cow::Borrowed(b.as_bytes())),
+            DuckValue::Blob(b) => DuckValueRef::Blob(b.clone()),
             DuckValue::List(l) => DuckValueRef::List(l.iter().map(DuckValueRef::from).collect()),
             DuckValue::Enum(e) => DuckValueRef::Enum(Cow::Borrowed(e.as_str())),
             DuckValue::Struct(m) => DuckValueRef::Struct(
@@ -473,7 +473,7 @@ impl<'a> From<DuckValue> for DuckValueRef<'a> {
             DuckValue::TimeNs(t) => DuckValueRef::TimeNs(t),
             DuckValue::Text(s) => DuckValueRef::Text(Cow::Owned(s)),
             DuckValue::Enum(s) => DuckValueRef::Enum(Cow::Owned(s)),
-            DuckValue::Blob(b) => DuckValueRef::Blob(Cow::Owned(b.0)),
+            DuckValue::Blob(b) => DuckValueRef::Blob(b),
             #[cfg(feature = "decimal")]
             DuckValue::Decimal(d) => DuckValueRef::Decimal(d),
             DuckValue::List(items) => {
@@ -598,7 +598,7 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
                 let mut owned: String = s.as_ref().to_owned();
                 owned.stmt_append(idx, stmt)
             },
-            DuckValueRef::Blob(b) => Blob::new(b.to_vec()).stmt_append(idx, stmt),
+            DuckValueRef::Blob(b) => b.stmt_append(idx, stmt),
             #[cfg(feature = "chrono")]
             DuckValueRef::Date(d) => d.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
@@ -715,7 +715,7 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
                 };
                 Ok(())
             },
-            DuckValueRef::Blob(b) => Blob::new(b.to_vec()).appender_append(appender),
+            DuckValueRef::Blob(b) => b.appender_append(appender),
             #[cfg(feature = "chrono")]
             DuckValueRef::Date(d) => d.appender_append(appender),
             #[cfg(not(feature = "chrono"))]
@@ -758,6 +758,113 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             },
             #[cfg(feature = "decimal")]
             DuckValueRef::Decimal(d) => d.appender_append(appender),
+        }
+    }
+}
+
+// 
+// From<primitive> for DuckValueRef — mirrors the DuckValue impls in from_impls.rs.
+// These allow callers to pass raw Rust primitives where a DuckValueRef is expected.
+// 
+
+impl<'a> From<bool> for DuckValueRef<'a> {
+    fn from(v: bool) -> Self {
+        DuckValueRef::Boolean(v)
+    }
+}
+impl<'a> From<i8> for DuckValueRef<'a> {
+    fn from(v: i8) -> Self {
+        DuckValueRef::TinyInt(v)
+    }
+}
+impl<'a> From<i16> for DuckValueRef<'a> {
+    fn from(v: i16) -> Self {
+        DuckValueRef::SmallInt(v)
+    }
+}
+impl<'a> From<i32> for DuckValueRef<'a> {
+    fn from(v: i32) -> Self {
+        DuckValueRef::Int(v)
+    }
+}
+impl<'a> From<i64> for DuckValueRef<'a> {
+    fn from(v: i64) -> Self {
+        DuckValueRef::BigInt(v)
+    }
+}
+impl<'a> From<i128> for DuckValueRef<'a> {
+    fn from(v: i128) -> Self {
+        DuckValueRef::HugeInt(v)
+    }
+}
+impl<'a> From<u8> for DuckValueRef<'a> {
+    fn from(v: u8) -> Self {
+        DuckValueRef::UTinyInt(v)
+    }
+}
+impl<'a> From<u16> for DuckValueRef<'a> {
+    fn from(v: u16) -> Self {
+        DuckValueRef::USmallInt(v)
+    }
+}
+impl<'a> From<u32> for DuckValueRef<'a> {
+    fn from(v: u32) -> Self {
+        DuckValueRef::UInt(v)
+    }
+}
+impl<'a> From<u64> for DuckValueRef<'a> {
+    fn from(v: u64) -> Self {
+        DuckValueRef::UBigInt(v)
+    }
+}
+impl<'a> From<u128> for DuckValueRef<'a> {
+    fn from(v: u128) -> Self {
+        DuckValueRef::UHugeInt(v)
+    }
+}
+impl<'a> From<f32> for DuckValueRef<'a> {
+    fn from(v: f32) -> Self {
+        DuckValueRef::Float(v)
+    }
+}
+impl<'a> From<f64> for DuckValueRef<'a> {
+    fn from(v: f64) -> Self {
+        DuckValueRef::Double(v)
+    }
+}
+
+/// Borrows the string slice (zero-copy).
+impl<'a> From<&'a str> for DuckValueRef<'a> {
+    fn from(v: &'a str) -> Self {
+        DuckValueRef::Text(Cow::Borrowed(v))
+    }
+}
+
+/// Owns the string.
+impl<'a> From<String> for DuckValueRef<'a> {
+    fn from(v: String) -> Self {
+        DuckValueRef::Text(Cow::Owned(v))
+    }
+}
+
+impl<'a> From<Blob> for DuckValueRef<'a> {
+    fn from(b: Blob) -> Self {
+        DuckValueRef::Blob(b)
+    }
+}
+
+/// Converts a `Vec<u8>` into a `Blob` value.
+impl<'a> From<Vec<u8>> for DuckValueRef<'a> {
+    fn from(v: Vec<u8>) -> Self {
+        DuckValueRef::Blob(Blob::new(v))
+    }
+}
+
+impl<'a, T: Into<DuckValueRef<'a>>> From<Option<T>> for DuckValueRef<'a> {
+    fn from(opt: Option<T>) -> Self {
+        match opt {
+            Some(v) => v.into(),
+            None => DuckValueRef::Null,
         }
     }
 }
