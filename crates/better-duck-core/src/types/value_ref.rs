@@ -10,6 +10,8 @@ use rust_decimal::Decimal;
 
 use std::collections::HashMap;
 
+use crate::types::Blob;
+
 use super::value::DuckValue;
 
 /// A reference-based version of DuckValue that can store either owned or borrowed data.
@@ -366,193 +368,45 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
                 // SAFETY: `stmt` is a valid prepared statement; `idx` is a 1-based parameter
                 // index as required by the DuckDB C API.
                 unsafe { ffi::duckdb_bind_null(stmt, idx) };
+                Ok(())
             },
-            DuckValueRef::Boolean(v) => {
-                // SAFETY: same as above; `*v` is a valid bool.
-                unsafe { ffi::duckdb_bind_boolean(stmt, idx, *v) };
-            },
-            DuckValueRef::TinyInt(v) => {
-                // SAFETY: `*v` is a valid i8.
-                unsafe { ffi::duckdb_bind_int8(stmt, idx, *v) };
-            },
-            DuckValueRef::SmallInt(v) => {
-                // SAFETY: `*v` is a valid i16.
-                unsafe { ffi::duckdb_bind_int16(stmt, idx, *v) };
-            },
-            DuckValueRef::Int(v) => {
-                // SAFETY: `*v` is a valid i32.
-                unsafe { ffi::duckdb_bind_int32(stmt, idx, *v) };
-            },
-            DuckValueRef::BigInt(v) => {
-                // SAFETY: `*v` is a valid i64.
-                unsafe { ffi::duckdb_bind_int64(stmt, idx, *v) };
-            },
-            DuckValueRef::HugeInt(v) => {
-                // Decompose i128 into the `duckdb_hugeint { lower: u64, upper: i64 }` layout
-                // using the same arithmetic as `hugeint_from_i128` in numeric.rs.
-                // SAFETY: The resulting `duckdb_hugeint` is a valid POD value.
-                let hi = {
-                    let val = *v;
-                    let neg = val < 0;
-                    let x = if neg { -val } else { val };
-                    let m = u64::MAX as i128;
-                    let mut h =
-                        ffi::duckdb_hugeint { upper: (x / m) as i64, lower: (x % m) as u64 };
-                    if neg {
-                        h.lower = u64::MAX - h.lower;
-                        h.upper = (!h.upper).wrapping_add((h.lower == 0) as i64);
-                    }
-                    h
-                };
-                // SAFETY: `hi` is a valid duckdb_hugeint computed above.
-                unsafe { ffi::duckdb_bind_hugeint(stmt, idx, hi) };
-            },
-            DuckValueRef::UTinyInt(v) => {
-                // SAFETY: `*v` is a valid u8.
-                unsafe { ffi::duckdb_bind_uint8(stmt, idx, *v) };
-            },
-            DuckValueRef::USmallInt(v) => {
-                // SAFETY: `*v` is a valid u16.
-                unsafe { ffi::duckdb_bind_uint16(stmt, idx, *v) };
-            },
-            DuckValueRef::UInt(v) => {
-                // SAFETY: `*v` is a valid u32.
-                unsafe { ffi::duckdb_bind_uint32(stmt, idx, *v) };
-            },
-            DuckValueRef::UBigInt(v) => {
-                // SAFETY: `*v` is a valid u64.
-                unsafe { ffi::duckdb_bind_uint64(stmt, idx, *v) };
-            },
-            DuckValueRef::UHugeInt(v) => {
-                // Decompose u128 into `duckdb_uhugeint { lower: u64, upper: u64 }`.
-                // SAFETY: The resulting struct is a valid POD value.
-                let uhi = ffi::duckdb_uhugeint { lower: *v as u64, upper: (*v >> 64) as u64 };
-                // SAFETY: `uhi` is a valid duckdb_uhugeint computed above.
-                unsafe { ffi::duckdb_bind_uhugeint(stmt, idx, uhi) };
-            },
-            DuckValueRef::Float(v) => {
-                // SAFETY: `*v` is a valid f32.
-                unsafe { ffi::duckdb_bind_float(stmt, idx, *v) };
-            },
-            DuckValueRef::Double(v) => {
-                // SAFETY: `*v` is a valid f64.
-                unsafe { ffi::duckdb_bind_double(stmt, idx, *v) };
-            },
-            DuckValueRef::Text(s) => {
-                let bytes = s.as_bytes();
-                // SAFETY: `bytes.as_ptr()` points to valid UTF-8 data of `bytes.len()` bytes.
-                // `duckdb_bind_varchar_length` copies the data and does not retain the pointer.
-                unsafe {
-                    ffi::duckdb_bind_varchar_length(
-                        stmt,
-                        idx,
-                        bytes.as_ptr() as *const std::os::raw::c_char,
-                        bytes.len() as u64,
-                    )
-                };
-            },
-            DuckValueRef::Blob(b) => {
-                // SAFETY: `b.as_ptr()` points to valid bytes of `b.len()` length.
-                // `duckdb_bind_blob` copies the data and does not retain the pointer.
-                unsafe {
-                    ffi::duckdb_bind_blob(
-                        stmt,
-                        idx,
-                        b.as_ptr() as *const std::ffi::c_void,
-                        b.len() as u64,
-                    )
-                };
-            },
+            DuckValueRef::Boolean(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::TinyInt(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::SmallInt(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::BigInt(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::HugeInt(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::UTinyInt(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::USmallInt(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::UInt(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::UBigInt(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::Float(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::Double(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::Text(s) => s.into_owned().stmt_append(idx, stmt),
+            DuckValueRef::Blob(b) => Blob::new(b.into_owned()).stmt_append(idx, stmt),
             #[cfg(feature = "chrono")]
-            DuckValueRef::Date(d) => {
-                // Convert NaiveDate → days-since-CE (same formula as DuckDialect::to_duck).
-                // SAFETY: The resulting `duckdb_date` is a valid POD value.
-                let raw = ffi::duckdb_date { days: d.num_days_from_ce() - 719_163 };
-                // SAFETY: `raw` is a valid duckdb_date.
-                unsafe { ffi::duckdb_bind_date(stmt, idx, raw) };
-            },
+            DuckValueRef::Date(d) => d.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::Date(d) => {
-                // Convert DuckDate { year, month, day } → duckdb_date via duckdb_to_date.
-                let ds = ffi::duckdb_date_struct {
-                    year: d.year,
-                    month: d.month as i8,
-                    day: d.day as i8,
-                };
-                // SAFETY: `duckdb_to_date` is a pure arithmetic conversion on a valid struct.
-                let raw = unsafe { ffi::duckdb_to_date(ds) };
-                // SAFETY: `raw` is a valid duckdb_date from duckdb_to_date above.
-                unsafe { ffi::duckdb_bind_date(stmt, idx, raw) };
-            },
+            DuckValueRef::Date(d) => d.stmt_append(idx, stmt),
             #[cfg(feature = "chrono")]
-            DuckValueRef::Time(t) => {
-                // Convert NaiveTime → microseconds-since-midnight.
-                // SAFETY: The resulting `duckdb_time` is a valid POD value.
-                let micros = (t.num_seconds_from_midnight() as i64) * 1_000_000
-                    + (t.nanosecond() as i64) / 1_000;
-                let raw = ffi::duckdb_time { micros };
-                // SAFETY: `raw` is a valid duckdb_time.
-                unsafe { ffi::duckdb_bind_time(stmt, idx, raw) };
-            },
+            DuckValueRef::Time(t) => t.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::Time(t) => {
-                // Convert DuckTime → duckdb_time via duckdb_to_time.
-                let ts = ffi::duckdb_time_struct {
-                    hour: t.hour as i8,
-                    min: t.min as i8,
-                    sec: t.sec as i8,
-                    micros: t.micros as i32,
-                };
-                // SAFETY: `duckdb_to_time` is a pure arithmetic conversion on a valid struct.
-                let raw = unsafe { ffi::duckdb_to_time(ts) };
-                // SAFETY: `raw` is a valid duckdb_time from duckdb_to_time above.
-                unsafe { ffi::duckdb_bind_time(stmt, idx, raw) };
-            },
+            DuckValueRef::Time(t) => t.stmt_append(idx, stmt),
             // All four timestamp variants bind as TIMESTAMP (microseconds since epoch).
             // DuckDB handles implicit narrowing/widening at the column level.
             #[cfg(feature = "chrono")]
             DuckValueRef::Timestamp(dt)
             | DuckValueRef::TimestampS(dt)
             | DuckValueRef::TimestampMs(dt)
-            | DuckValueRef::TimestampNs(dt) => {
-                // SAFETY: The resulting `duckdb_timestamp` is a valid POD value.
-                let micros = dt.and_utc().timestamp() * 1_000_000
-                    + dt.and_utc().timestamp_subsec_micros() as i64;
-                let raw = ffi::duckdb_timestamp { micros };
-                // SAFETY: `raw` is a valid duckdb_timestamp.
-                unsafe { ffi::duckdb_bind_timestamp(stmt, idx, raw) };
-            },
+            | DuckValueRef::TimestampNs(dt) => st.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::Timestamp(st)
             | DuckValueRef::TimestampS(st)
             | DuckValueRef::TimestampMs(st)
-            | DuckValueRef::TimestampNs(st) => {
-                // Convert SystemTime to microseconds since the Unix epoch.
-                // SAFETY: The resulting `duckdb_timestamp` is a valid POD value.
-                let dur = st.duration_since(UNIX_EPOCH).unwrap_or_default();
-                let micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
-                let raw = ffi::duckdb_timestamp { micros };
-                // SAFETY: `raw` is a valid duckdb_timestamp.
-                unsafe { ffi::duckdb_bind_timestamp(stmt, idx, raw) };
-            },
+            | DuckValueRef::TimestampNs(st) => st.stmt_append(idx, stmt),
             #[cfg(feature = "chrono")]
-            DuckValueRef::Interval(d) => {
-                // Map chrono Duration → duckdb_interval preserving total microseconds.
-                // SAFETY: The resulting `duckdb_interval` is a valid POD value.
-                let micros = d.num_microseconds().unwrap_or(0);
-                let raw = ffi::duckdb_interval { months: 0, days: 0, micros };
-                // SAFETY: `raw` is a valid duckdb_interval.
-                unsafe { ffi::duckdb_bind_interval(stmt, idx, raw) };
-            },
+            DuckValueRef::Interval(d) => d.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::Interval(d) => {
-                // Map std::time::Duration → duckdb_interval preserving total microseconds.
-                // SAFETY: The resulting `duckdb_interval` is a valid POD value.
-                let micros = d.as_micros().min(i64::MAX as u128) as i64;
-                let raw = ffi::duckdb_interval { months: 0, days: 0, micros };
-                // SAFETY: `raw` is a valid duckdb_interval.
-                unsafe { ffi::duckdb_bind_interval(stmt, idx, raw) };
-            },
+            DuckValueRef::Interval(d) => d.stmt_append(idx, stmt),
             // Bind TIMESTAMP_TZ as UTC microseconds via duckdb_bind_timestamp_tz.
             #[cfg(feature = "chrono")]
             DuckValueRef::TimestampTz(dt) => {
@@ -561,74 +415,26 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
                 unsafe { ffi::duckdb_bind_timestamp_tz(stmt, idx, raw) };
             },
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::TimestampTz(st) => {
-                use std::time::UNIX_EPOCH;
-                let dur = st.duration_since(UNIX_EPOCH).unwrap_or_default();
-                let micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
-                let raw = ffi::duckdb_timestamp { micros };
-                // SAFETY: `raw` is a valid duckdb_timestamp (UTC microseconds).
-                unsafe { ffi::duckdb_bind_timestamp_tz(stmt, idx, raw) };
-            },
+            DuckValueRef::TimestampTz(st) => st.stmt_append(idx, stmt),
             // Bind TIME_TZ and TIME_NS via duckdb_bind_value (no dedicated bind API).
             #[cfg(feature = "chrono")]
-            DuckValueRef::TimeTz(tz) => {
-                use crate::types::DuckDialect as _;
-                let mut dv = tz.to_duck().map_err(Error::ConversionError)?;
-                // SAFETY: `stmt` is valid; `dv` was just created by `to_duck()`.
-                unsafe { ffi::duckdb_bind_value(stmt, idx, dv) };
-                // SAFETY: `dv` was created above; destroy exactly once.
-                unsafe { ffi::duckdb_destroy_value(&mut dv) };
-            },
+            DuckValueRef::TimeTz(tz) => tz.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::TimeTz(tz) => {
-                use crate::types::DuckDialect as _;
-                let mut dv = tz.to_duck().map_err(Error::ConversionError)?;
-                // SAFETY: `stmt` is valid; `dv` was just created by `to_duck()`.
-                unsafe { ffi::duckdb_bind_value(stmt, idx, dv) };
-                // SAFETY: `dv` was created above; destroy exactly once.
-                unsafe { ffi::duckdb_destroy_value(&mut dv) };
-            },
+            DuckValueRef::TimeTz(tz) => tz.stmt_append(idx, stmt),
             #[cfg(feature = "chrono")]
-            DuckValueRef::TimeNs(t) => {
-                use crate::types::DuckDialect as _;
-                // Wrap in TimeNs to call to_duck.
-                let wrapper = crate::types::date_chrono::TimeNs(*t);
-                let mut dv = wrapper.to_duck().map_err(Error::ConversionError)?;
-                // SAFETY: `stmt` is valid; `dv` was just created by `to_duck()`.
-                unsafe { ffi::duckdb_bind_value(stmt, idx, dv) };
-                // SAFETY: `dv` was created above; destroy exactly once.
-                unsafe { ffi::duckdb_destroy_value(&mut dv) };
-            },
+            DuckValueRef::TimeNs(t) => t.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::TimeNs(t) => {
-                use crate::types::DuckDialect as _;
-                let mut dv = t.to_duck().map_err(Error::ConversionError)?;
-                // SAFETY: `stmt` is valid; `dv` was just created by `to_duck()`.
-                unsafe { ffi::duckdb_bind_value(stmt, idx, dv) };
-                // SAFETY: `dv` was created above; destroy exactly once.
-                unsafe { ffi::duckdb_destroy_value(&mut dv) };
-            },
+            DuckValueRef::TimeNs(t) => t.stmt_append(idx, stmt),
             #[cfg(feature = "decimal")]
-            DuckValueRef::Decimal(_) => {
-                // The DuckDB decimal bind API is complex; Decimal::stmt_append also returns
-                // AppendError. Use duckdb_bind_value with to_duck() if binding decimals is needed.
-                return Err(Error::AppendError);
-            },
-            DuckValueRef::List(_)
-            | DuckValueRef::Array(_)
-            | DuckValueRef::Struct(_)
-            | DuckValueRef::Map(_)
-            | DuckValueRef::Union(_)
-            | DuckValueRef::Enum(_) => {
-                // Composite types will be bound via `to_duck` + `duckdb_bind_value`
-                return Err(Error::ConversionError(DuckDBConversionError::ConversionError(
-                    "composite types cannot be bound as statement parameters yet; \
-                     use to_duck() when it's complete"
-                        .into(),
-                )));
-            },
+            DuckValueRef::Decimal(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::List(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::Array(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::Struct(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::Map(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::Union(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::Enum(v) => v.into_owned().stmt_append(idx, stmt),
+            DuckValueRef::UHugeInt(_) => panic!("Not implemented yet!"),
         }
-        Ok(())
     }
 
     /// Appends this value to a DuckDB appender row.
