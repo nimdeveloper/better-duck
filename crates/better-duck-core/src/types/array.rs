@@ -32,7 +32,6 @@ use super::value::DuckValue;
 /// # Safety
 /// `val` must be a valid `duckdb_vector` of LIST or ARRAY type; `row_idx` must be
 /// within `[0, chunk_size)`.
-
 #[inline(always)]
 pub(crate) fn read_list_or_array(
     val: duckdb_vector,

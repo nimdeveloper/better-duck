@@ -44,16 +44,11 @@ use crate::ffi::{duckdb_append_bool, duckdb_create_bool, duckdb_get_bool, duckdb
 
 /// Trait for converting between DuckDB values and Rust types.
 ///
-/// This trait provides methods to safely convert DuckDB values to Rust types and vice versa.
-/// Implementors must ensure that conversions are performed only between compatible types to
-/// avoid undefined behavior.
-///
-/// # Safety
-///
-/// The `from_duck` method assumes that the provided `duckdb_value` matches the expected DuckDB
-/// type for the implementing Rust type. Passing a value of an incorrect type may result in
-/// panics or memory safety issues. Always perform type checking at a higher level before
-/// calling this method.
+/// The generic parameter `Raw` represents the raw value type that `from_duck` accepts.
+/// It defaults to [`duckdb_value`] (a heap-allocated DuckDB value handle), which is correct
+/// for scalar types. Temporal types override `Raw` with the appropriate packed FFI struct
+/// (e.g. `impl DuckDialect<duckdb_date> for NaiveDate`) so that chunk-vector reads can pass
+/// the struct directly without an alloc/free round-trip.
 ///
 /// # Errors
 ///
@@ -72,17 +67,14 @@ use crate::ffi::{duckdb_append_bool, duckdb_create_bool, duckdb_get_bool, duckdb
 /// // SAFETY: duck_val was created by duckdb_create_bool above.
 /// unsafe { duckdb_destroy_value(&mut duck_val) };
 /// ```
-pub trait DuckDialect
+pub trait DuckDialect<Raw = duckdb_value>
 where
     Self: Sized,
 {
-    /// Converts a DuckDB value to the implementing Rust type.
+    /// Converts a raw DuckDB value (or packed FFI struct) to the implementing Rust type.
     ///
-    /// # Safety
-    ///
-    /// This method assumes that the provided `duckdb_value` is of the correct DuckDB type
-    /// for the implementing Rust type. Calling this method with a value of the wrong type
-    /// is undefined behavior and may lead to panics or memory safety issues.
+    /// For most scalar types `Raw = duckdb_value` (the default). For temporal types `Raw` is
+    /// the concrete FFI struct stored in chunk vectors (e.g. `duckdb_date`, `duckdb_timestamp`).
     ///
     /// # Errors
     ///
@@ -101,7 +93,7 @@ where
     /// // SAFETY: val was created by duckdb_create_bool above.
     /// unsafe { duckdb_destroy_value(&mut val) };
     /// ```
-    fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError>
+    fn from_duck(value: Raw) -> Result<Self, DuckDBConversionError>
     where
         Self: Sized;
 
