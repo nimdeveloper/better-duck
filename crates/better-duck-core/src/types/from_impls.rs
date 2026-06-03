@@ -144,17 +144,26 @@ impl From<Box<[DuckValue]>> for DuckValue {
 
 // Map / Struct
 
-/// Converts a `HashMap<String, DuckValue>` into `DuckValue::Map`.
-impl From<HashMap<String, DuckValue>> for DuckValue {
-    fn from(h: HashMap<String, DuckValue>) -> Self {
+/// Converts a `HashMap<DuckValue, DuckValue>` directly into `DuckValue::Map`.
+impl From<HashMap<DuckValue, DuckValue>> for DuckValue {
+    fn from(h: HashMap<DuckValue, DuckValue>) -> Self {
         DuckValue::Map(h)
     }
 }
 
-/// Converts a `Vec<(String, DuckValue)>` into `DuckValue::Map`.
+/// Converts a `HashMap<String, DuckValue>` into `DuckValue::Map` (keys become
+/// `DuckValue::Text`).
+impl From<HashMap<String, DuckValue>> for DuckValue {
+    fn from(h: HashMap<String, DuckValue>) -> Self {
+        DuckValue::Map(h.into_iter().map(|(k, v)| (DuckValue::Text(k), v)).collect())
+    }
+}
+
+/// Converts a `Vec<(String, DuckValue)>` into `DuckValue::Map` (keys become
+/// `DuckValue::Text`).
 impl From<Vec<(String, DuckValue)>> for DuckValue {
     fn from(v: Vec<(String, DuckValue)>) -> Self {
-        DuckValue::Map(v.into_iter().collect())
+        DuckValue::Map(v.into_iter().map(|(k, v)| (DuckValue::Text(k), v)).collect())
     }
 }
 
