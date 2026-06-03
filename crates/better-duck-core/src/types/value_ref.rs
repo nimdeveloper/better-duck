@@ -621,10 +621,9 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             | DuckValueRef::Union(_)
             | DuckValueRef::Enum(_) => {
                 // Composite types will be bound via `to_duck` + `duckdb_bind_value`
-                // once Phase D (composite write path) is complete.
                 return Err(Error::ConversionError(DuckDBConversionError::ConversionError(
                     "composite types cannot be bound as statement parameters yet; \
-                     use to_duck() once Phase D is complete"
+                     use to_duck() when it's complete"
                         .into(),
                 )));
             },
