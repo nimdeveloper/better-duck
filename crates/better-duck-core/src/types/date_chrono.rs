@@ -7,15 +7,20 @@
 
 use super::*;
 use crate::error::DuckDBConversionError;
-use crate::ffi::{
-    duckdb_create_date, duckdb_create_interval, duckdb_create_time, duckdb_create_time_ns,
-    duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_create_timestamp_ms,
-    duckdb_create_timestamp_ns, duckdb_create_timestamp_s, duckdb_create_timestamp_tz, duckdb_date,
-    duckdb_destroy_value, duckdb_from_date, duckdb_from_time_tz, duckdb_get_date,
-    duckdb_get_interval, duckdb_get_time, duckdb_get_time_ns, duckdb_get_time_tz,
-    duckdb_get_timestamp, duckdb_get_timestamp_ms, duckdb_get_timestamp_ns, duckdb_get_timestamp_s,
-    duckdb_get_timestamp_tz, duckdb_interval, duckdb_time, duckdb_time_ns, duckdb_timestamp,
-    duckdb_timestamp_ms, duckdb_timestamp_ns, duckdb_timestamp_s, duckdb_value,
+use crate::types::appendable::AppendAble;
+use crate::{
+    ffi::{
+        duckdb_create_date, duckdb_create_interval, duckdb_create_time, duckdb_create_time_ns,
+        duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_create_timestamp_ms,
+        duckdb_create_timestamp_ns, duckdb_create_timestamp_s, duckdb_create_timestamp_tz,
+        duckdb_date, duckdb_destroy_value, duckdb_from_date, duckdb_from_time_tz, duckdb_get_date,
+        duckdb_get_interval, duckdb_get_time, duckdb_get_time_ns, duckdb_get_time_tz,
+        duckdb_get_timestamp, duckdb_get_timestamp_ms, duckdb_get_timestamp_ns,
+        duckdb_get_timestamp_s, duckdb_get_timestamp_tz, duckdb_interval, duckdb_time,
+        duckdb_time_ns, duckdb_timestamp, duckdb_timestamp_ms, duckdb_timestamp_ns,
+        duckdb_timestamp_s, duckdb_value,
+    },
+    impl_appendable_via_to_duck_native,
 };
 use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 
@@ -368,6 +373,114 @@ impl TimeNs {
         result
     }
 }
+
+impl AppendAble for NaiveDate {
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> crate::error::Result<()> {
+        let raw = duckdb_date { days: self.num_days_from_ce() - 719_163 };
+        // SAFETY: `raw` is a valid duckdb_date; `appender` is a valid duckdb_appender.
+        unsafe { crate::ffi::duckdb_append_date(appender, raw) };
+        Ok(())
+    }
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> crate::error::Result<()> {
+        let raw = duckdb_date { days: self.num_days_from_ce() - 719_163 };
+        // SAFETY: `raw` is a valid duckdb_date; `stmt`/`idx` are valid.
+        unsafe { crate::ffi::duckdb_bind_date(stmt, idx, raw) };
+        Ok(())
+    }
+}
+
+impl AppendAble for NaiveTime {
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> crate::error::Result<()> {
+        let micros = (self.num_seconds_from_midnight() as i64) * 1_000_000
+            + (self.nanosecond() as i64) / 1_000;
+        let raw = duckdb_time { micros };
+        // SAFETY: `raw` is a valid duckdb_time; `appender` is valid.
+        unsafe { crate::ffi::duckdb_append_time(appender, raw) };
+        Ok(())
+    }
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> crate::error::Result<()> {
+        let micros = (self.num_seconds_from_midnight() as i64) * 1_000_000
+            + (self.nanosecond() as i64) / 1_000;
+        let raw = duckdb_time { micros };
+        // SAFETY: `raw` is a valid duckdb_time; `stmt`/`idx` are valid.
+        unsafe { crate::ffi::duckdb_bind_time(stmt, idx, raw) };
+        Ok(())
+    }
+}
+
+impl AppendAble for NaiveDateTime {
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> crate::error::Result<()> {
+        let micros = self.and_utc().timestamp() * 1_000_000
+            + self.and_utc().timestamp_subsec_micros() as i64;
+        let raw = duckdb_timestamp { micros };
+        // SAFETY: `raw` is a valid duckdb_timestamp; `appender` is valid.
+        unsafe { crate::ffi::duckdb_append_timestamp(appender, raw) };
+        Ok(())
+    }
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> crate::error::Result<()> {
+        let micros = self.and_utc().timestamp() * 1_000_000
+            + self.and_utc().timestamp_subsec_micros() as i64;
+        let raw = duckdb_timestamp { micros };
+        // SAFETY: `raw` is a valid duckdb_timestamp; `stmt`/`idx` are valid.
+        unsafe { crate::ffi::duckdb_bind_timestamp(stmt, idx, raw) };
+        Ok(())
+    }
+}
+
+impl AppendAble for Duration {
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> crate::error::Result<()> {
+        let micros = self.num_microseconds().unwrap_or(0);
+        let raw = duckdb_interval { months: 0, days: 0, micros };
+        // SAFETY: `raw` is a valid duckdb_interval; `appender` is valid.
+        unsafe { crate::ffi::duckdb_append_interval(appender, raw) };
+        Ok(())
+    }
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> crate::error::Result<()> {
+        let micros = self.num_microseconds().unwrap_or(0);
+        let raw = duckdb_interval { months: 0, days: 0, micros };
+        // SAFETY: `raw` is a valid duckdb_interval; `stmt`/`idx` are valid.
+        unsafe { crate::ffi::duckdb_bind_interval(stmt, idx, raw) };
+        Ok(())
+    }
+}
+
+/// For `TimestampS`, `TimestampMs`, `TimestampNs`, `TimestampTz`, `TimeTz`, `TimeNs`:
+/// no dedicated `duckdb_append_*` / `duckdb_bind_*` function exists, so we go through
+/// the `duckdb_value` path via `DuckDialect::to_duck()`.
+impl_appendable_via_to_duck_native!(TimestampS);
+impl_appendable_via_to_duck_native!(TimestampMs);
+impl_appendable_via_to_duck_native!(TimestampNs);
+impl_appendable_via_to_duck_native!(TimestampTz);
+impl_appendable_via_to_duck_native!(TimeTz);
+impl_appendable_via_to_duck_native!(TimeNs);
 
 // Tests
 
