@@ -24,7 +24,7 @@ use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 /// (int32 days-since-epoch decoded via `duckdb_from_date`).
 ///
 // TODO: implement Display/arithmetic if needed by callers
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DuckDate {
     /// Calendar year (e.g. 2024).
     pub year: i32,
@@ -40,7 +40,7 @@ pub struct DuckDate {
 /// `TIME` storage (int64 microseconds-since-midnight decoded via `duckdb_from_time`).
 ///
 // TODO: implement Display/arithmetic if needed by callers
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DuckTime {
     /// Hour in `[0, 23]`.
     pub hour: u8,
@@ -56,7 +56,7 @@ pub struct DuckTime {
 ///
 /// Decoded from DuckDB's `TIME_NS` storage (int64 nanoseconds-since-midnight via
 /// `duckdb_get_time_ns`, available since libduckdb-sys 1.10503.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DuckTimeNs {
     /// Hour in `[0, 23]`.
     pub hour: u8,
@@ -72,7 +72,7 @@ pub struct DuckTimeNs {
 ///
 /// Decoded from DuckDB's `TIME WITH TIME ZONE` (`TIME_TZ`) storage via `duckdb_get_time_tz`
 /// and `duckdb_from_time_tz`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DuckTimeTz {
     /// Hour in `[0, 23]`.
     pub hour: u8,

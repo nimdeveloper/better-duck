@@ -291,7 +291,7 @@ impl TimestampTz {
 ///
 /// DuckDB encodes `TIME_TZ` as a packed 64-bit integer (40 bits of microseconds-since-midnight,
 /// 24 bits of UTC offset in seconds).  This struct preserves both components.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TimeTz {
     /// The time-of-day component (microsecond precision).
     pub time: NaiveTime,
@@ -472,15 +472,44 @@ impl AppendAble for Duration {
     }
 }
 
-/// For `TimestampS`, `TimestampMs`, `TimestampNs`, `TimestampTz`, `TimeTz`, `TimeNs`:
-/// no dedicated `duckdb_append_*` / `duckdb_bind_*` function exists, so we go through
-/// the `duckdb_value` path via `DuckDialect::to_duck()`.
+// For `TimestampS`, `TimestampMs`, `TimestampNs`, `TimeTz`, `TimeNs`:
+// no dedicated `duckdb_append_*` / `duckdb_bind_*` function exists, so we go through
+// the `duckdb_value` path via `DuckDialect::to_duck()`.
 impl_appendable_via_to_duck_native!(TimestampS);
 impl_appendable_via_to_duck_native!(TimestampMs);
 impl_appendable_via_to_duck_native!(TimestampNs);
-impl_appendable_via_to_duck_native!(TimestampTz);
 impl_appendable_via_to_duck_native!(TimeTz);
 impl_appendable_via_to_duck_native!(TimeNs);
+
+/// `TimestampTz` uses the dedicated `duckdb_bind_timestamp_tz` for `stmt_append`
+/// (no dedicated appender function exists — fall back to the value path).
+impl AppendAble for TimestampTz {
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> crate::error::Result<()> {
+        let raw = duckdb_timestamp { micros: self.0.timestamp_micros() };
+        // SAFETY: `raw` is a valid `duckdb_timestamp` (UTC microseconds since epoch).
+        // `stmt` is a valid prepared statement; `idx` is a 1-based parameter index.
+        unsafe { crate::ffi::duckdb_bind_timestamp_tz(stmt, idx, raw) };
+        Ok(())
+    }
+
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> crate::error::Result<()> {
+        use crate::error::Error;
+        use crate::types::DuckDialect as _;
+        let mut dv = self.to_duck().map_err(Error::ConversionError)?;
+        // SAFETY: `appender` is a valid duckdb_appender; `dv` was created by `to_duck()`.
+        unsafe { crate::ffi::duckdb_append_value(appender, dv) };
+        // SAFETY: `dv` was created above; destroy exactly once.
+        unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
+        Ok(())
+    }
+}
 
 // Tests
 
