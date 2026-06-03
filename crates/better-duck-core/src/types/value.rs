@@ -490,6 +490,21 @@ impl DuckValue {
                     //     std::ffi::CStr::from_ptr(c_str_ptr).to_string_lossy().into_owned();
                 }
             },
+            DUCKDB_TYPE_DUCKDB_TYPE_BLOB => {
+                // SAFETY: BLOB columns use the same `duckdb_string_t` layout as VARCHAR.
+                // `duckdb_string_t_data` returns a pointer valid for `duckdb_string_t_length`
+                // bytes. We copy the bytes immediately; neither pointer is retained after
+                // this block.
+                let bytes = unsafe {
+                    // TODO: use duckdb_get_blob(value)
+                    let values = duckdb_vector_get_data(val) as *mut duckdb_string_t;
+                    let mut s = *values.add(row_idx as usize);
+                    let ptr = duckdb_string_t_data(&mut s);
+                    let len = duckdb_string_t_length(s) as usize;
+                    std::slice::from_raw_parts(ptr as *const u8, len).to_vec()
+                };
+                Ok(DuckValue::Blob(bytes))
+            },
             #[cfg(feature = "decimal")]
             DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL => {
                 // SAFETY: `val` is a valid duckdb_vector; the data pointer is valid for
