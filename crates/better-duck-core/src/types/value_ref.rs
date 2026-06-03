@@ -2,6 +2,9 @@
 #[cfg(feature = "chrono")]
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::mem;
 #[cfg(not(feature = "chrono"))]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -12,7 +15,9 @@ use std::collections::HashMap;
 
 use crate::types::Blob;
 
+use super::map;
 use super::value::DuckValue;
+use crate::types::cmp::{canonical_f32, canonical_f64};
 
 /// A reference-based version of DuckValue that can store either owned or borrowed data.
 /// This is useful for cases where you want to avoid cloning data or need to work with references.
@@ -218,15 +223,22 @@ impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
     }
 }
 
-impl<'a> DuckValueRef<'a> {
+// From<DuckValue> — owned conversion, any lifetime 'a
+//
+// This replaces the former `DuckValueRef::from_value` associated method.
+// Because all borrowed slots use `Cow::Owned`, no external data is borrowed, so
+// Rust can infer any lifetime `'a` from the call context — in particular, the
+// diesel bind-collector's `Vec<DuckValueRef<'a>>` context. This avoids the
+// `&mut Vec<DuckValueRef<'a>>` invariance issue that `from_value` was originally
+// introduced to solve.
+
+impl<'a> From<DuckValue> for DuckValueRef<'a> {
     /// Converts an owned [`DuckValue`] into a fully-owned `DuckValueRef<'a>`.
     ///
     /// All borrowed slots (`Text`, `Blob`, `Enum`) use [`Cow::Owned`]; scalars are
     /// copied; composites are converted recursively. Because no external data is
-    /// borrowed, the caller may choose **any** lifetime `'a` — Rust will infer it
-    /// from the call context. This sidesteps the invariance issue that arises when
-    /// extending a `Vec<DuckValueRef<'a>>` with `DuckValueRef<'static>` items.
-    pub fn from_value(v: DuckValue) -> DuckValueRef<'a> {
+    /// borrowed, the caller may choose **any** lifetime `'a`.
+    fn from(v: DuckValue) -> DuckValueRef<'a> {
         match v {
             DuckValue::Null => DuckValueRef::Null,
             DuckValue::Boolean(b) => DuckValueRef::Boolean(b),
@@ -284,32 +296,35 @@ impl<'a> DuckValueRef<'a> {
             DuckValue::TimeNs(t) => DuckValueRef::TimeNs(t),
             DuckValue::Text(s) => DuckValueRef::Text(Cow::Owned(s)),
             DuckValue::Enum(s) => DuckValueRef::Enum(Cow::Owned(s)),
-            DuckValue::Blob(b) => DuckValueRef::Blob(Cow::Owned(b)),
+            DuckValue::Blob(b) => DuckValueRef::Blob(Cow::Owned(b.0)),
             #[cfg(feature = "decimal")]
             DuckValue::Decimal(d) => DuckValueRef::Decimal(d),
             DuckValue::List(items) => {
-                DuckValueRef::List(items.into_iter().map(DuckValueRef::from_value).collect())
+                DuckValueRef::List(items.into_iter().map(DuckValueRef::from).collect())
             },
             DuckValue::Array(items) => DuckValueRef::Array(
                 items
                     .into_vec()
                     .into_iter()
-                    .map(DuckValueRef::from_value)
+                    .map(DuckValueRef::from)
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),
             ),
             DuckValue::Struct(m) => DuckValueRef::Struct(
-                m.into_iter().map(|(k, v)| (k, DuckValueRef::from_value(v))).collect(),
+                m.into_iter().map(|(k, v)| (k, DuckValueRef::from(v))).collect(),
             ),
             DuckValue::Map(m) => DuckValueRef::Map(
-                m.into_iter().map(|(k, v)| (k, DuckValueRef::from_value(v))).collect(),
+                m.into_iter()
+                    .map(|(k, v)| (DuckValueRef::from(k), DuckValueRef::from(v)))
+                    .collect(),
             ),
-            DuckValue::Union(b) => DuckValueRef::Union(Box::new(DuckValueRef::from_value(*b))),
+            DuckValue::Union(b) => DuckValueRef::Union(Box::new(DuckValueRef::from(*b))),
         }
     }
 }
 
 // Common conversions for primitive types
+
 impl<'a> From<DuckValueRef<'a>> for String {
     fn from(val: DuckValueRef<'_>) -> Self {
         match val {
@@ -345,25 +360,38 @@ impl<'a> From<DuckValueRef<'a>> for i32 {
     }
 }
 
-// AppendAble for DuckValueRef
+// AppendAble — pure delegation
 
 impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
     /// Binds this value to a prepared-statement parameter at 1-based index `idx`.
     ///
-    /// Supports all scalar DuckDB types. Composite types (`List`, `Array`, `Union`,
-    /// `Enum`) return `Err` because the DuckDB C API does not expose bind functions
-    /// for them at this level.
+    /// Scalar and temporal variants delegate to each inner type's own [`AppendAble`]
+    /// impl.  Composite variants (`List`, `Array`, `Struct`, `Map`, `Union`, `Enum`,
+    /// `TimeTz`, `TimeNs`, `Decimal`) convert to [`DuckValue`] via [`DuckValue::from`]
+    /// then go through `DuckValue::to_duck()` + `duckdb_bind_value`.
     ///
-    /// # Errors
-    ///
-    /// Returns [`crate::error::Error::ConversionError`] for composite variants.
+    /// [`AppendAble`]: crate::types::appendable::AppendAble
     fn stmt_append(
         &mut self,
         idx: u64,
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> crate::error::Result<()> {
-        use crate::error::{DuckDBConversionError, Error};
+        use crate::error::Error;
         use crate::ffi;
+
+        /// Convert `self` to DuckValue, call to_duck(), then bind via value path.
+        macro_rules! bind_via_to_duck {
+            () => {{
+                let owned = DuckValue::from(&*self);
+                let mut dv = owned.to_duck().map_err(Error::ConversionError)?;
+                // SAFETY: `stmt`/`idx` are valid; `dv` was created by `to_duck()`.
+                unsafe { ffi::duckdb_bind_value(stmt, idx, dv) };
+                // SAFETY: `dv` was created above; destroy exactly once.
+                unsafe { ffi::duckdb_destroy_value(&mut dv) };
+                return Ok(());
+            }};
+        }
+
         match self {
             DuckValueRef::Null => {
                 // SAFETY: `stmt` is a valid prepared statement; `idx` is 1-based.
@@ -373,12 +401,20 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             DuckValueRef::Boolean(v) => v.stmt_append(idx, stmt),
             DuckValueRef::TinyInt(v) => v.stmt_append(idx, stmt),
             DuckValueRef::SmallInt(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::Int(v) => v.stmt_append(idx, stmt),
             DuckValueRef::BigInt(v) => v.stmt_append(idx, stmt),
             DuckValueRef::HugeInt(v) => v.stmt_append(idx, stmt),
             DuckValueRef::UTinyInt(v) => v.stmt_append(idx, stmt),
             DuckValueRef::USmallInt(v) => v.stmt_append(idx, stmt),
             DuckValueRef::UInt(v) => v.stmt_append(idx, stmt),
             DuckValueRef::UBigInt(v) => v.stmt_append(idx, stmt),
+            DuckValueRef::UHugeInt(v) => {
+                // No generic u128 AppendAble; inline the bind.
+                let uhi = ffi::duckdb_uhugeint { lower: *v as u64, upper: (*v >> 64) as u64 };
+                // SAFETY: `uhi` is a valid duckdb_uhugeint; `stmt`/`idx` are valid.
+                unsafe { ffi::duckdb_bind_uhugeint(stmt, idx, uhi) };
+                Ok(())
+            },
             DuckValueRef::Float(v) => v.stmt_append(idx, stmt),
             DuckValueRef::Double(v) => v.stmt_append(idx, stmt),
             DuckValueRef::Text(s) => s.into_owned().stmt_append(idx, stmt),
@@ -391,13 +427,12 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             DuckValueRef::Time(t) => t.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::Time(t) => t.stmt_append(idx, stmt),
-            // All four timestamp variants bind as TIMESTAMP (microseconds since epoch).
-            // DuckDB handles implicit narrowing/widening at the column level.
+            // All four TIMESTAMP variants bind as TIMESTAMP (microseconds since epoch).
             #[cfg(feature = "chrono")]
             DuckValueRef::Timestamp(dt)
             | DuckValueRef::TimestampS(dt)
             | DuckValueRef::TimestampMs(dt)
-            | DuckValueRef::TimestampNs(dt) => st.stmt_append(idx, stmt),
+            | DuckValueRef::TimestampNs(dt) => dt.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::Timestamp(st)
             | DuckValueRef::TimestampS(st)
@@ -407,12 +442,10 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             DuckValueRef::Interval(d) => d.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::Interval(d) => d.stmt_append(idx, stmt),
-            // Bind TIMESTAMP_TZ as UTC microseconds via duckdb_bind_timestamp_tz.
+            // TIMESTAMP_TZ: delegate to TimestampTz wrapper which uses duckdb_bind_timestamp_tz.
             #[cfg(feature = "chrono")]
             DuckValueRef::TimestampTz(dt) => {
-                let raw = ffi::duckdb_timestamp { micros: dt.timestamp_micros() };
-                // SAFETY: `raw` is a valid duckdb_timestamp (UTC microseconds).
-                unsafe { ffi::duckdb_bind_timestamp_tz(stmt, idx, raw) };
+                crate::types::date_chrono::TimestampTz(*dt).stmt_append(idx, stmt)
             },
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::TimestampTz(st) => st.stmt_append(idx, stmt),
@@ -426,227 +459,113 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::TimeNs(t) => t.stmt_append(idx, stmt),
             #[cfg(feature = "decimal")]
-            DuckValueRef::Decimal(v) => v.stmt_append(idx, stmt),
-            DuckValueRef::List(v) => v.stmt_append(idx, stmt),
-            DuckValueRef::Array(v) => v.stmt_append(idx, stmt),
-            DuckValueRef::Struct(v) => v.stmt_append(idx, stmt),
-            DuckValueRef::Map(v) => v.stmt_append(idx, stmt),
-            DuckValueRef::Union(v) => v.stmt_append(idx, stmt),
-            DuckValueRef::Enum(v) => v.into_owned().stmt_append(idx, stmt),
-            DuckValueRef::UHugeInt(_) => panic!("Not implemented yet!"),
+            DuckValueRef::Decimal(d) => d.stmt_append(idx, stmt),
+
+            // Remaining types go through the value path.
+            DuckValueRef::List(_)
+            | DuckValueRef::Array(_)
+            | DuckValueRef::Struct(_)
+            | DuckValueRef::Map(_)
+            | DuckValueRef::Union(_) => {
+                bind_via_to_duck!();
+            },
+            DuckValueRef::Enum(v) => v.clone().into_owned().stmt_append(idx, stmt),
         }
     }
 
     /// Appends this value to a DuckDB appender row.
     ///
-    /// All scalar types use their dedicated `duckdb_append_*` functions. Composite
-    /// types (`List`, `Array`, `Struct`, `Map`, `Union`) and `TimeTz`/`TimeNs`/`Decimal`
-    /// are converted to a `duckdb_value` via `DuckValue::to_duck()` and then appended
-    /// with `duckdb_append_value`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`crate::error::Error::ConversionError`] if `to_duck()` fails for a
-    /// composite/special type.
+    /// Scalar and temporal variants delegate to each inner type's own [`AppendAble`]
+    /// impl.  Composite variants (`List`, `Array`, `Struct`, `Map`, `Union`, `Enum`,
+    /// `TimeTz`, `TimeNs`, `Decimal`) convert to [`DuckValue`] and go through
+    /// `DuckValue::to_duck()` + `duckdb_append_value`.
     fn appender_append(
         &mut self,
         appender: crate::ffi::duckdb_appender,
     ) -> crate::error::Result<()> {
         use crate::error::Error;
         use crate::ffi;
-        use crate::types::value::DuckValue;
 
-        // Helper: convert self to DuckValue, call to_duck(), then append via value path.
+        /// Convert `self` to DuckValue, call to_duck(), then append via value path.
         macro_rules! append_via_to_duck {
             () => {{
-                let owned: DuckValue = DuckValue::from(&*self);
+                let owned = DuckValue::from(&*self);
                 let mut dv = owned.to_duck().map_err(Error::ConversionError)?;
-                // SAFETY: `appender` is valid; `dv` was just created by `to_duck()`.
+                // SAFETY: `appender` is valid; `dv` was created by `to_duck()`.
                 unsafe { ffi::duckdb_append_value(appender, dv) };
                 // SAFETY: `dv` was created above; destroy exactly once.
                 unsafe { ffi::duckdb_destroy_value(&mut dv) };
+                return Ok(());
             }};
         }
 
         match self {
             DuckValueRef::Null => {
-                // SAFETY: `appender` is a valid duckdb_appender inside a begin/end_row pair.
+                // SAFETY: `appender` is a valid duckdb_appender.
                 unsafe { ffi::duckdb_append_null(appender) };
+                Ok(())
             },
-            DuckValueRef::Boolean(v) => {
-                // SAFETY: `*v` is a valid bool.
-                unsafe { ffi::duckdb_append_bool(appender, *v) };
-            },
-            DuckValueRef::TinyInt(v) => {
-                // SAFETY: `*v` is a valid i8.
-                unsafe { crate::ffi::duckdb_append_int8(appender, *v) };
-            },
-            DuckValueRef::SmallInt(v) => {
-                // SAFETY: `*v` is a valid i16.
-                unsafe { crate::ffi::duckdb_append_int16(appender, *v) };
-            },
-            DuckValueRef::Int(v) => {
-                // SAFETY: `*v` is a valid i32.
-                unsafe { crate::ffi::duckdb_append_int32(appender, *v) };
-            },
-            DuckValueRef::BigInt(v) => {
-                // SAFETY: `*v` is a valid i64.
-                unsafe { crate::ffi::duckdb_append_int64(appender, *v) };
-            },
-            DuckValueRef::HugeInt(v) => {
-                let val = *v;
-                let neg = val < 0;
-                let x = if neg { -val } else { val };
-                let m = u64::MAX as i128;
-                let mut h = ffi::duckdb_hugeint { upper: (x / m) as i64, lower: (x % m) as u64 };
-                if neg {
-                    h.lower = u64::MAX - h.lower;
-                    h.upper = (!h.upper).wrapping_add((h.lower == 0) as i64);
-                }
-                // SAFETY: `h` is a valid duckdb_hugeint computed above.
-                unsafe { crate::ffi::duckdb_append_hugeint(appender, h) };
-            },
-            DuckValueRef::UTinyInt(v) => {
-                // SAFETY: `*v` is a valid u8.
-                unsafe { crate::ffi::duckdb_append_uint8(appender, *v) };
-            },
-            DuckValueRef::USmallInt(v) => {
-                // SAFETY: `*v` is a valid u16.
-                unsafe { crate::ffi::duckdb_append_uint16(appender, *v) };
-            },
-            DuckValueRef::UInt(v) => {
-                // SAFETY: `*v` is a valid u32.
-                unsafe { crate::ffi::duckdb_append_uint32(appender, *v) };
-            },
-            DuckValueRef::UBigInt(v) => {
-                // SAFETY: `*v` is a valid u64.
-                unsafe { crate::ffi::duckdb_append_uint64(appender, *v) };
-            },
+            DuckValueRef::Boolean(v) => v.appender_append(appender),
+            DuckValueRef::TinyInt(v) => v.appender_append(appender),
+            DuckValueRef::SmallInt(v) => v.appender_append(appender),
+            DuckValueRef::Int(v) => v.appender_append(appender),
+            DuckValueRef::BigInt(v) => v.appender_append(appender),
+            DuckValueRef::HugeInt(v) => v.appender_append(appender),
+            DuckValueRef::UTinyInt(v) => v.appender_append(appender),
+            DuckValueRef::USmallInt(v) => v.appender_append(appender),
+            DuckValueRef::UInt(v) => v.appender_append(appender),
+            DuckValueRef::UBigInt(v) => v.appender_append(appender),
             DuckValueRef::UHugeInt(v) => {
                 let uhi = ffi::duckdb_uhugeint { lower: *v as u64, upper: (*v >> 64) as u64 };
-                // SAFETY: `uhi` is a valid duckdb_uhugeint.
-                unsafe { crate::ffi::duckdb_append_uhugeint(appender, uhi) };
+                // SAFETY: `uhi` is a valid duckdb_uhugeint; `appender` is valid.
+                unsafe { ffi::duckdb_append_uhugeint(appender, uhi) };
+                Ok(())
             },
-            DuckValueRef::Float(v) => {
-                // SAFETY: `*v` is a valid f32.
-                unsafe { crate::ffi::duckdb_append_float(appender, *v) };
-            },
-            DuckValueRef::Double(v) => {
-                // SAFETY: `*v` is a valid f64.
-                unsafe { crate::ffi::duckdb_append_double(appender, *v) };
-            },
+            DuckValueRef::Float(v) => v.appender_append(appender),
+            DuckValueRef::Double(v) => v.appender_append(appender),
             DuckValueRef::Text(s) => {
                 let bytes = s.as_bytes();
                 // SAFETY: `bytes.as_ptr()` is valid UTF-8; append copies the data.
                 unsafe {
-                    crate::ffi::duckdb_append_varchar_length(
+                    ffi::duckdb_append_varchar_length(
                         appender,
                         bytes.as_ptr() as *const std::os::raw::c_char,
                         bytes.len() as u64,
                     )
                 };
+                Ok(())
             },
-            DuckValueRef::Blob(b) => {
-                // SAFETY: `b.as_ptr()` is valid for `b.len()` bytes; append copies the data.
-                unsafe {
-                    ffi::duckdb_append_blob(
-                        appender,
-                        b.as_ptr() as *const std::ffi::c_void,
-                        b.len() as u64,
-                    )
-                };
-            },
+            DuckValueRef::Blob(b) => Blob::new(b.to_vec()).appender_append(appender),
             #[cfg(feature = "chrono")]
-            DuckValueRef::Date(d) => {
-                let raw = ffi::duckdb_date { days: d.num_days_from_ce() - 719_163 };
-                // SAFETY: `raw` is a valid duckdb_date.
-                unsafe { ffi::duckdb_append_date(appender, raw) };
-            },
+            DuckValueRef::Date(d) => d.appender_append(appender),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::Date(d) => {
-                let ds = ffi::duckdb_date_struct {
-                    year: d.year,
-                    month: d.month as i8,
-                    day: d.day as i8,
-                };
-                // SAFETY: `duckdb_to_date` is a pure arithmetic conversion.
-                let raw = unsafe { ffi::duckdb_to_date(ds) };
-                // SAFETY: `raw` is a valid duckdb_date.
-                unsafe { ffi::duckdb_append_date(appender, raw) };
-            },
+            DuckValueRef::Date(d) => d.appender_append(appender),
             #[cfg(feature = "chrono")]
-            DuckValueRef::Time(t) => {
-                let micros = (t.num_seconds_from_midnight() as i64) * 1_000_000
-                    + (t.nanosecond() as i64) / 1_000;
-                let raw = ffi::duckdb_time { micros };
-                // SAFETY: `raw` is a valid duckdb_time.
-                unsafe { ffi::duckdb_append_time(appender, raw) };
-            },
+            DuckValueRef::Time(t) => t.appender_append(appender),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::Time(t) => {
-                let ts = ffi::duckdb_time_struct {
-                    hour: t.hour as i8,
-                    min: t.min as i8,
-                    sec: t.sec as i8,
-                    micros: t.micros as i32,
-                };
-                // SAFETY: `duckdb_to_time` is a pure arithmetic conversion.
-                let raw = unsafe { ffi::duckdb_to_time(ts) };
-                // SAFETY: `raw` is a valid duckdb_time.
-                unsafe { ffi::duckdb_append_time(appender, raw) };
-            },
-            // All four timestamp variants append as TIMESTAMP (microseconds since epoch).
+            DuckValueRef::Time(t) => t.appender_append(appender),
             #[cfg(feature = "chrono")]
             DuckValueRef::Timestamp(dt)
             | DuckValueRef::TimestampS(dt)
             | DuckValueRef::TimestampMs(dt)
-            | DuckValueRef::TimestampNs(dt) => {
-                let micros = dt.and_utc().timestamp() * 1_000_000
-                    + dt.and_utc().timestamp_subsec_micros() as i64;
-                let raw = ffi::duckdb_timestamp { micros };
-                // SAFETY: `raw` is a valid duckdb_timestamp.
-                unsafe { ffi::duckdb_append_timestamp(appender, raw) };
-            },
+            | DuckValueRef::TimestampNs(dt) => dt.appender_append(appender),
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::Timestamp(st)
             | DuckValueRef::TimestampS(st)
             | DuckValueRef::TimestampMs(st)
-            | DuckValueRef::TimestampNs(st) => {
-                let dur = st.duration_since(UNIX_EPOCH).unwrap_or_default();
-                let micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
-                let raw = ffi::duckdb_timestamp { micros };
-                // SAFETY: `raw` is a valid duckdb_timestamp.
-                unsafe { ffi::duckdb_append_timestamp(appender, raw) };
-            },
+            | DuckValueRef::TimestampNs(st) => st.appender_append(appender),
+            #[cfg(feature = "chrono")]
+            DuckValueRef::Interval(d) => d.appender_append(appender),
+            #[cfg(not(feature = "chrono"))]
+            DuckValueRef::Interval(d) => d.appender_append(appender),
+            // TIMESTAMP_TZ: delegate to TimestampTz wrapper (value path inside it).
             #[cfg(feature = "chrono")]
             DuckValueRef::TimestampTz(dt) => {
-                let raw = ffi::duckdb_timestamp { micros: dt.timestamp_micros() };
-                // SAFETY: `raw` is a valid duckdb_timestamp (UTC microseconds).
-                unsafe { ffi::duckdb_append_timestamp(appender, raw) };
+                crate::types::date_chrono::TimestampTz(*dt).appender_append(appender)
             },
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::TimestampTz(st) => {
-                let dur = st.duration_since(UNIX_EPOCH).unwrap_or_default();
-                let micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
-                let raw = ffi::duckdb_timestamp { micros };
-                // SAFETY: `raw` is a valid duckdb_timestamp (UTC microseconds).
-                unsafe { ffi::duckdb_append_timestamp(appender, raw) };
-            },
-            #[cfg(feature = "chrono")]
-            DuckValueRef::Interval(d) => {
-                let micros = d.num_microseconds().unwrap_or(0);
-                let raw = ffi::duckdb_interval { months: 0, days: 0, micros };
-                // SAFETY: `raw` is a valid duckdb_interval.
-                unsafe { ffi::duckdb_append_interval(appender, raw) };
-            },
-            #[cfg(not(feature = "chrono"))]
-            DuckValueRef::Interval(d) => {
-                let micros = d.as_micros().min(i64::MAX as u128) as i64;
-                let raw = ffi::duckdb_interval { months: 0, days: 0, micros };
-                // SAFETY: `raw` is a valid duckdb_interval.
-                unsafe { ffi::duckdb_append_interval(appender, raw) };
-            },
-            // TimeTz, TimeNs, Decimal, and all composite types go through the value path.
+            DuckValueRef::TimestampTz(st) => st.appender_append(appender),
+            // Remaining types go through the value path.
             DuckValueRef::TimeTz(_)
             | DuckValueRef::TimeNs(_)
             | DuckValueRef::Enum(_)
@@ -655,18 +574,11 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             | DuckValueRef::Struct(_)
             | DuckValueRef::Map(_)
             | DuckValueRef::Union(_) => {
-                // SAFETY: `appender` is valid; `dv` is created by `DuckValue::to_duck()`
-                // and destroyed immediately after. The conversion is infallible for these types
-                // when the inner values are well-formed.
                 append_via_to_duck!();
             },
             #[cfg(feature = "decimal")]
-            DuckValueRef::Decimal(_) => {
-                // SAFETY: same as above; `Decimal::to_duck()` returns a valid duckdb_value.
-                append_via_to_duck!();
-            },
+            DuckValueRef::Decimal(d) => d.appender_append(appender),
         }
-        Ok(())
     }
 }
 
@@ -676,12 +588,10 @@ mod tests {
 
     #[test]
     fn test_value_ref_conversion() {
-        // Test simple value
         let value = DuckValue::Int(42);
         let value_ref = DuckValueRef::from(&value);
         assert!(matches!(value_ref, DuckValueRef::Int(42)));
 
-        // Test string value
         let value = DuckValue::Text("hello".to_string());
         let value_ref = DuckValueRef::from(&value);
         match value_ref {
@@ -689,7 +599,6 @@ mod tests {
             _ => panic!("Wrong variant"),
         }
 
-        // Test list value
         let value = DuckValue::List(vec![DuckValue::Int(1), DuckValue::Text("test".to_string())]);
         let value_ref = DuckValueRef::from(&value);
         match value_ref {
@@ -707,7 +616,6 @@ mod tests {
 
     #[test]
     fn test_value_ref_into_owned() {
-        // Test converting back to owned
         let original =
             DuckValue::List(vec![DuckValue::Int(1), DuckValue::Text("test".to_string())]);
         let value_ref = DuckValueRef::from(&original);
@@ -728,16 +636,13 @@ mod tests {
 
     #[test]
     fn test_primitive_conversions() {
-        // Test i32 conversion
         let value_ref = DuckValueRef::Int(42);
         let i32_val: i32 = value_ref.clone().into();
         assert_eq!(i32_val, 42);
 
-        // Test i64 conversion
         let i64_val: i64 = value_ref.clone().into();
         assert_eq!(i64_val, 42);
 
-        // Test string conversion
         let value_ref = DuckValueRef::Text(Cow::Borrowed("hello"));
         let string_val: String = value_ref.into();
         assert_eq!(string_val, "hello");
