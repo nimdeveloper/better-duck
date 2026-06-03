@@ -4,8 +4,9 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 /// Public type modules.
 pub mod appendable;
-/// `Vec<u8>` DuckDB BLOB type conversion.
+/// DuckDB BLOB type — [`Blob`] newtype wrapping `Vec<u8>`.
 pub mod blob;
+pub use blob::Blob;
 /// Chrono date/time types and `DuckDialect` implementations for the `chrono` feature.
 #[cfg(feature = "chrono")]
 pub mod date_chrono;

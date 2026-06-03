@@ -17,7 +17,7 @@ use crate::{
     types::appendable::AppendAble,
 };
 
-use libduckdb_sys::{
+use crate::ffi::{
     duckdb_append_double, duckdb_append_float, duckdb_append_hugeint, duckdb_append_int16,
     duckdb_append_int32, duckdb_append_int64, duckdb_append_int8, duckdb_append_uint16,
     duckdb_append_uint32, duckdb_append_uint64, duckdb_append_uint8, duckdb_bind_double,
