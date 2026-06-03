@@ -54,3 +54,34 @@ pub trait AppendAble {
         _appender: duckdb_appender,
     ) -> Result<()>;
 }
+
+#[macro_export]
+macro_rules! impl_appendable_via_to_duck_native {
+    ($t:ty) => {
+        impl AppendAble for $t {
+            fn appender_append(
+                &mut self,
+                appender: crate::ffi::duckdb_appender,
+            ) -> crate::error::Result<()> {
+                let mut dv = self.to_duck().map_err(crate::error::Error::ConversionError)?;
+                // SAFETY: `appender` is a valid duckdb_appender; `dv` was created by `to_duck()`.
+                unsafe { crate::ffi::duckdb_append_value(appender, dv) };
+                // SAFETY: `dv` was created above; destroy exactly once.
+                unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
+                Ok(())
+            }
+            fn stmt_append(
+                &mut self,
+                idx: u64,
+                stmt: crate::ffi::duckdb_prepared_statement,
+            ) -> crate::error::Result<()> {
+                let mut dv = self.to_duck().map_err(crate::error::Error::ConversionError)?;
+                // SAFETY: `stmt`/`idx` are valid; `dv` was created by `to_duck()`.
+                unsafe { crate::ffi::duckdb_bind_value(stmt, idx, dv) };
+                // SAFETY: `dv` was created above; destroy exactly once.
+                unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
+                Ok(())
+            }
+        }
+    };
+}
