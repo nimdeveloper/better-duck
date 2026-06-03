@@ -32,6 +32,8 @@ use super::value::DuckValue;
 /// # Safety
 /// `val` must be a valid `duckdb_vector` of LIST or ARRAY type; `row_idx` must be
 /// within `[0, chunk_size)`.
+
+#[inline(always)]
 pub(crate) fn read_list_or_array(
     val: duckdb_vector,
     t: duckdb_type,
@@ -50,6 +52,7 @@ pub(crate) fn read_list_or_array(
     // SAFETY: `list_child` is a valid list-child vector.
     let list_length = unsafe { duckdb_list_vector_get_size(list_child) };
 
+    // TODO: What happens for this var, if the function returns error? (Maybe using https://docs.rs/scopeguard/latest/scopeguard/)
     let mut slice_data: Option<Box<[std::mem::MaybeUninit<DuckValue>]>> = None;
     let mut vec_data: Option<Vec<DuckValue>> = None;
     let iter_ptr: *mut DuckValue;
