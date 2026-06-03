@@ -4,19 +4,30 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 /// Public type modules.
 pub mod appendable;
+/// LIST and ARRAY read/write helpers + generic `AppendAble` impls.
+pub mod array;
 /// DuckDB BLOB type — [`Blob`] new type wrapping `Vec<u8>`.
 pub mod blob;
 pub use blob::Blob;
+/// Float canonicalization for `DuckValue` `Eq` + `Hash`.
+pub(crate) mod cmp;
 /// Chrono date/time types and `DuckDialect` implementations for the `chrono` feature.
 #[cfg(feature = "chrono")]
 pub mod date_chrono;
 /// No-chrono date/time component types and DuckDialect implementations.
 #[cfg(not(feature = "chrono"))]
 pub mod date_native;
+/// STRUCT read/write helpers + `AppendAble` impl for `HashMap<String, DuckValue>`.
+#[path = "duck_struct.rs"]
+pub mod duck_struct;
 /// Ergonomic `From<T>` conversions into `DuckValue`.
 pub mod from_impls;
+/// MAP read/write helpers + `AppendAble` impl for `HashMap<DuckValue, DuckValue>`.
+pub mod map;
 /// Numeric DuckDB type conversions and `AppendAble` implementations.
 pub mod numeric;
+/// UNION read/write helpers.
+pub mod union;
 /// The `DuckValue` enum representing any DuckDB column value.
 pub mod value;
 /// A reference-based variant of `DuckValue` for zero-copy scenarios.

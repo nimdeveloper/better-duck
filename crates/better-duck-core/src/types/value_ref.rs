@@ -140,7 +140,8 @@ pub enum DuckValueRef<'a> {
 
 // Implement From<DuckValue> for DuckValueRef
 impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
-    /// Creates a new DuckValueRef from a DuckValue, borrowing where possible
+    /// Creates a `DuckValueRef` from a `&DuckValue`, borrowing `Text`/`Enum`/`Blob` data
+    /// for genuine zero-copy.
     fn from(value: &'a DuckValue) -> Self {
         match value {
             DuckValue::Null => DuckValueRef::Null,
@@ -365,8 +366,7 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
         use crate::ffi;
         match self {
             DuckValueRef::Null => {
-                // SAFETY: `stmt` is a valid prepared statement; `idx` is a 1-based parameter
-                // index as required by the DuckDB C API.
+                // SAFETY: `stmt` is a valid prepared statement; `idx` is 1-based.
                 unsafe { ffi::duckdb_bind_null(stmt, idx) };
                 Ok(())
             },
