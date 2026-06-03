@@ -1,6 +1,6 @@
 use std::{ffi::CString, mem, ptr};
 
-use libduckdb_sys::{
+use crate::ffi::{
     duckdb_clear_bindings, duckdb_destroy_prepare, duckdb_execute_prepared, duckdb_nparams,
     duckdb_prepare, duckdb_result, DuckDBSuccess,
 };

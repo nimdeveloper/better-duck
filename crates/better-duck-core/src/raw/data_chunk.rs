@@ -3,7 +3,7 @@ use std::{
     ptr,
 };
 
-use libduckdb_sys::{duckdb_data_chunk, duckdb_destroy_data_chunk};
+use crate::ffi::{duckdb_data_chunk, duckdb_destroy_data_chunk};
 
 use super::result::DuckResult;
 use crate::{error::Result, ffi};
