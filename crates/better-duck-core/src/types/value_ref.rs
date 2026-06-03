@@ -6,11 +6,13 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem;
 #[cfg(not(feature = "chrono"))]
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 #[cfg(feature = "decimal")]
 use rust_decimal::Decimal;
 
+#[cfg(not(feature = "chrono"))]
+use crate::types::date_native;
 use crate::types::Blob;
 
 use super::map;
@@ -250,23 +252,23 @@ impl<'a> Hash for DuckValueRef<'a> {
             #[cfg(feature = "chrono")]
             DuckValueRef::Timestamp(t) => t.hash(state),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::Timestamp(t) => hash_system_time(t, state),
+            DuckValueRef::Timestamp(t) => date_native::hash_system_time(t, state),
             #[cfg(feature = "chrono")]
             DuckValueRef::TimestampS(t) => t.hash(state),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::TimestampS(t) => hash_system_time(t, state),
+            DuckValueRef::TimestampS(t) => date_native::hash_system_time(t, state),
             #[cfg(feature = "chrono")]
             DuckValueRef::TimestampMs(t) => t.hash(state),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::TimestampMs(t) => hash_system_time(t, state),
+            DuckValueRef::TimestampMs(t) => date_native::hash_system_time(t, state),
             #[cfg(feature = "chrono")]
             DuckValueRef::TimestampNs(t) => t.hash(state),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::TimestampNs(t) => hash_system_time(t, state),
+            DuckValueRef::TimestampNs(t) => date_native::hash_system_time(t, state),
             #[cfg(feature = "chrono")]
             DuckValueRef::TimestampTz(t) => t.hash(state),
             #[cfg(not(feature = "chrono"))]
-            DuckValueRef::TimestampTz(t) => hash_system_time(t, state),
+            DuckValueRef::TimestampTz(t) => date_native::hash_system_time(t, state),
             #[cfg(feature = "chrono")]
             DuckValueRef::Date(d) => d.hash(state),
             #[cfg(not(feature = "chrono"))]

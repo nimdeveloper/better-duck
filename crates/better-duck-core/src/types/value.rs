@@ -10,12 +10,13 @@ use std::time::{Duration, SystemTime};
 
 use crate::{
     ffi::{
-        duckdb_create_logical_type, duckdb_create_null_value, duckdb_create_uhugeint,
+        duckdb_create_logical_type, duckdb_create_null_value, duckdb_create_uhugeint, duckdb_date,
         duckdb_destroy_logical_type, duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
-        duckdb_free, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
-        duckdb_string_t_length, duckdb_type, duckdb_uhugeint, duckdb_validity_row_is_valid,
-        duckdb_value, duckdb_vector, duckdb_vector_get_column_type, duckdb_vector_get_data,
-        duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
+        duckdb_free, duckdb_interval, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
+        duckdb_string_t_length, duckdb_time, duckdb_time_ns, duckdb_time_tz, duckdb_timestamp,
+        duckdb_timestamp_ms, duckdb_timestamp_ns, duckdb_timestamp_s, duckdb_type, duckdb_uhugeint,
+        duckdb_validity_row_is_valid, duckdb_value, duckdb_vector, duckdb_vector_get_column_type,
+        duckdb_vector_get_data, duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
         DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB,
         DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
         DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE,
@@ -279,23 +280,23 @@ impl Hash for DuckValue {
             #[cfg(feature = "chrono")]
             DuckValue::Timestamp(t) => t.hash(state),
             #[cfg(not(feature = "chrono"))]
-            DuckValue::Timestamp(t) => hash_system_time(t, state),
+            DuckValue::Timestamp(t) => date_native::hash_system_time(t, state),
             #[cfg(feature = "chrono")]
             DuckValue::TimestampS(t) => t.hash(state),
             #[cfg(not(feature = "chrono"))]
-            DuckValue::TimestampS(t) => hash_system_time(t, state),
+            DuckValue::TimestampS(t) => date_native::hash_system_time(t, state),
             #[cfg(feature = "chrono")]
             DuckValue::TimestampMs(t) => t.hash(state),
             #[cfg(not(feature = "chrono"))]
-            DuckValue::TimestampMs(t) => hash_system_time(t, state),
+            DuckValue::TimestampMs(t) => date_native::hash_system_time(t, state),
             #[cfg(feature = "chrono")]
             DuckValue::TimestampNs(t) => t.hash(state),
             #[cfg(not(feature = "chrono"))]
-            DuckValue::TimestampNs(t) => hash_system_time(t, state),
+            DuckValue::TimestampNs(t) => date_native::hash_system_time(t, state),
             #[cfg(feature = "chrono")]
             DuckValue::TimestampTz(t) => t.hash(state),
             #[cfg(not(feature = "chrono"))]
-            DuckValue::TimestampTz(t) => hash_system_time(t, state),
+            DuckValue::TimestampTz(t) => date_native::hash_system_time(t, state),
             #[cfg(feature = "chrono")]
             DuckValue::Date(d) => d.hash(state),
             #[cfg(not(feature = "chrono"))]
@@ -434,6 +435,23 @@ macro_rules! simple_type_conversion {
     }};
 }
 
+/// Reads a fixed-width `#[repr(C)]` FFI struct (e.g. `duckdb_date`, `duckdb_timestamp`, …)
+/// directly from the packed chunk vector, then converts it via `DuckDialect::from_duck`.
+///
+/// This avoids the invalid integer→pointer cast that plagued the old temporal read arms
+/// and reads at the correct width for each type (e.g. 4 bytes for DATE, 8 for TIMESTAMP).
+macro_rules! read_packed {
+    ($val:expr, $row_idx:expr, $raw_ty:ty, $target:ty) => {{
+        let raw: $raw_ty = {
+            // SAFETY: the column stores `$raw_ty` inline in packed layout; `$row_idx` is within
+            // [0, chunk_size), so `.add($row_idx)` is in-bounds and correctly aligned for
+            // `$raw_ty` (all temporal FFI structs are `#[repr(C)]` with natural alignment).
+            unsafe { *(duckdb_vector_get_data($val) as *const $raw_ty).add($row_idx as usize) }
+        };
+        <$target as DuckDialect<$raw_ty>>::from_duck(raw)
+    }};
+}
+
 impl DuckValue {
     pub(crate) fn from_duckdb_vec(
         val: duckdb_vector,
@@ -495,82 +513,70 @@ impl DuckValue {
                 simple_type_conversion!(row_idx, val, DuckValue::Double, f64)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_DATE => {
-                // SAFETY: The temporal type stores its raw value in packed array layout.
-                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
-                let value =
-                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
-                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
-                    chrono::NaiveDate::from_duck(value).map(DuckValue::Date)
+                    read_packed!(val, row_idx, duckdb_date, chrono::NaiveDate).map(DuckValue::Date)
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    crate::types::date_native::DuckDate::from_duck(value).map(DuckValue::Date)
+                    read_packed!(val, row_idx, duckdb_date, crate::types::date_native::DuckDate)
+                        .map(DuckValue::Date)
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIME => {
-                // SAFETY: The temporal type stores its raw value in packed array layout.
-                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
-                let value =
-                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
-                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
-                    chrono::NaiveTime::from_duck(value).map(DuckValue::Time)
+                    read_packed!(val, row_idx, duckdb_time, chrono::NaiveTime).map(DuckValue::Time)
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    crate::types::date_native::DuckTime::from_duck(value).map(DuckValue::Time)
+                    read_packed!(val, row_idx, duckdb_time, crate::types::date_native::DuckTime)
+                        .map(DuckValue::Time)
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP => {
-                // SAFETY: The temporal type stores its raw value in packed array layout.
-                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
-                let value =
-                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
-                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
-                    chrono::NaiveDateTime::from_duck(value).map(DuckValue::Timestamp)
+                    read_packed!(val, row_idx, duckdb_timestamp, chrono::NaiveDateTime)
+                        .map(DuckValue::Timestamp)
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    std::time::SystemTime::from_duck(value).map(DuckValue::Timestamp)
+                    read_packed!(val, row_idx, duckdb_timestamp, std::time::SystemTime)
+                        .map(DuckValue::Timestamp)
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL => {
-                // SAFETY: The temporal type stores its raw value in packed array layout.
-                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
-                let value =
-                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
-                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
-                    chrono::Duration::from_duck(value).map(DuckValue::Interval)
+                    read_packed!(val, row_idx, duckdb_interval, chrono::Duration)
+                        .map(DuckValue::Interval)
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    std::time::Duration::from_duck(value).map(DuckValue::Interval)
+                    read_packed!(val, row_idx, duckdb_interval, std::time::Duration)
+                        .map(DuckValue::Interval)
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S => {
-                // SAFETY: The temporal type stores its raw value in packed array layout.
-                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
-                let value =
-                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
-                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
-                    crate::types::date_chrono::TimestampS::from_duck(value)
-                        .map(|t| DuckValue::TimestampS(t.0))
+                    read_packed!(
+                        val,
+                        row_idx,
+                        duckdb_timestamp_s,
+                        crate::types::date_chrono::TimestampS
+                    )
+                    .map(|t| DuckValue::TimestampS(t.0))
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    use crate::ffi::duckdb_get_timestamp_s;
                     use std::time::UNIX_EPOCH;
-                    // SAFETY: `value` was cast from a packed-array read; valid as TIMESTAMP_S.
-                    let secs = unsafe { duckdb_get_timestamp_s(value) }.seconds;
+                    let secs = unsafe {
+                        (*(duckdb_vector_get_data(val) as *const duckdb_timestamp_s)
+                            .add(row_idx as usize))
+                        .seconds
+                    };
                     let abs = secs.unsigned_abs();
                     Ok(DuckValue::TimestampS(if secs >= 0 {
                         UNIX_EPOCH + std::time::Duration::from_secs(abs)
@@ -580,22 +586,24 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_MS => {
-                // SAFETY: The temporal type stores its raw value in packed array layout.
-                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
-                let value =
-                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
-                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
-                    crate::types::date_chrono::TimestampMs::from_duck(value)
-                        .map(|t| DuckValue::TimestampMs(t.0))
+                    read_packed!(
+                        val,
+                        row_idx,
+                        duckdb_timestamp_ms,
+                        crate::types::date_chrono::TimestampMs
+                    )
+                    .map(|t| DuckValue::TimestampMs(t.0))
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    use crate::ffi::duckdb_get_timestamp_ms;
                     use std::time::UNIX_EPOCH;
-                    // SAFETY: `value` was cast from a packed-array read; valid as TIMESTAMP_MS.
-                    let millis = unsafe { duckdb_get_timestamp_ms(value) }.millis;
+                    let millis = unsafe {
+                        (*(duckdb_vector_get_data(val) as *const duckdb_timestamp_ms)
+                            .add(row_idx as usize))
+                        .millis
+                    };
                     let abs = millis.unsigned_abs();
                     Ok(DuckValue::TimestampMs(if millis >= 0 {
                         UNIX_EPOCH + std::time::Duration::from_millis(abs)
@@ -605,22 +613,24 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_NS => {
-                // SAFETY: The temporal type stores its raw value in packed array layout.
-                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
-                let value =
-                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
-                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
-                    crate::types::date_chrono::TimestampNs::from_duck(value)
-                        .map(|t| DuckValue::TimestampNs(t.0))
+                    read_packed!(
+                        val,
+                        row_idx,
+                        duckdb_timestamp_ns,
+                        crate::types::date_chrono::TimestampNs
+                    )
+                    .map(|t| DuckValue::TimestampNs(t.0))
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    use crate::ffi::duckdb_get_timestamp_ns;
                     use std::time::UNIX_EPOCH;
-                    // SAFETY: `value` was cast from a packed-array read; valid as TIMESTAMP_NS.
-                    let nanos = unsafe { duckdb_get_timestamp_ns(value) }.nanos;
+                    let nanos = unsafe {
+                        (*(duckdb_vector_get_data(val) as *const duckdb_timestamp_ns)
+                            .add(row_idx as usize))
+                        .nanos
+                    };
                     let abs = nanos.unsigned_abs();
                     Ok(DuckValue::TimestampNs(if nanos >= 0 {
                         UNIX_EPOCH + std::time::Duration::from_nanos(abs)
@@ -714,69 +724,69 @@ impl DuckValue {
                 crate::types::array::read_list_or_array(val, t, row_idx)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_TZ => {
-                // SAFETY: The temporal type stores its raw value in packed array layout.
-                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
-                let value =
-                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
-                        as duckdb_value;
+                // TIMESTAMP_TZ uses the same duckdb_timestamp wire format as TIMESTAMP.
                 #[cfg(feature = "chrono")]
                 {
-                    // TODO: We need to use timezone here, but how?
-                    crate::types::date_chrono::TimestampTz::from_duck(value)
-                        .map(|t| DuckValue::TimestampTz(t.0))
+                    read_packed!(
+                        val,
+                        row_idx,
+                        duckdb_timestamp,
+                        crate::types::date_chrono::TimestampTz
+                    )
+                    .map(|t| DuckValue::TimestampTz(t.0))
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    // TODO: We need to use timezone here, but how?
                     use std::time::UNIX_EPOCH;
-                    // SAFETY: `value` was cast from a packed-array read; valid as TIMESTAMP_TZ.
                     let micros = unsafe {
-                        use crate::ffi::duckdb_get_timestamp_tz;
-                        duckdb_get_timestamp_tz(value)
-                    }
-                    .micros;
+                        (*(duckdb_vector_get_data(val) as *const duckdb_timestamp)
+                            .add(row_idx as usize))
+                        .micros
+                    };
                     let secs = micros / 1_000_000;
                     let sub_micros = (micros % 1_000_000).unsigned_abs() as u32;
                     let abs_secs = secs.unsigned_abs();
-                    let st = if secs >= 0 {
+                    Ok(DuckValue::TimestampTz(if secs >= 0 {
                         UNIX_EPOCH + std::time::Duration::new(abs_secs, sub_micros * 1_000)
                     } else {
                         UNIX_EPOCH - std::time::Duration::new(abs_secs, sub_micros * 1_000)
-                    };
-                    Ok(DuckValue::TimestampTz(st))
+                    }))
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ => {
-                // SAFETY: The temporal type stores its raw value in packed array layout.
-                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
-                let value =
-                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
-                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
                     // TODO: We need to use timezone here, but how?
-                    crate::types::date_chrono::TimeTz::from_duck(value).map(DuckValue::TimeTz)
+                    read_packed!(val, row_idx, duckdb_time_tz, crate::types::date_chrono::TimeTz)
+                        .map(DuckValue::TimeTz)
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
                     // TODO: We need to use timezone here, but how?
-                    crate::types::date_native::DuckTimeTz::from_duck(value).map(DuckValue::TimeTz)
+                    read_packed!(
+                        val,
+                        row_idx,
+                        duckdb_time_tz,
+                        crate::types::date_native::DuckTimeTz
+                    )
+                    .map(DuckValue::TimeTz)
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS => {
-                // SAFETY: The temporal type stores its raw value in packed array layout.
-                // `row_idx` is within [0, chunk_size), so the offset is in-bounds.
-                let value =
-                    unsafe { *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize) }
-                        as duckdb_value;
                 #[cfg(feature = "chrono")]
                 {
-                    crate::types::date_chrono::TimeNs::from_duck(value)
+                    read_packed!(val, row_idx, duckdb_time_ns, crate::types::date_chrono::TimeNs)
                         .map(|t| DuckValue::TimeNs(t.0))
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    crate::types::date_native::DuckTimeNs::from_duck(value).map(DuckValue::TimeNs)
+                    read_packed!(
+                        val,
+                        row_idx,
+                        duckdb_time_ns,
+                        crate::types::date_native::DuckTimeNs
+                    )
+                    .map(DuckValue::TimeNs)
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_STRUCT => crate::types::duck_struct::read_struct(val, row_idx),
