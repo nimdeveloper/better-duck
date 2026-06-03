@@ -55,31 +55,37 @@ pub trait AppendAble {
     ) -> Result<()>;
 }
 
+/// Implements [`AppendAble`] for a type that already implements [`crate::types::DuckDialect`]
+/// by going through the `duckdb_value` path: `to_duck()` → `duckdb_bind_value` /
+/// `duckdb_append_value` → `duckdb_destroy_value`.
+///
+/// Use this for types that have no dedicated `duckdb_bind_*` / `duckdb_append_*` FFI
+/// function (e.g. `TimestampS`, `TimeTz`, `Decimal`).
 #[macro_export]
 macro_rules! impl_appendable_via_to_duck_native {
     ($t:ty) => {
         impl AppendAble for $t {
             fn appender_append(
                 &mut self,
-                appender: crate::ffi::duckdb_appender,
-            ) -> crate::error::Result<()> {
-                let mut dv = self.to_duck().map_err(crate::error::Error::ConversionError)?;
+                appender: $crate::ffi::duckdb_appender,
+            ) -> $crate::error::Result<()> {
+                let mut dv = self.to_duck().map_err($crate::error::Error::ConversionError)?;
                 // SAFETY: `appender` is a valid duckdb_appender; `dv` was created by `to_duck()`.
-                unsafe { crate::ffi::duckdb_append_value(appender, dv) };
+                unsafe { $crate::ffi::duckdb_append_value(appender, dv) };
                 // SAFETY: `dv` was created above; destroy exactly once.
-                unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
+                unsafe { $crate::ffi::duckdb_destroy_value(&mut dv) };
                 Ok(())
             }
             fn stmt_append(
                 &mut self,
                 idx: u64,
-                stmt: crate::ffi::duckdb_prepared_statement,
-            ) -> crate::error::Result<()> {
-                let mut dv = self.to_duck().map_err(crate::error::Error::ConversionError)?;
+                stmt: $crate::ffi::duckdb_prepared_statement,
+            ) -> $crate::error::Result<()> {
+                let mut dv = self.to_duck().map_err($crate::error::Error::ConversionError)?;
                 // SAFETY: `stmt`/`idx` are valid; `dv` was created by `to_duck()`.
-                unsafe { crate::ffi::duckdb_bind_value(stmt, idx, dv) };
+                unsafe { $crate::ffi::duckdb_bind_value(stmt, idx, dv) };
                 // SAFETY: `dv` was created above; destroy exactly once.
-                unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
+                unsafe { $crate::ffi::duckdb_destroy_value(&mut dv) };
                 Ok(())
             }
         }
