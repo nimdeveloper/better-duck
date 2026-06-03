@@ -206,23 +206,33 @@ impl DuckDialect for Decimal {
     }
 }
 
-/// Decimal does not currently support the DuckDB appender or prepared-statement
-/// bind APIs. Use `to_duck()` and insert via raw SQL instead.
 #[cfg(feature = "decimal")]
 impl AppendAble for Decimal {
     fn appender_append(
         &mut self,
-        _appender: crate::ffi::duckdb_appender,
+        appender: crate::ffi::duckdb_appender,
     ) -> Result<()> {
-        Err(Error::AppendError)
-        // unsafe { duckdb_append_decimal(appender, self.to_duck()?) };
+        use crate::types::DuckDialect as _;
+        let mut dv = self.to_duck().map_err(Error::ConversionError)?;
+        // SAFETY: `appender` is valid; `dv` was just created by `to_duck()`.
+        unsafe { crate::ffi::duckdb_append_value(appender, dv) };
+        // SAFETY: `dv` was created above; destroy exactly once.
+        unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
+        Ok(())
     }
+
     fn stmt_append(
         &mut self,
-        _idx: u64,
-        _stmt: crate::ffi::duckdb_prepared_statement,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
-        Err(Error::AppendError)
+        use crate::types::DuckDialect as _;
+        let mut dv = self.to_duck().map_err(Error::ConversionError)?;
+        // SAFETY: `stmt` is valid; `dv` was just created by `to_duck()`.
+        unsafe { crate::ffi::duckdb_bind_value(stmt, idx, dv) };
+        // SAFETY: `dv` was created above; destroy exactly once.
+        unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
+        Ok(())
     }
 }
 
