@@ -9,10 +9,9 @@ use crate::{
         duckdb_create_decimal, duckdb_create_double, duckdb_create_float, duckdb_create_hugeint,
         duckdb_create_int16, duckdb_create_int32, duckdb_create_int64, duckdb_create_int8,
         duckdb_create_uint16, duckdb_create_uint32, duckdb_create_uint64, duckdb_create_uint8,
-        duckdb_decimal, duckdb_get_decimal, duckdb_get_double, duckdb_get_float,
-        duckdb_get_hugeint, duckdb_get_int16, duckdb_get_int32, duckdb_get_int64, duckdb_get_int8,
-        duckdb_get_uint16, duckdb_get_uint32, duckdb_get_uint64, duckdb_get_uint8, duckdb_hugeint,
-        duckdb_value,
+        duckdb_decimal, duckdb_get_decimal, duckdb_get_double, duckdb_get_float, duckdb_get_int16,
+        duckdb_get_int32, duckdb_get_int64, duckdb_get_int8, duckdb_get_uint16, duckdb_get_uint32,
+        duckdb_get_uint64, duckdb_get_uint8, duckdb_hugeint, duckdb_value,
     },
     types::appendable::AppendAble,
 };
@@ -111,10 +110,8 @@ fn hugeint_from_i128(hugeint: i128) -> duckdb_hugeint {
         panic!("Unsupported! MAX:{}", MAX_SUPPORTED_I128); // TODO: Better error handling
     }
     let negative = hugeint < 0;
-    let mut hugeint = hugeint;
-    if negative {
-        hugeint = -hugeint;
-    }
+    let hugeint = hugeint.abs();
+
     let measure = u64::MAX as i128;
     let mut value =
         duckdb_hugeint { upper: (hugeint / measure) as i64, lower: (hugeint % measure) as u64 };
@@ -125,11 +122,11 @@ fn hugeint_from_i128(hugeint: i128) -> duckdb_hugeint {
     value
 }
 
-impl DuckDialect for i128 {
-    fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
+impl DuckDialect<duckdb_hugeint> for i128 {
+    fn from_duck(hugeint: duckdb_hugeint) -> Result<Self, DuckDBConversionError> {
         // SAFETY: `value` is a valid duckdb_value of type HUGEINT. The caller ensures
         // the correct type is passed.
-        let hugeint: duckdb_hugeint = unsafe { duckdb_get_hugeint(value) };
+        // let hugeint: duckdb_hugeint = unsafe { duckdb_get_hugeint(value) };
         Ok(i128_from_hugeint(hugeint))
     }
 
@@ -239,7 +236,7 @@ impl AppendAble for Decimal {
 #[cfg(test)]
 #[allow(clippy::undocumented_unsafe_blocks)]
 mod test_numeric_conversion {
-    use crate::ffi::duckdb_destroy_value;
+    use crate::ffi::{duckdb_destroy_value, duckdb_get_hugeint};
 
     #[test]
     fn test_i8_conversion() {
@@ -338,25 +335,25 @@ mod test_numeric_conversion {
 
         let value: i128 = 5;
         let mut duck_value = value.to_duck().unwrap();
-        let converted_value = i128::from_duck(duck_value).unwrap();
+        let converted_value = i128::from_duck(unsafe { duckdb_get_hugeint(duck_value) }).unwrap();
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
 
         let value: i128 = 170_141_183_460_469_231_722_463_931_679_029_329_919;
         let mut duck_value = value.to_duck().unwrap();
-        let converted_value = i128::from_duck(duck_value).unwrap();
+        let converted_value = i128::from_duck(unsafe { duckdb_get_hugeint(duck_value) }).unwrap();
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
 
         let value: i128 = -5;
         let mut duck_value = value.to_duck().unwrap();
-        let converted_value = i128::from_duck(duck_value).unwrap();
+        let converted_value = i128::from_duck(unsafe { duckdb_get_hugeint(duck_value) }).unwrap();
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
 
         let value: i128 = -170_141_183_460_469_231_722_463_931_679_029_329_919;
         let mut duck_value = value.to_duck().unwrap();
-        let converted_value = i128::from_duck(duck_value).unwrap();
+        let converted_value = i128::from_duck(unsafe { duckdb_get_hugeint(duck_value) }).unwrap();
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
     }
