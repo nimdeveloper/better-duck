@@ -649,8 +649,10 @@ impl DuckValue {
                     let values = duckdb_vector_get_data(val) as *mut duckdb_string_t;
                     let mut duck_string_t = *values.add(row_idx as usize);
                     let char_ptr = duckdb_string_t_data(&mut duck_string_t);
-                    let rust_string = CStr::from_ptr(char_ptr).to_string_lossy().into_owned();
-                    Ok(DuckValue::Text(rust_string))
+                    let rust_str = CStr::from_ptr(char_ptr)
+                        .to_str()
+                        .map_err(|e| DuckDBConversionError::ConversionError(e.to_string()))?;
+                    Ok(DuckValue::Text(rust_str.to_string()))
                     // String::from_duck(rust_string).map(DuckValue::Text)
 
                     // let c_str_ptr = duckdb_string_t_data(duck_string);
