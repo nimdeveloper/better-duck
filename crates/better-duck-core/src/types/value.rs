@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use libduckdb_sys::duckdb_hugeint;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::hash::{Hash, Hasher};
@@ -489,9 +490,6 @@ impl DuckValue {
             DUCKDB_TYPE_DUCKDB_TYPE_BIGINT => {
                 simple_type_conversion!(row_idx, val, DuckValue::BigInt, i64)
             },
-            DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT => {
-                simple_type_conversion!(row_idx, val, DuckValue::HugeInt, i128)
-            },
             DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT => {
                 simple_type_conversion!(row_idx, val, DuckValue::UTinyInt, u8)
             },
@@ -504,14 +502,18 @@ impl DuckValue {
             DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT => {
                 simple_type_conversion!(row_idx, val, DuckValue::UBigInt, u64)
             },
-            DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT => {
-                simple_type_conversion!(row_idx, val, DuckValue::UHugeInt, u128)
-            },
             DUCKDB_TYPE_DUCKDB_TYPE_FLOAT => {
                 simple_type_conversion!(row_idx, val, DuckValue::Float, f32)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE => {
                 simple_type_conversion!(row_idx, val, DuckValue::Double, f64)
+            },
+
+            DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT => {
+                simple_type_conversion!(row_idx, val, DuckValue::UHugeInt, u128)
+            },
+            DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT => {
+                read_packed!(val, row_idx, duckdb_hugeint, i128).map(DuckValue::HugeInt)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_DATE => {
                 #[cfg(feature = "chrono")]

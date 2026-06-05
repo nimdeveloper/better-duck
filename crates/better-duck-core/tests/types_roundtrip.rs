@@ -12,9 +12,7 @@ fn open() -> Connection {
 /// Bind `dv` as `$1` in `SELECT $1 AS v`, return the decoded result.
 fn rt(mut dv: DuckValue) -> DuckValue {
     let mut conn = open();
-    let mut rows = conn
-        .execute_with("SELECT $1 AS v", &mut [&mut dv as &mut dyn AppendAble])
-        .unwrap();
+    let mut rows = conn.execute_with("SELECT $1 AS v", &mut [&mut dv]).unwrap();
     rows.next().unwrap().unwrap().get("v").unwrap().clone()
 }
 
@@ -154,12 +152,14 @@ fn rt_text_empty() {
 
 #[test]
 fn rt_text_unicode() {
+    // sometimes
     let s = "Héllo Wörld 🦆";
     assert_eq!(rt(DuckValue::text(s)), DuckValue::text(s));
 }
 
 #[test]
 fn rt_text_long() {
+    // Some times
     let s = "a".repeat(1000);
     assert_eq!(rt(DuckValue::text(s.as_str())), DuckValue::text(s));
 }
@@ -242,8 +242,7 @@ fn rt_null_blob() -> better_duck_core::error::Result<()> {
 #[test]
 fn rt_multi_nulls() -> better_duck_core::error::Result<()> {
     let mut conn = open();
-    let mut result =
-        conn.execute("SELECT NULL::INTEGER AS a, 42 AS b, NULL::VARCHAR AS c")?;
+    let mut result = conn.execute("SELECT NULL::INTEGER AS a, 42 AS b, NULL::VARCHAR AS c")?;
     let row = result.next().unwrap()?;
     assert_eq!(row.get("a"), Some(&DuckValue::Null));
     assert_eq!(row.get("b"), Some(&DuckValue::Int(42)));
@@ -258,11 +257,9 @@ fn rt_multi_nulls() -> better_duck_core::error::Result<()> {
 fn rt_timestamptz() -> better_duck_core::error::Result<()> {
     use chrono::{TimeZone, Utc};
     let mut conn = open();
-    let mut result =
-        conn.execute("SELECT '2024-06-01 12:00:00+00'::TIMESTAMPTZ AS ts")?;
+    let mut result = conn.execute("SELECT '2024-06-01 12:00:00+00'::TIMESTAMPTZ AS ts")?;
     let row = result.next().unwrap()?;
-    let expected =
-        DuckValue::TimestampTz(Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap());
+    let expected = DuckValue::TimestampTz(Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap());
     assert_eq!(row.get("ts"), Some(&expected));
     Ok(())
 }
@@ -320,9 +317,8 @@ fn multiple_rows_ordered() -> better_duck_core::error::Result<()> {
     let mut conn = open();
     conn.execute_batch("CREATE TABLE mr (id INTEGER, name TEXT)")?;
     conn.execute_batch("INSERT INTO mr VALUES (1, 'a'), (2, 'b'), (3, 'c')")?;
-    let rows: Vec<_> = conn
-        .execute("SELECT id, name FROM mr ORDER BY id")?
-        .collect::<Result<_, _>>()?;
+    let rows: Vec<_> =
+        conn.execute("SELECT id, name FROM mr ORDER BY id")?.collect::<Result<_, _>>()?;
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0].get("id"), Some(&DuckValue::Int(1)));
     assert_eq!(rows[1].get("name"), Some(&DuckValue::text("b")));
@@ -338,10 +334,8 @@ fn bind_duckvalue_directly() -> better_duck_core::error::Result<()> {
     conn.execute_batch("CREATE TABLE bv (v INTEGER)")?;
     conn.execute_batch("INSERT INTO bv VALUES (10), (20), (30)")?;
     let mut v = DuckValue::Int(20);
-    let mut result = conn.execute_with(
-        "SELECT v FROM bv WHERE v = $1",
-        &mut [&mut v as &mut dyn AppendAble],
-    )?;
+    let mut result =
+        conn.execute_with("SELECT v FROM bv WHERE v = $1", &mut [&mut v as &mut dyn AppendAble])?;
     let row = result.next().unwrap()?;
     assert_eq!(row.get("v"), Some(&DuckValue::Int(20)));
     assert!(result.next().is_none());
