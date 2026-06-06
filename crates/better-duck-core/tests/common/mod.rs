@@ -1,2 +1,1 @@
-// Common test utilities — intentionally empty.
-// The integration tests no longer depend on shared helpers.
+// Shared test helpers (currently empty — tests are self-contained).

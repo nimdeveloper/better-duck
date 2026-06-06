@@ -440,8 +440,8 @@ macro_rules! simple_type_conversion {
 /// Reads a fixed-width `#[repr(C)]` FFI struct (e.g. `duckdb_date`, `duckdb_timestamp`, …)
 /// directly from the packed chunk vector, then converts it via `DuckDialect::from_duck`.
 ///
-/// This avoids the invalid integer→pointer cast that plagued the old temporal read arms
-/// and reads at the correct width for each type (e.g. 4 bytes for DATE, 8 for TIMESTAMP).
+/// This reads at the correct element width for each type (4 bytes for DATE, 8 for TIMESTAMP,
+/// etc.) and then hands the raw struct to the appropriate `DuckDialect` conversion.
 macro_rules! read_packed {
     ($val:expr, $row_idx:expr, $raw_ty:ty, $target:ty) => {{
         let raw: $raw_ty = {
@@ -667,15 +667,6 @@ impl DuckValue {
                         ))
                         .into_owned(),
                     ))
-                    // let rust_str = CStr::from_ptr(char_ptr)
-                    //     .to_str()
-                    //     .map_err(|e| DuckDBConversionError::ConversionError(e.to_string()))?;
-                    // Ok(DuckValue::Text(rust_str.to_string()))
-                    // String::from_duck(rust_string).map(DuckValue::Text)
-
-                    // let c_str_ptr = duckdb_string_t_data(duck_string);
-                    // let rust_string =
-                    //     std::ffi::CStr::from_ptr(c_str_ptr).to_string_lossy().into_owned();
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_BLOB => {
@@ -782,13 +773,13 @@ impl DuckValue {
             DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ => {
                 #[cfg(feature = "chrono")]
                 {
-                    // TODO: We need to use timezone here, but how?
+                    // TODO: preserve TIME_TZ offset (the UTC offset is currently dropped)
                     read_packed!(val, row_idx, duckdb_time_tz, crate::types::date_chrono::TimeTz)
                         .map(DuckValue::TimeTz)
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    // TODO: We need to use timezone here, but how?
+                    // TODO: preserve TIME_TZ offset (the UTC offset is currently dropped)
                     read_packed!(
                         val,
                         row_idx,

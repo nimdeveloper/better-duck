@@ -29,7 +29,7 @@ fn statement_cache_hit() {
         test_items::table.select((test_items::id, test_items::name)).load(&mut conn).unwrap();
     let _: Vec<(i32, String)> =
         test_items::table.select((test_items::id, test_items::name)).load(&mut conn).unwrap();
-    // Cache-size introspection removed: diesel's StatementCache does not expose len().
+    // diesel's StatementCache does not expose its length; assert behavior, not cache size.
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn statement_cache_two_queries() {
     let _: Vec<(i32, String)> =
         test_items::table.select((test_items::id, test_items::name)).load(&mut conn).unwrap();
     let _: i64 = test_items::table.count().first(&mut conn).unwrap();
-    // Cache-size introspection removed: diesel's StatementCache does not expose len().
+    // diesel's StatementCache does not expose its length; assert behavior, not cache size.
 }
 
 // Transactions

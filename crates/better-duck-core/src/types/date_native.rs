@@ -22,8 +22,7 @@ use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 ///
 /// Holds the year/month/day components decoded from DuckDB's `DATE` storage
 /// (int32 days-since-epoch decoded via `duckdb_from_date`).
-///
-// TODO: implement Display/arithmetic if needed by callers
+// TODO: add Display and date-arithmetic helpers
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DuckDate {
     /// Calendar year (e.g. 2024).
@@ -38,8 +37,6 @@ pub struct DuckDate {
 ///
 /// Stores the hour/minute/second and sub-second microseconds decoded from DuckDB's
 /// `TIME` storage (int64 microseconds-since-midnight decoded via `duckdb_from_time`).
-///
-// TODO: implement Display/arithmetic if needed by callers
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DuckTime {
     /// Hour in `[0, 23]`.

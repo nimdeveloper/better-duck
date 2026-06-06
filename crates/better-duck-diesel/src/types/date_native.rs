@@ -27,5 +27,4 @@ impl ToSql<Date, DuckDb> for SystemTime {
     }
 }
 
-// StdDuration
-// SystemTime
+

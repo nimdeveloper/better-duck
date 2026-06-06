@@ -108,10 +108,8 @@ impl Connection for DuckDbConnection {
             &[], // SQL text is the primary cache key; empty bind_types is sufficient.
             &self.inner,
             |conn, sql, _prepare_for_cache, _| {
-                // match prepare_for_cache {
-                //     PrepareForCache::No => todo!("prepare for cache: no"),
-                //     PrepareForCache::Yes { .. } => todo!("prepare for cache: yes"),
-                // }
+                // TODO: honour prepare_for_cache distinction (No vs Yes) once Diesel
+                // exposes a stable API for it in third-party backends.
                 CachedStatement::prepare(conn.db(), sql)
                     .map_err(|e| diesel::result::Error::from(DuckDbError::new(e)))
             },
@@ -261,10 +259,8 @@ impl LoadConnection for DuckDbConnection {
             &[],
             &self.inner,
             |conn, sql, _prepare_for_cache, _| {
-                // match prepare_for_cache {
-                //     PrepareForCache::No => todo!("prepare for cache: no"),
-                //     PrepareForCache::Yes { .. } => todo!("prepare for cache: yes"),
-                // }
+                // TODO: honour prepare_for_cache distinction (No vs Yes) once Diesel
+                // exposes a stable API for it in third-party backends.
                 CachedStatement::prepare(conn.db(), sql)
                     .map_err(|e| diesel::result::Error::from(DuckDbError::new(e)))
             },

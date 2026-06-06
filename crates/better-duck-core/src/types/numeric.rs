@@ -117,9 +117,6 @@ fn hugeint_from_i128(value: i128) -> duckdb_hugeint {
 
 impl DuckDialect<duckdb_hugeint> for i128 {
     fn from_duck(hugeint: duckdb_hugeint) -> Result<Self, DuckDBConversionError> {
-        // SAFETY: `value` is a valid duckdb_value of type HUGEINT. The caller ensures
-        // the correct type is passed.
-        // let hugeint: duckdb_hugeint = unsafe { duckdb_get_hugeint(value) };
         Ok(i128_from_hugeint(hugeint))
     }
 

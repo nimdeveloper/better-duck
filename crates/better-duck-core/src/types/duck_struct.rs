@@ -236,7 +236,8 @@ pub(crate) fn struct_logical_type(
 
 // AppendAble impl
 
-// TODO: We need to move this DUckValue itself, if user tries to append Map objects normally we treat it as Map, if user explicitly uses DuckValue::Struct(...) then we will use following code.
+// TODO: disambiguate HashMap append — a plain HashMap is treated as MAP; DuckValue::Struct
+// forces the STRUCT path. Callers wrapping a struct should use DuckValue::Struct explicitly.
 /// Bind/append a `HashMap<String, DuckValue>` as a DuckDB `STRUCT`.
 impl AppendAble for HashMap<String, DuckValue> {
     fn stmt_append(
