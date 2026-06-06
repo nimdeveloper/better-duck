@@ -539,7 +539,7 @@ impl<'a> From<DuckValueRef<'a>> for i32 {
 impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
     /// Binds this value to a prepared-statement parameter at 1-based index `idx`.
     ///
-    /// Scalar and temporal variants delegate to each inner type's own [`AppendAble`]
+    /// Scalar and temporal variants delegate to each inner type's own [`crate::types::appendable::AppendAble`]
     /// impl.  Composite variants (`List`, `Array`, `Struct`, `Map`, `Union`, `Enum`,
     /// `TimeTz`, `TimeNs`, `Decimal`) convert to [`DuckValue`] via [`DuckValue::from`]
     /// then go through `DuckValue::to_duck()` + `duckdb_bind_value`.
@@ -652,7 +652,7 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
 
     /// Appends this value to a DuckDB appender row.
     ///
-    /// Scalar and temporal variants delegate to each inner type's own [`AppendAble`]
+    /// Scalar and temporal variants delegate to each inner type's own [`crate::types::appendable::AppendAble`]
     /// impl.  Composite variants (`List`, `Array`, `Struct`, `Map`, `Union`, `Enum`,
     /// `TimeTz`, `TimeNs`, `Decimal`) convert to [`DuckValue`] and go through
     /// `DuckValue::to_duck()` + `duckdb_append_value`.

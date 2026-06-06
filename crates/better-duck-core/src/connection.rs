@@ -10,7 +10,7 @@ use crate::{
 
 /// A high-level DuckDB connection.
 ///
-/// `Connection` wraps a [`RawConnection`] and exposes a safe, ergonomic API for
+/// `Connection` wraps a `RawConnection` and exposes a safe, ergonomic API for
 /// opening databases, executing SQL, and creating appenders.
 ///
 /// # Example
@@ -116,7 +116,7 @@ impl Connection {
     /// Prepares and executes a SQL statement, returning the result.
     ///
     /// Works for all statement types:
-    /// - **SELECT** — iterate rows via the [`Iterator`](std::iter::Iterator) impl on
+    /// - **SELECT** — iterate rows via the [`Iterator`] impl on
     ///   [`DuckResult`].
     /// - **INSERT / UPDATE / DELETE** — check [`DuckResult::changes()`] for affected rows.
     /// - **DDL** (`CREATE TABLE`, `DROP TABLE`, etc.) — `.changes()` returns `0`, no rows.
@@ -200,10 +200,9 @@ impl Connection {
         !self.0.con.is_null()
     }
 
-    /// Returns a reference to the underlying [`RawConnection`].
+    /// Returns a reference to the underlying `RawConnection`.
     ///
-    /// This provides access to low-level operations such as
-    /// [`prepare`](RawConnection::prepare).
+    /// This provides access to low-level operations such as `prepare`.
     #[inline]
     #[allow(unused)]
     #[allow(private_interfaces)]

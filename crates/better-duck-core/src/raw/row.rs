@@ -72,7 +72,7 @@ impl DuckRow {
         self.1.len() as u64
     }
 
-    /// Constructs a [`DuckRow`] from the current position of a [`DataChunk`].
+    /// Constructs a [`DuckRow`] from the current position of a `DataChunk`.
     ///
     /// # Errors
     ///

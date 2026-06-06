@@ -1,7 +1,7 @@
 //! LIST and ARRAY read/write helpers + generic [`AppendAble`] impls.
 //!
-//! Functions here are called by [`DuckValue::from_duckdb_vec`], [`DuckValue::to_duck`],
-//! and [`DuckValue::logical_type_of`] so that `value.rs` can be a thin dispatcher.
+//! Functions here are called by `DuckValue::from_duckdb_vec`, `DuckValue::to_duck`,
+//! and `DuckValue::logical_type_of` so that `value.rs` can be a thin dispatcher.
 // The FFI pointer arguments are used safely inside `unsafe` blocks.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
