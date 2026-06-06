@@ -19,7 +19,7 @@ readme      = "README.md"
 [workspace.dependencies]
 libduckdb-sys  = { version = "1.10503.1", default-features = false }
 chrono         = { version = "0.4.44", default-features = false }
-thiserror      = "1.0.69"
+thiserror      = "2.0.18"
 log            = "0.4"
 parking_lot    = "0.12"
 serde          = { version = "1.0", features = ["derive"] }
