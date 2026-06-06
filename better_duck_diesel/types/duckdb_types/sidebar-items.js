@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["DuckEnum","DuckHugeInt","DuckInterval","DuckList","DuckTimeNs","DuckTimeTz","DuckTimestamptz","DuckTinyInt","DuckUBigInt","DuckUHugeInt","DuckUInt","DuckUSmallInt","DuckUTinyInt"]};

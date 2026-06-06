@@ -1,0 +1,9 @@
+(function() {
+    const implementors = Object.fromEntries([["better_duck_diesel",[["impl QueryFragment&lt;<a class=\"struct\" href=\"better_duck_diesel/backend/struct.DuckDb.html\" title=\"struct better_duck_diesel::backend::DuckDb\">DuckDb</a>&gt; for BoxedLimitOffsetClause&lt;'_, <a class=\"struct\" href=\"better_duck_diesel/backend/struct.DuckDb.html\" title=\"struct better_duck_diesel::backend::DuckDb\">DuckDb</a>&gt;",0],["impl&lt;'a, T, DB&gt; QueryFragment&lt;DB&gt; for <a class=\"struct\" href=\"better_duck_diesel/qb/struct.Comma.html\" title=\"struct better_duck_diesel::qb::Comma\">Comma</a>&lt;'a, T&gt;<div class=\"where\">where\n    DB: Backend,\n    T: QueryFragment&lt;DB&gt;,</div>",0],["impl&lt;'a, T, DB&gt; QueryFragment&lt;DB&gt; for <a class=\"struct\" href=\"better_duck_diesel/qb/struct.In.html\" title=\"struct better_duck_diesel::qb::In\">In</a>&lt;'a, T&gt;<div class=\"where\">where\n    DB: Backend,\n    T: QueryFragment&lt;DB&gt;,</div>",0],["impl&lt;L, O&gt; QueryFragment&lt;<a class=\"struct\" href=\"better_duck_diesel/backend/struct.DuckDb.html\" title=\"struct better_duck_diesel::backend::DuckDb\">DuckDb</a>&gt; for LimitOffsetClause&lt;L, O&gt;<div class=\"where\">where\n    L: QueryFragment&lt;<a class=\"struct\" href=\"better_duck_diesel/backend/struct.DuckDb.html\" title=\"struct better_duck_diesel::backend::DuckDb\">DuckDb</a>&gt;,\n    O: QueryFragment&lt;<a class=\"struct\" href=\"better_duck_diesel/backend/struct.DuckDb.html\" title=\"struct better_duck_diesel::backend::DuckDb\">DuckDb</a>&gt;,</div>",0]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":59,"fragment_lengths":[1506]}

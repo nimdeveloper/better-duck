@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["IsNull"],"mod":["binary","date_chrono","duckdb_types","list","numeric","serialize","varchar"],"struct":["Output"],"trait":["ToSql"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"externcrate":["libduckdb_sys"],"macro":["impl_appendable_via_to_duck_native"],"mod":["connection","error","types"],"struct":["CachedStatement","DuckResult","DuckRow"]};

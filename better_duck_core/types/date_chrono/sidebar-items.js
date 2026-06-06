@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["TimeNs","TimeTz","TimestampMs","TimestampNs","TimestampS","TimestampTz"]};

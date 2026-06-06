@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["limit_offset"],"struct":["Comma","DuckDbQueryBuilder","In"]};
