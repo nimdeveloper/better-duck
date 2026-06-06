@@ -2,13 +2,12 @@ name: Rust CI
 
 on:
   push:
-    branches:
-      - main
-      - develop
+    branches: [main, develop]
   pull_request:
-    branches:
-      - main
-      - develop
+    branches: [main, develop]
+  schedule:
+    # Run the security audit once a week even without a push.
+    - cron: "0 6 * * 1"
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,85 +15,204 @@ env:
 jobs:
   # Formatting
   fmt:
+    name: Format check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --check
 
   # Lint (Clippy)
   lint:
+    name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@v2
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        # buildtime_bindgen requires LLVM; skip it in CI
+        run: cargo clippy --all-targets --features "chrono,decimal,json,parquet,r2d2" -- -D warnings
 
   # Documentation
   docs:
+    name: Docs build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --workspace --no-deps --all-features
+        run: cargo doc --workspace --no-deps --features "chrono,decimal"
 
-  # Tests — Linux
+  # Tests — Linux (default)
   test_linux:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      - name: Run tests
-        run: cargo test --verbose
-
-  # Doctests
-  doctest:
+    name: Tests (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --workspace --verbose
+
+  # Tests — Linux with chrono
+  test_linux_chrono:
+    name: Tests (Linux, +chrono)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests with chrono feature
+        run: cargo test -p better-duck-diesel --features chrono --verbose
+
+  # Doctests
+  doctest:
+    name: Doctests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Run doctests
         run: cargo test --workspace --doc
 
   # Tests — Windows
   test_windows:
+    name: Tests (Windows)
     runs-on: windows-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --workspace --verbose
 
   # Tests — macOS + iOS cross-build
   test_macos_and_ios_build:
+    name: Tests (macOS) + iOS cross-build
     runs-on: macos-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Run tests on macOS
-        run: cargo test --verbose
-      - name: Add iOS targets for cross-compilation
+        run: cargo test --workspace --verbose
+      - name: Add iOS targets
         run: |
           rustup target add aarch64-apple-ios
           rustup target add x86_64-apple-ios
-      - name: Build for iOS (aarch64-apple-ios)
+      - name: Cross-build for iOS (aarch64)
         run: cargo build --target aarch64-apple-ios --verbose
-      - name: Build for iOS Simulator (x86_64-apple-ios)
+      - name: Cross-build for iOS Simulator (x86_64)
         run: cargo build --target x86_64-apple-ios --verbose
+
+  # Feature matrix
+  features:
+    name: Feature matrix (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Core crate
+          - name: core/no-default-features
+            package: better-duck-core
+            args: --no-default-features
+          - name: core/bundled-only
+            package: better-duck-core
+            args: --no-default-features --features bundled
+          - name: core/chrono-only
+            package: better-duck-core
+            args: --no-default-features --features "bundled,chrono"
+          - name: core/decimal-only
+            package: better-duck-core
+            args: --no-default-features --features "bundled,decimal"
+          - name: core/json
+            package: better-duck-core
+            args: --features json
+          - name: core/parquet
+            package: better-duck-core
+            args: --features parquet
+          # Diesel crate
+          - name: diesel/default
+            package: better-duck-diesel
+            args: ""
+          - name: diesel/chrono
+            package: better-duck-diesel
+            args: --features chrono
+          - name: diesel/r2d2
+            package: better-duck-diesel
+            args: --features r2d2
+          - name: diesel/all
+            package: better-duck-diesel
+            args: --features "chrono,decimal,r2d2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+      - name: Check / test ${{ matrix.name }}
+        run: cargo test -p ${{ matrix.package }} ${{ matrix.args }}
+
+  # MSRV
+  msrv:
+    name: MSRV (Rust 1.82)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.82
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-1.82
+      - name: Check workspace compiles on MSRV
+        run: cargo check --workspace --features "chrono,decimal"
+
+  # Security audit
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    # Only block on push/PR — the weekly schedule run is advisory only.
+    continue-on-error: ${{ github.event_name == 'schedule' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Coverage
+  coverage:
+    name: Coverage (llvm-cov → Codecov)
+    runs-on: ubuntu-latest
+    # Coverage upload requires CODECOV_TOKEN; job is advisory if the secret
+    # is absent (e.g. on forks or before the secret is configured).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: Generate coverage report
+        run: |
+          cargo llvm-cov --workspace --features "chrono,decimal" \
+            --lcov --output-path lcov.info
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
