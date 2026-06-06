@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest something new or an improvement to an existing feature
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, check the [roadmap section of the README](../../README.md#roadmap) — your idea might already be tracked.
+
+  - type: dropdown
+    id: crate
+    attributes:
+      label: Which crate would this affect?
+      options:
+        - better-duck-core
+        - better-duck-diesel
+        - Both
+        - New crate
+        - Tooling / CI
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case or limitation you're running into.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or approach
+      description: |
+        Show what you'd like the API to look like, even if it's rough.
+        A Rust snippet is ideal.
+      render: rust
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Other approaches you've looked at, including working around the limitation today.
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Links, prior art, related issues, etc.
