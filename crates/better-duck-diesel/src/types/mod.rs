@@ -19,6 +19,8 @@ pub mod date_chrono;
 
 /// `FromSql`/`ToSql` implementations for `BLOB` / `Binary`.
 pub mod binary;
+/// `FromSql`/`ToSql` implementations for DuckDB `LIST`.
+pub mod list;
 /// `FromSql`/`ToSql` implementations for all numeric types.
 pub mod numeric;
 /// `FromSql`/`ToSql` implementations for `VARCHAR` / `Text`.
