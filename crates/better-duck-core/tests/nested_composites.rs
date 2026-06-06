@@ -124,8 +124,9 @@ fn fixed_array_text() -> better_duck_core::error::Result<()> {
 #[test]
 fn struct_nested() -> better_duck_core::error::Result<()> {
     let mut conn = open();
-    let mut result =
-        conn.execute("SELECT {'outer': {'inner': 42}}::STRUCT(outer STRUCT(inner INTEGER)) AS s")?;
+    let mut result = conn.execute(
+        "SELECT {'outer': {'inner': 42}}::STRUCT(\"outer\" STRUCT(\"inner\" INTEGER)) AS s",
+    )?;
     let row = result.next().unwrap()?;
     let inner = DuckValue::Struct(HashMap::from([("inner".to_string(), DuckValue::Int(42))]));
     let expected = DuckValue::Struct(HashMap::from([("outer".to_string(), inner)]));
