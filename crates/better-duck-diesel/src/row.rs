@@ -26,8 +26,18 @@ impl<'f> DieselField<'f, DuckDb> for Field<'f> {
         Some(self.name)
     }
 
+    /// Returns `None` when the field is `NULL`, `Some(value)` otherwise.
+    ///
+    /// Diesel's `Field` contract requires `value()` to return `None` for NULL
+    /// values so that `from_nullable_sql(None)` is called and `Option<T>`
+    /// correctly resolves to `Ok(None)`.  Returning `Some(DuckValueRef::Null)`
+    /// for NULL would bypass that path and propagate the `Null` variant into
+    /// concrete `FromSql` impls, causing spurious deserialization errors.
     fn value(&self) -> Option<DuckValueRef<'_>> {
-        Some(self.value.clone())
+        match &self.value {
+            DuckValueRef::Null => None,
+            v => Some(v.clone()),
+        }
     }
 
     fn is_null(&self) -> bool {
