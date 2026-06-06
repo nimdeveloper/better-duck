@@ -575,6 +575,9 @@ impl DuckValue {
                 #[cfg(not(feature = "chrono"))]
                 {
                     use std::time::UNIX_EPOCH;
+                    // SAFETY: `val` is a valid duckdb_vector for a TIMESTAMP_S column and
+                    // `row_idx` is within the current chunk's row count, so the pointer
+                    // arithmetic and dereference are in-bounds.
                     let secs = unsafe {
                         (*(duckdb_vector_get_data(val) as *const duckdb_timestamp_s)
                             .add(row_idx as usize))
@@ -602,6 +605,9 @@ impl DuckValue {
                 #[cfg(not(feature = "chrono"))]
                 {
                     use std::time::UNIX_EPOCH;
+                    // SAFETY: `val` is a valid duckdb_vector for a TIMESTAMP_MS column and
+                    // `row_idx` is within the current chunk's row count, so the pointer
+                    // arithmetic and dereference are in-bounds.
                     let millis = unsafe {
                         (*(duckdb_vector_get_data(val) as *const duckdb_timestamp_ms)
                             .add(row_idx as usize))
@@ -629,6 +635,9 @@ impl DuckValue {
                 #[cfg(not(feature = "chrono"))]
                 {
                     use std::time::UNIX_EPOCH;
+                    // SAFETY: `val` is a valid duckdb_vector for a TIMESTAMP_NS column and
+                    // `row_idx` is within the current chunk's row count, so the pointer
+                    // arithmetic and dereference are in-bounds.
                     let nanos = unsafe {
                         (*(duckdb_vector_get_data(val) as *const duckdb_timestamp_ns)
                             .add(row_idx as usize))
@@ -752,6 +761,9 @@ impl DuckValue {
                 #[cfg(not(feature = "chrono"))]
                 {
                     use std::time::UNIX_EPOCH;
+                    // SAFETY: `val` is a valid duckdb_vector for a TIMESTAMPTZ column and
+                    // `row_idx` is within the current chunk's row count, so the pointer
+                    // arithmetic and dereference are in-bounds.
                     let micros = unsafe {
                         (*(duckdb_vector_get_data(val) as *const duckdb_timestamp)
                             .add(row_idx as usize))
