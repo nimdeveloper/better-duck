@@ -14,7 +14,7 @@ readme.workspace      = true
 workspace = true
 
 [dependencies]
-better-duck-core = { path = "../better-duck-core", default-features = false, version = "0.1.0" }
+better-duck-core = { path = "../better-duck-core", default-features = false, version = "0.1.0-beta.1" }
 diesel = { workspace = true, features = [
     "uuid",
     "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
