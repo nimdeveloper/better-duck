@@ -160,9 +160,7 @@ impl DuckDialect for Decimal {
         let decimal_value = unsafe { duckdb_get_decimal(value) };
 
         let scale = decimal_value.scale;
-        // TODO: Do we need to handle precision?
-        // let mut precision = 0;
-        // precision = decimal_value.width;
+        // TODO: surface decimal_value.width (precision) for callers that need it
 
         let decimal =
             Decimal::from_i128_with_scale(i128_from_hugeint(decimal_value.value), scale as u32);
