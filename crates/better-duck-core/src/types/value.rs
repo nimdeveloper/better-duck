@@ -1085,3 +1085,289 @@ impl From<DuckValue> for i32 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    // DuckValue::text constructor
+
+    #[test]
+    fn test_text_from_str() {
+        assert_eq!(DuckValue::text("hi"), DuckValue::Text("hi".to_owned()));
+    }
+
+    #[test]
+    fn test_text_from_string() {
+        assert_eq!(DuckValue::text(String::from("world")), DuckValue::Text("world".to_owned()));
+    }
+
+    #[test]
+    fn test_text_str_and_string_equal() {
+        assert_eq!(DuckValue::text("same"), DuckValue::text("same".to_string()));
+    }
+
+    // DuckValue::get / get_mut / contains_key
+
+    fn int_map() -> DuckValue {
+        DuckValue::Map(HashMap::from([
+            (DuckValue::Int(1), DuckValue::text("one")),
+            (DuckValue::Int(2), DuckValue::text("two")),
+        ]))
+    }
+
+    #[test]
+    fn test_get_hit() {
+        let m = int_map();
+        assert_eq!(m.get(1i32), Some(&DuckValue::text("one")));
+        assert_eq!(m.get(2i32), Some(&DuckValue::text("two")));
+    }
+
+    #[test]
+    fn test_get_miss() {
+        let m = int_map();
+        assert_eq!(m.get(99i32), None);
+    }
+
+    #[test]
+    fn test_get_non_map_returns_none() {
+        assert_eq!(DuckValue::Int(42).get(0i32), None);
+        assert_eq!(DuckValue::Null.get("key"), None);
+    }
+
+    #[test]
+    fn test_get_mut_modifies_in_place() {
+        let mut m = DuckValue::Map(HashMap::from([(DuckValue::Int(10), DuckValue::Int(0))]));
+        if let Some(v) = m.get_mut(10i32) {
+            *v = DuckValue::Int(999);
+        }
+        assert_eq!(m.get(10i32), Some(&DuckValue::Int(999)));
+    }
+
+    #[test]
+    fn test_contains_key_true() {
+        let m = int_map();
+        assert!(m.contains_key(1i32));
+        assert!(m.contains_key(2i32));
+    }
+
+    #[test]
+    fn test_contains_key_false() {
+        let m = int_map();
+        assert!(!m.contains_key(99i32));
+    }
+
+    #[test]
+    fn test_contains_key_non_map() {
+        assert!(!DuckValue::Boolean(true).contains_key("k"));
+    }
+
+    // From<T> conversions into DuckValue
+
+    #[test]
+    fn test_from_i32() {
+        let v: DuckValue = 42i32.into();
+        assert_eq!(v, DuckValue::Int(42));
+    }
+
+    #[test]
+    fn test_from_bool() {
+        assert_eq!(DuckValue::from(true), DuckValue::Boolean(true));
+        assert_eq!(DuckValue::from(false), DuckValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_from_str_slice() {
+        let v: DuckValue = "hello".into();
+        assert_eq!(v, DuckValue::Text("hello".to_owned()));
+    }
+
+    #[test]
+    fn test_from_option_some() {
+        let v: DuckValue = Some(5i32).into();
+        assert_eq!(v, DuckValue::Int(5));
+    }
+
+    #[test]
+    fn test_from_option_none() {
+        let v: DuckValue = Option::<i32>::None.into();
+        assert_eq!(v, DuckValue::Null);
+    }
+
+    #[test]
+    fn test_from_all_integer_types() {
+        assert_eq!(DuckValue::from(1i8), DuckValue::TinyInt(1));
+        assert_eq!(DuckValue::from(2i16), DuckValue::SmallInt(2));
+        assert_eq!(DuckValue::from(3i32), DuckValue::Int(3));
+        assert_eq!(DuckValue::from(4i64), DuckValue::BigInt(4));
+        assert_eq!(DuckValue::from(5i128), DuckValue::HugeInt(5));
+        assert_eq!(DuckValue::from(6u8), DuckValue::UTinyInt(6));
+        assert_eq!(DuckValue::from(7u16), DuckValue::USmallInt(7));
+        assert_eq!(DuckValue::from(8u32), DuckValue::UInt(8));
+        assert_eq!(DuckValue::from(9u64), DuckValue::UBigInt(9));
+        assert_eq!(DuckValue::from(10u128), DuckValue::UHugeInt(10));
+    }
+
+    #[test]
+    fn test_from_floats() {
+        assert_eq!(DuckValue::from(1.0f32), DuckValue::Float(1.0));
+        assert_eq!(DuckValue::from(2.0f64), DuckValue::Double(2.0));
+    }
+
+    // DuckValue ↔ DuckValueRef round-trips
+
+    #[test]
+    fn test_ref_from_value_and_back() {
+        let original = DuckValue::Int(77);
+        let r = DuckValueRef::from(&original);
+        let back = DuckValue::from(&r);
+        assert_eq!(back, original);
+    }
+
+    #[test]
+    fn test_ref_from_value_text_borrows() {
+        let original = DuckValue::Text("hello".to_owned());
+        let r = DuckValueRef::from(&original);
+        match &r {
+            DuckValueRef::Text(cow) => assert_eq!(cow.as_ref(), "hello"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_ref_owned_from_value() {
+        let v = DuckValue::Text("owned".to_string());
+        let r: DuckValueRef<'_> = DuckValueRef::from(v);
+        match r {
+            DuckValueRef::Text(cow) => assert_eq!(cow.into_owned(), "owned"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    // DuckValueRef::Blob holds Blob struct
+
+    #[test]
+    fn test_value_ref_blob_is_blob_struct() {
+        let original = DuckValue::Blob(Blob::new(vec![0xAB, 0xCD]));
+        let r = DuckValueRef::from(&original);
+        match &r {
+            DuckValueRef::Blob(b) => assert_eq!(b.as_bytes(), &[0xAB, 0xCD]),
+            _ => panic!("expected DuckValueRef::Blob"),
+        }
+    }
+
+    // From<T> for DuckValueRef
+
+    #[test]
+    fn test_ref_from_i32() {
+        let r: DuckValueRef<'_> = 42i32.into();
+        assert_eq!(r, DuckValueRef::Int(42));
+    }
+
+    #[test]
+    fn test_ref_from_bool() {
+        let r: DuckValueRef<'_> = true.into();
+        assert_eq!(r, DuckValueRef::Boolean(true));
+    }
+
+    #[test]
+    fn test_ref_from_str_borrows() {
+        let s = "borrowed";
+        let r: DuckValueRef<'_> = s.into();
+        match &r {
+            DuckValueRef::Text(cow) => {
+                assert_eq!(cow.as_ref(), "borrowed");
+                assert!(matches!(cow, std::borrow::Cow::Borrowed(_)));
+            },
+            _ => panic!("expected DuckValueRef::Text"),
+        }
+    }
+
+    #[test]
+    fn test_ref_from_string_owns() {
+        let r: DuckValueRef<'_> = String::from("hello").into();
+        match r {
+            DuckValueRef::Text(cow) => {
+                assert_eq!(cow.as_ref(), "hello");
+                assert!(matches!(cow, std::borrow::Cow::Owned(_)));
+            },
+            _ => panic!("expected DuckValueRef::Text"),
+        }
+    }
+
+    #[test]
+    fn test_ref_from_blob() {
+        let b = Blob::new(vec![1, 2, 3]);
+        let r: DuckValueRef<'_> = b.into();
+        match &r {
+            DuckValueRef::Blob(blob) => assert_eq!(blob.as_bytes(), &[1, 2, 3]),
+            _ => panic!("expected DuckValueRef::Blob"),
+        }
+    }
+
+    #[test]
+    fn test_ref_from_vec_u8() {
+        let r: DuckValueRef<'_> = vec![0xFFu8, 0x00u8].into();
+        match &r {
+            DuckValueRef::Blob(b) => assert_eq!(b.as_bytes(), &[0xFF, 0x00]),
+            _ => panic!("expected DuckValueRef::Blob"),
+        }
+    }
+
+    #[test]
+    fn test_ref_from_option_some() {
+        let r: DuckValueRef<'_> = Some(7i32).into();
+        assert_eq!(r, DuckValueRef::Int(7));
+    }
+
+    #[test]
+    fn test_ref_from_option_none() {
+        let r: DuckValueRef<'_> = Option::<i32>::None.into();
+        assert_eq!(r, DuckValueRef::Null);
+    }
+
+    // Eq / Hash consistency
+
+    #[test]
+    fn test_eq_hash_text_key() {
+        let mut map: HashMap<DuckValue, i32> = HashMap::new();
+        map.insert(DuckValue::text("key"), 42);
+        assert_eq!(map.get(&DuckValue::text("key")), Some(&42));
+        assert_eq!(map.get(&DuckValue::text("other")), None);
+    }
+
+    #[test]
+    fn test_eq_hash_int_key() {
+        let mut map: HashMap<DuckValue, &str> = HashMap::new();
+        map.insert(DuckValue::Int(100), "hundred");
+        assert_eq!(map.get(&DuckValue::Int(100)), Some(&"hundred"));
+        assert_eq!(map.get(&DuckValue::Int(101)), None);
+    }
+
+    #[test]
+    fn test_eq_map_order_independent() {
+        let mut m1 = HashMap::new();
+        m1.insert(DuckValue::Int(1), DuckValue::text("a"));
+        m1.insert(DuckValue::Int(2), DuckValue::text("b"));
+        let mut m2 = HashMap::new();
+        m2.insert(DuckValue::Int(2), DuckValue::text("b"));
+        m2.insert(DuckValue::Int(1), DuckValue::text("a"));
+        assert_eq!(DuckValue::Map(m1), DuckValue::Map(m2));
+    }
+
+    #[test]
+    fn test_null_eq() {
+        assert_eq!(DuckValue::Null, DuckValue::Null);
+        assert_ne!(DuckValue::Null, DuckValue::Int(0));
+    }
+
+    #[test]
+    fn test_list_order_matters() {
+        let a = DuckValue::List(vec![DuckValue::Int(1), DuckValue::Int(2)]);
+        let b = DuckValue::List(vec![DuckValue::Int(1), DuckValue::Int(2)]);
+        let c = DuckValue::List(vec![DuckValue::Int(2), DuckValue::Int(1)]);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+}
