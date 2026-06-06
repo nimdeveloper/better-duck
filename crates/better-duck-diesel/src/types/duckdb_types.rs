@@ -31,3 +31,12 @@ duck_sql_type!(
     "DuckDB `INTERVAL` — maps to `chrono::Duration` (chrono feature) or `std::time::Duration`."
 );
 duck_sql_type!(DuckList, "DuckDB `LIST` — a variable-length array of a uniform element type.");
+duck_sql_type!(
+    DuckTimeTz,
+    "DuckDB `TIME_TZ` — a time-of-day value with UTC offset (microsecond precision)."
+);
+duck_sql_type!(DuckTimeNs, "DuckDB `TIME_NS` — a nanosecond-precision time-of-day value.");
+duck_sql_type!(
+    DuckEnum,
+    "DuckDB `ENUM` — a categorical string type backed by a dictionary encoding."
+);
