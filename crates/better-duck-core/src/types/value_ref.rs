@@ -762,10 +762,10 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
     }
 }
 
-// 
+//
 // From<primitive> for DuckValueRef — mirrors the DuckValue impls in from_impls.rs.
 // These allow callers to pass raw Rust primitives where a DuckValueRef is expected.
-// 
+//
 
 impl<'a> From<bool> for DuckValueRef<'a> {
     fn from(v: bool) -> Self {

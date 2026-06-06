@@ -13,10 +13,10 @@ use crate::{
         duckdb_append_value, duckdb_array_type_array_size, duckdb_array_vector_get_child,
         duckdb_bind_value, duckdb_create_array_type, duckdb_create_array_value,
         duckdb_create_list_type, duckdb_create_list_value, duckdb_destroy_logical_type,
-        duckdb_destroy_value, duckdb_get_type_id, duckdb_list_entry,
-        duckdb_list_vector_get_child, duckdb_logical_type, duckdb_type,
-        duckdb_validity_row_is_valid, duckdb_value, duckdb_vector, duckdb_vector_get_column_type,
-        duckdb_vector_get_data, duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
+        duckdb_destroy_value, duckdb_get_type_id, duckdb_list_entry, duckdb_list_vector_get_child,
+        duckdb_logical_type, duckdb_type, duckdb_validity_row_is_valid, duckdb_value,
+        duckdb_vector, duckdb_vector_get_column_type, duckdb_vector_get_data,
+        duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
         DUCKDB_TYPE_DUCKDB_TYPE_LIST,
     },
     types::appendable::AppendAble,
@@ -48,7 +48,10 @@ pub(crate) fn read_list_or_array(
     let (offset, length) = if t == DUCKDB_TYPE_DUCKDB_TYPE_LIST {
         // SAFETY: `val` is a valid LIST vector. `duckdb_vector_get_data` returns a pointer
         // to a packed `duckdb_list_entry[]`; `row_idx` is within [0, chunk_size).
+        // SAFETY: `duckdb_vector_get_data` returns a pointer to the list-entry array for a
+        // LIST vector. The pointer is valid for at least `chunk_size` entries.
         let data_ptr = unsafe { duckdb_vector_get_data(val) as *mut duckdb_list_entry };
+        // SAFETY: `data_ptr` is a valid non-null pointer; `row_idx` is within [0, chunk_size).
         let entry = unsafe { *data_ptr.add(row_idx as usize) };
         (entry.offset, entry.length)
     } else {
@@ -74,8 +77,11 @@ pub(crate) fn read_list_or_array(
     // SAFETY: `list_child` is a valid duckdb_vector for the child column.
     let child_validity = unsafe { duckdb_vector_get_validity(list_child) };
 
+    // SAFETY: `list_child` is a valid duckdb_vector; `duckdb_vector_get_column_type` always
+    // succeeds for a valid vector and returns an owned logical type.
     let mut raw_child_type: duckdb_logical_type =
         unsafe { duckdb_vector_get_column_type(list_child) };
+    // SAFETY: `raw_child_type` is a valid logical type returned by `duckdb_vector_get_column_type`.
     let child_type = unsafe { duckdb_get_type_id(raw_child_type) };
     // SAFETY: `raw_child_type` was obtained above and must be freed exactly once.
     unsafe { duckdb_destroy_logical_type(&mut raw_child_type) };
