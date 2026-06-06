@@ -46,10 +46,8 @@ pub(crate) fn read_list_or_array(
     // null for ARRAY columns. Instead we read the fixed size from the parent logical type
     // and compute offset = row_idx * size.
     let (offset, length) = if t == DUCKDB_TYPE_DUCKDB_TYPE_LIST {
-        // SAFETY: `val` is a valid LIST vector. `duckdb_vector_get_data` returns a pointer
-        // to a packed `duckdb_list_entry[]`; `row_idx` is within [0, chunk_size).
-        // SAFETY: `duckdb_vector_get_data` returns a pointer to the list-entry array for a
-        // LIST vector. The pointer is valid for at least `chunk_size` entries.
+        // SAFETY: `val` is a valid LIST vector; `duckdb_vector_get_data` returns a pointer
+        // to a packed `duckdb_list_entry[]` with at least `chunk_size` entries.
         let data_ptr = unsafe { duckdb_vector_get_data(val) as *mut duckdb_list_entry };
         // SAFETY: `data_ptr` is a valid non-null pointer; `row_idx` is within [0, chunk_size).
         let entry = unsafe { *data_ptr.add(row_idx as usize) };

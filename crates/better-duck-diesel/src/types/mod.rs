@@ -14,8 +14,9 @@ use crate::backend::DuckDb;
 #[cfg(feature = "chrono")]
 pub mod date_chrono;
 
+// TODO: enable date_native for non-chrono date/time FromSql/ToSql (currently requires chrono)
 // #[cfg(not(feature = "chrono"))]
-// pub mod date_native; // TODO
+// pub mod date_native;
 
 /// `FromSql`/`ToSql` implementations for `BLOB` / `Binary`.
 pub mod binary;

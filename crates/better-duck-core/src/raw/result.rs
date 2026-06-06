@@ -70,7 +70,7 @@ impl DuckResult {
 
     #[inline]
     fn resolve_columns_types(&mut self) -> Result<()> {
-        // TODO: What happens for this var, if the function returns error? (Maybe using https://docs.rs/scopeguard/latest/scopeguard/)
+        // TODO: guard the uninit slice on early return (consider `scopeguard`)
         let mut col_types = Box::<[DUCKDB_TYPE]>::new_uninit_slice(self.col_count as usize);
 
         for each in 0..self.col_count {

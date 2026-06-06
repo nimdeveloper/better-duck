@@ -402,12 +402,9 @@ impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
 
 // From<DuckValue> — owned conversion, any lifetime 'a
 //
-// This replaces the former `DuckValueRef::from_value` associated method.
-// Because all borrowed slots use `Cow::Owned`, no external data is borrowed, so
-// Rust can infer any lifetime `'a` from the call context — in particular, the
-// diesel bind-collector's `Vec<DuckValueRef<'a>>` context. This avoids the
-// `&mut Vec<DuckValueRef<'a>>` invariance issue that `from_value` was originally
-// introduced to solve.
+// All borrowed slots (`Text`, `Blob`, `Enum`) use `Cow::Owned`, so no external
+// data is borrowed.  This lets Rust infer any `'a` from the call context — useful
+// when the caller holds a `Vec<DuckValueRef<'a>>` and needs a concrete lifetime.
 
 impl<'a> From<DuckValue> for DuckValueRef<'a> {
     /// Converts an owned [`DuckValue`] into a fully-owned `DuckValueRef<'a>`.
