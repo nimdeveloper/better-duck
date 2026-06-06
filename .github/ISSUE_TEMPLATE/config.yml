@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security issue
+    url: https://github.com/nimdeveloper/better-duck/security/advisories/new
+    about: Report a security vulnerability privately via GitHub advisories.
+  - name: Question or discussion
+    url: https://github.com/nimdeveloper/better-duck/discussions
+    about: Ask a question or start a discussion. Issues are for bugs and feature requests.
