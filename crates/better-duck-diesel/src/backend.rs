@@ -3,8 +3,8 @@
 use super::query_builder::DuckDbQueryBuilder;
 pub use crate::bind_collector::DuckDbBindCollector;
 use crate::types::duckdb_types::{
-    DuckHugeInt, DuckInterval, DuckList, DuckTimestamptz, DuckTinyInt, DuckUBigInt, DuckUHugeInt,
-    DuckUInt, DuckUSmallInt, DuckUTinyInt,
+    DuckEnum, DuckHugeInt, DuckInterval, DuckList, DuckTimeNs, DuckTimeTz, DuckTimestamptz,
+    DuckTinyInt, DuckUBigInt, DuckUHugeInt, DuckUInt, DuckUSmallInt, DuckUTinyInt,
 };
 use better_duck_core::types::value_ref::DuckValueRef;
 use better_duck_core::types::Type as DuckDbType;
@@ -226,7 +226,25 @@ impl HasSqlType<DuckUHugeInt> for DuckDb {
 
 impl HasSqlType<DuckTimestamptz> for DuckDb {
     fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
-        DuckDbTypeWrapper(DuckDbType::Timestamp)
+        DuckDbTypeWrapper(DuckDbType::TimestampTz)
+    }
+}
+
+impl HasSqlType<DuckTimeTz> for DuckDb {
+    fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
+        DuckDbTypeWrapper(DuckDbType::TimeTz)
+    }
+}
+
+impl HasSqlType<DuckTimeNs> for DuckDb {
+    fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
+        DuckDbTypeWrapper(DuckDbType::TimeNs)
+    }
+}
+
+impl HasSqlType<DuckEnum> for DuckDb {
+    fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
+        DuckDbTypeWrapper(DuckDbType::Enum)
     }
 }
 
