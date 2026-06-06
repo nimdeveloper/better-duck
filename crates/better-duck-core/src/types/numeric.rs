@@ -27,8 +27,6 @@ use crate::ffi::{
 #[cfg(feature = "decimal")]
 use rust_decimal::Decimal;
 
-const MAX_SUPPORTED_I128: i128 = (i64::MAX as i128 + 1) * (u64::MAX as i128);
-
 // Macro to implement DuckDialect for primitive numeric types.
 macro_rules! impl_duck_dialect {
     ($rust_type:ty, $duck_type:expr, $to_duck_fn:expr, $from_duck_fn:expr) => {
@@ -99,27 +97,22 @@ impl_duck_append_able!(f32, duckdb_append_float, duckdb_bind_float);
 impl_duck_dialect!(f64, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, duckdb_create_double, duckdb_get_double);
 impl_duck_append_able!(f64, duckdb_append_double, duckdb_bind_double);
 
+/// Decode a DuckDB HUGEINT (two's-complement 128-bit) into an [`i128`].
+///
+/// DuckDB stores HUGEINT as a signed `i64` upper half (bits 127–64) and an
+/// unsigned `u64` lower half (bits 63–0): `value = upper * 2^64 + lower`.
+/// Shifting `upper` left by 64 and OR-ing the zero-extended `lower` half
+/// reconstructs the full two's-complement value for the entire `i128` range.
 fn i128_from_hugeint(hugeint: duckdb_hugeint) -> i128 {
-    let measure = u64::MAX as i128;
-    (hugeint.upper as i128) * measure + (hugeint.lower as i128)
+    (hugeint.upper as i128) << 64 | (hugeint.lower as i128)
 }
 
-fn hugeint_from_i128(hugeint: i128) -> duckdb_hugeint {
-    #[allow(clippy::manual_range_contains)]
-    if hugeint > MAX_SUPPORTED_I128 || hugeint < -MAX_SUPPORTED_I128 {
-        panic!("Unsupported! MAX:{}", MAX_SUPPORTED_I128); // TODO: Better error handling
-    }
-    let negative = hugeint < 0;
-    let hugeint = hugeint.abs();
-
-    let measure = u64::MAX as i128;
-    let mut value =
-        duckdb_hugeint { upper: (hugeint / measure) as i64, lower: (hugeint % measure) as u64 };
-    if negative {
-        value.lower = u64::MAX - value.lower;
-        value.upper = (!value.upper).wrapping_add((value.lower == 0) as i64);
-    }
-    value
+/// Encode an [`i128`] as a DuckDB HUGEINT.
+///
+/// Truncating `as u64` extracts the low 64 bits; an arithmetic right-shift of 64
+/// sign-extends the high bits into an `i64`.  The full `i128` range is supported.
+fn hugeint_from_i128(value: i128) -> duckdb_hugeint {
+    duckdb_hugeint { upper: (value >> 64) as i64, lower: value as u64 }
 }
 
 impl DuckDialect<duckdb_hugeint> for i128 {
@@ -131,8 +124,8 @@ impl DuckDialect<duckdb_hugeint> for i128 {
     }
 
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
-        // SAFETY: `hugeint_from_i128` returns a valid `duckdb_hugeint` for any i128
-        // within `MAX_SUPPORTED_I128` (panics outside that range).
+        // SAFETY: `hugeint_from_i128` converts any i128 to the correct duckdb_hugeint
+        // two's-complement layout. The full i128 range is supported without panicking.
         Ok(unsafe { duckdb_create_hugeint(hugeint_from_i128(*self)) })
     }
 }
