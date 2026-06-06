@@ -3,7 +3,7 @@
 //! These conversions operate on `duckdb_value` heap objects created by
 //! `duckdb_create_date` / `duckdb_create_time` / etc.  They are **not** used when
 //! reading values from data chunk vectors; for that path see
-//! [`crate::types::value::DuckValue::from_duckdb_vec`].
+//! `DuckValue::from_duckdb_vec` (see `value.rs`).
 
 use super::*;
 use crate::error::DuckDBConversionError;

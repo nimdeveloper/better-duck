@@ -4,7 +4,7 @@
 //!
 //! This crate provides:
 //! - A high-level [`connection::Connection`] for opening databases and executing SQL.
-//! - Low-level [`raw`] types (`RawConnection`, `DuckResult`, `DuckRow`) for advanced use.
+//! - Low-level raw types (`RawConnection`, `DuckResult`, `DuckRow`) for advanced use.
 //! - Type conversion traits ([`types::DuckDialect`], [`types::appendable::AppendAble`]) for
 //!   mapping between Rust types and DuckDB values.
 

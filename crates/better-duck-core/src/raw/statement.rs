@@ -182,7 +182,7 @@ impl Drop for Statement<'_> {
 
 /// A prepared statement that can be reset and re-executed with different bindings.
 ///
-/// Unlike [`Statement`], `CachedStatement` is not tied to a connection's lifetime.
+/// Unlike `Statement`, `CachedStatement` is not tied to a connection's lifetime.
 /// It remains valid as long as the underlying database is open.
 ///
 /// This type is used by Diesel statement cache

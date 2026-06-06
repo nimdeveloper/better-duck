@@ -3,7 +3,7 @@
 //! The Rust mirror type is `Vec<DuckValue>`, which lets callers work with any
 //! element type that DuckDB supports without needing separate monomorphisations
 //! for every element variety. Element conversion is handled by
-//! [`DuckValue::from`] / [`DuckValueRef::from`].
+//! `DuckValue::from` / `DuckValueRef::from`.
 
 use better_duck_core::types::{value::DuckValue, value_ref::DuckValueRef};
 use diesel::{

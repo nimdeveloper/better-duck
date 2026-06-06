@@ -1,4 +1,4 @@
-//! Ergonomic `From<T>` conversions into [`DuckValue`].
+//! Ergonomic `From<T>` conversions into `DuckValue`.
 //!
 //! These impls let you write `DuckValue::from(42i32)` or `"hello".into()` instead
 //! of constructing the enum variant by hand.
