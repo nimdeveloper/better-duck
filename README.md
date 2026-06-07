@@ -328,7 +328,8 @@ diesel::table! {
 | `DuckEnum` | `ENUM` | `String` |
 | `DuckList` | `LIST` | `Vec<DuckValue>` |
 
-> **Note:** date/time types in `better-duck-diesel` require the `chrono` feature (not enabled by default — add `features = ["chrono"]`).
+> [!NOTE]
+> date/time types in `better-duck-diesel` require the `chrono` feature (not enabled by default — add `features = ["chrono"]`).
 
 ---
 
