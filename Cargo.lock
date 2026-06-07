@@ -82,7 +82,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "better-duck-core"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "chrono",
  "criterion",
@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "better-duck-diesel"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "better-duck-core",
  "chrono",
