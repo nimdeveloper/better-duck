@@ -8,6 +8,7 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![MSRV: 1.96](https://img.shields.io/badge/rustc-1.96+-orange.svg)](#supported-platforms)
 
+> [!WARNING]
 > **Beta** — the API is settling. Breaking changes before `1.0` are possible; check the [changelog](CHANGELOG.md) before upgrading.
 
 ---
