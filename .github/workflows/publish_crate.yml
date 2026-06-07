@@ -101,7 +101,7 @@ jobs:
   # SLSA provenance
   generate_slsa_provenance:
     needs: [create_crate_artifact, publish]
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v1.9.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: "${{ needs.create_crate_artifact.outputs.crate_digest }}  ${{ needs.create_crate_artifact.outputs.crate_name }}-${{ needs.create_crate_artifact.outputs.crate_version }}.crate"
       upload-assets: true
