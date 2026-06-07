@@ -5,7 +5,9 @@ use better_duck_core::ffi::{
     duckdb_append_int32, duckdb_appender, duckdb_bind_int32, duckdb_prepared_statement,
 };
 use better_duck_core::{connection::Connection, types::appendable::AppendAble};
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion};
 
 /// A minimal two-integer row used for appender benchmarks.
 struct BenchRow(i32, i32);

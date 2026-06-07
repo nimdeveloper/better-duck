@@ -125,9 +125,11 @@ jobs:
       matrix:
         include:
           # Core crate
+          # compile-only: no bundled DuckDB → can't link+run tests on CI runners
           - name: core/no-default-features
             package: better-duck-core
             args: --no-default-features
+            cmd: check
           - name: core/bundled-only
             package: better-duck-core
             args: --no-default-features --features bundled
@@ -163,18 +165,18 @@ jobs:
         with:
           key: ${{ matrix.name }}
       - name: Check / test ${{ matrix.name }}
-        run: cargo test -p ${{ matrix.package }} ${{ matrix.args }}
+        run: cargo ${{ matrix.cmd || 'test' }} -p ${{ matrix.package }} ${{ matrix.args }}
 
   # MSRV
   msrv:
-    name: MSRV (Rust 1.82)
+    name: MSRV (Rust 1.96)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.100
+      - uses: dtolnay/rust-toolchain@1.96
       - uses: Swatinem/rust-cache@v2
         with:
-          key: msrv-1.82
+          key: msrv-1.96
       - name: Check workspace compiles on MSRV
         run: cargo check --workspace --features "chrono,decimal"
 

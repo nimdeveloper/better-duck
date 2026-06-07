@@ -39,7 +39,7 @@ use better_duck_core::{
 };
 use plotters::prelude::*;
 use serde::Serialize;
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 
 // Constants
 
@@ -129,7 +129,7 @@ fn gather_system_ctx(cli_version: Option<String>) -> SystemCtx {
     let cpu_brand =
         sys.cpus().first().map(|c| c.brand().to_owned()).unwrap_or_else(|| "unknown".to_owned());
 
-    let cpu_physical_cores = sys.physical_core_count().unwrap_or(0);
+    let cpu_physical_cores = System::physical_core_count().unwrap_or(0);
     let total_ram_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
     let os = System::long_os_version().unwrap_or_else(|| "unknown".to_owned());
 
@@ -161,7 +161,7 @@ fn gather_system_ctx(cli_version: Option<String>) -> SystemCtx {
 fn sample_rss_mb() -> f64 {
     let mut sys = System::new();
     let pid = Pid::from(std::process::id() as usize);
-    sys.refresh_process(pid);
+    sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
     sys.process(pid).map(|p| p.memory() as f64 / (1024.0 * 1024.0)).unwrap_or(0.0)
 }
 
