@@ -17,7 +17,7 @@
 
 Most Rust DuckDB bindings depend on Arrow or require a system-installed DuckDB library. `better-duck` takes a different approach:
 
-- **Bundled DuckDB** — ships with the DuckDB C library compiled in; no system package needed.
+- **Bundled DuckDB** — can ship with the DuckDB C library compiled in; no system package needed.
 - **No Arrow dependency** — columnar I/O is great for data pipelines, but most app-level OLAP code just needs rows. We skip the Arrow overhead entirely.
 - **Diesel ORM** — the `better-duck-diesel` crate is a full Diesel 2.3 backend, so your existing `table!` / query DSL code works without changes.
 - **Embedded-first** — designed to run inside Tauri desktop apps, iOS cross-builds, and other environments where you can't rely on a system library.
