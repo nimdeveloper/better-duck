@@ -1,9 +1,9 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/better-duck-core/src/types/numeric.rs`."><title>numeric.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="better_duck_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.96.0 (ac68faa20 2026-05-25)" data-channel="1.96.0" data-search-js="search-b5634cc7.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">better_duck_core/types/</div>numeric.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// The `AppendAble` and `DuckDialect` implementations accept raw FFI pointer parameters
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/better-duck-core/src/types/numeric.rs`."><title>numeric.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="better_duck_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.97.1 (8bab26f4f 2026-07-14)" data-channel="1.97.1" data-search-js="search-fd9372ac.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-fcd733ba.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">better_duck_core/types/</div>numeric.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// The `AppendAble` and `DuckDialect` implementations accept raw FFI pointer parameters
 <a href=#2 id=2 data-nosnippet>2</a>// by design. Implementations are responsible for passing valid pointers.
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="attr">#![allow(clippy::not_unsafe_ptr_arg_deref)]
 <a href=#4 id=4 data-nosnippet>4</a>
-<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>super::{DuckDBConversionError, DuckDialect};
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>crate::{
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use super</span>::{DuckDBConversionError, DuckDialect};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use crate</span>::{
 <a href=#7 id=7 data-nosnippet>7</a>    error::{Error, <span class="prelude-ty">Result</span>},
 <a href=#8 id=8 data-nosnippet>8</a>    ffi::{
 <a href=#9 id=9 data-nosnippet>9</a>        duckdb_create_decimal, duckdb_create_double, duckdb_create_float, duckdb_create_hugeint,
@@ -228,7 +228,7 @@
 <a href=#228 id=228 data-nosnippet>228</a>
 <a href=#229 id=229 data-nosnippet>229</a>    <span class="attr">#[test]
 <a href=#230 id=230 data-nosnippet>230</a>    </span><span class="kw">fn </span>test_i8_conversion() {
-<a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>value: i8 = <span class="number">42</span>;
 <a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
 <a href=#234 id=234 data-nosnippet>234</a>        <span class="kw">let </span>converted_value = i8::from_duck(duck_value).unwrap();
@@ -238,7 +238,7 @@
 <a href=#238 id=238 data-nosnippet>238</a>    }
 <a href=#239 id=239 data-nosnippet>239</a>    <span class="attr">#[test]
 <a href=#240 id=240 data-nosnippet>240</a>    </span><span class="kw">fn </span>test_u8_conversion() {
-<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span>value: u8 = <span class="number">42</span>;
 <a href=#243 id=243 data-nosnippet>243</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
 <a href=#244 id=244 data-nosnippet>244</a>        <span class="kw">let </span>converted_value = u8::from_duck(duck_value).unwrap();
@@ -247,7 +247,7 @@
 <a href=#247 id=247 data-nosnippet>247</a>    }
 <a href=#248 id=248 data-nosnippet>248</a>    <span class="attr">#[test]
 <a href=#249 id=249 data-nosnippet>249</a>    </span><span class="kw">fn </span>test_i16_conversion() {
-<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">let </span>value: i16 = <span class="number">42</span>;
 <a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
 <a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span>converted_value = i16::from_duck(duck_value).unwrap();
@@ -256,7 +256,7 @@
 <a href=#256 id=256 data-nosnippet>256</a>    }
 <a href=#257 id=257 data-nosnippet>257</a>    <span class="attr">#[test]
 <a href=#258 id=258 data-nosnippet>258</a>    </span><span class="kw">fn </span>test_u16_conversion() {
-<a href=#259 id=259 data-nosnippet>259</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#259 id=259 data-nosnippet>259</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">let </span>value: u16 = <span class="number">42</span>;
 <a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
 <a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">let </span>converted_value = u16::from_duck(duck_value).unwrap();
@@ -265,7 +265,7 @@
 <a href=#265 id=265 data-nosnippet>265</a>    }
 <a href=#266 id=266 data-nosnippet>266</a>    <span class="attr">#[test]
 <a href=#267 id=267 data-nosnippet>267</a>    </span><span class="kw">fn </span>test_i32_conversion() {
-<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">let </span>value: i32 = <span class="number">42</span>;
 <a href=#270 id=270 data-nosnippet>270</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
 <a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">let </span>converted_value = i32::from_duck(duck_value).unwrap();
@@ -274,7 +274,7 @@
 <a href=#274 id=274 data-nosnippet>274</a>    }
 <a href=#275 id=275 data-nosnippet>275</a>    <span class="attr">#[test]
 <a href=#276 id=276 data-nosnippet>276</a>    </span><span class="kw">fn </span>test_u32_conversion() {
-<a href=#277 id=277 data-nosnippet>277</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#277 id=277 data-nosnippet>277</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">let </span>value: u32 = <span class="number">42</span>;
 <a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
 <a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">let </span>converted_value = u32::from_duck(duck_value).unwrap();
@@ -283,7 +283,7 @@
 <a href=#283 id=283 data-nosnippet>283</a>    }
 <a href=#284 id=284 data-nosnippet>284</a>    <span class="attr">#[test]
 <a href=#285 id=285 data-nosnippet>285</a>    </span><span class="kw">fn </span>test_i64_conversion() {
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">let </span>value: i64 = <span class="number">42</span>;
 <a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
 <a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">let </span>converted_value = i64::from_duck(duck_value).unwrap();
@@ -292,7 +292,7 @@
 <a href=#292 id=292 data-nosnippet>292</a>    }
 <a href=#293 id=293 data-nosnippet>293</a>    <span class="attr">#[test]
 <a href=#294 id=294 data-nosnippet>294</a>    </span><span class="kw">fn </span>test_u64_conversion() {
-<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">let </span>value: u64 = <span class="number">42</span>;
 <a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
 <a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">let </span>converted_value = u64::from_duck(duck_value).unwrap();
@@ -301,7 +301,7 @@
 <a href=#301 id=301 data-nosnippet>301</a>    }
 <a href=#302 id=302 data-nosnippet>302</a>    <span class="attr">#[test]
 <a href=#303 id=303 data-nosnippet>303</a>    </span><span class="kw">fn </span>test_f32_conversion() {
-<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>value: f32 = <span class="number">42.0</span>;
 <a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
 <a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span>converted_value = f32::from_duck(duck_value).unwrap();
@@ -310,7 +310,7 @@
 <a href=#310 id=310 data-nosnippet>310</a>    }
 <a href=#311 id=311 data-nosnippet>311</a>    <span class="attr">#[test]
 <a href=#312 id=312 data-nosnippet>312</a>    </span><span class="kw">fn </span>test_f64_conversion() {
-<a href=#313 id=313 data-nosnippet>313</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#313 id=313 data-nosnippet>313</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">let </span>value: f64 = <span class="number">42.0</span>;
 <a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
 <a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>converted_value = f64::from_duck(duck_value).unwrap();
@@ -319,7 +319,7 @@
 <a href=#319 id=319 data-nosnippet>319</a>    }
 <a href=#320 id=320 data-nosnippet>320</a>    <span class="attr">#[test]
 <a href=#321 id=321 data-nosnippet>321</a>    </span><span class="kw">fn </span>test_i128_conversion() {
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#323 id=323 data-nosnippet>323</a>
 <a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>value: i128 = <span class="number">5</span>;
 <a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
@@ -348,7 +348,7 @@
 <a href=#348 id=348 data-nosnippet>348</a>    <span class="attr">#[cfg(feature = <span class="string">"decimal"</span>)]
 <a href=#349 id=349 data-nosnippet>349</a>    #[test]
 <a href=#350 id=350 data-nosnippet>350</a>    </span><span class="kw">fn </span>test_decimal_conversion() {
-<a href=#351 id=351 data-nosnippet>351</a>        <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#351 id=351 data-nosnippet>351</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#352 id=352 data-nosnippet>352</a>
 <a href=#353 id=353 data-nosnippet>353</a>        <span class="kw">let </span>value = Decimal::from_i128_with_scale(-<span class="number">0x0000_0000_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF</span>, <span class="number">0</span>);
 <a href=#354 id=354 data-nosnippet>354</a>        <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
