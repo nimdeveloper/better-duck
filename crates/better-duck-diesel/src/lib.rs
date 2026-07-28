@@ -12,6 +12,9 @@ mod bind_collector;
 pub mod connection;
 /// Internal helpers (transaction manager stub).
 pub mod helpers;
+/// A shared-database `r2d2` connection manager, coexisting with `diesel::r2d2::ConnectionManager`.
+#[cfg(feature = "r2d2")]
+pub mod pool;
 pub mod row;
 pub mod types;
 
