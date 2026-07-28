@@ -12,6 +12,9 @@ pub extern crate libduckdb_sys;
 /// Re-export of the raw `libduckdb_sys` FFI bindings.
 pub use libduckdb_sys as ffi;
 
+/// Async facade over [`connection::Connection`], gated by the `async` feature.
+#[cfg(feature = "async")]
+pub mod asynchronous;
 /// DuckDB database configuration.
 pub mod config;
 /// High-level DuckDB connection type.
@@ -21,12 +24,24 @@ pub mod database;
 /// Error types returned by this crate.
 pub mod error;
 mod helpers;
+/// An `r2d2` connection pool backed by a shared [`Database`](database::Database).
+#[cfg(feature = "pool")]
+pub mod pool;
 mod raw;
 /// An owned, thread-safe, fully materialized query result.
 pub mod result_set;
 /// DuckDB type system and value conversion traits.
 pub mod types;
 
+/// Async facade over [`connection::Connection`].
+#[cfg(feature = "async")]
+pub use asynchronous::AsyncConnection;
+/// Async facade over [`Database`].
+#[cfg(feature = "async")]
+pub use asynchronous::AsyncDatabase;
+/// Async facade over [`pool::Pool`].
+#[cfg(all(feature = "async", feature = "pool"))]
+pub use asynchronous::AsyncPool;
 
 /// DuckDB database configuration.
 pub use config::{AccessMode, Config, DefaultNullOrder, DefaultOrder};
