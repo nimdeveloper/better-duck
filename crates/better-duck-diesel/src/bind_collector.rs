@@ -101,11 +101,11 @@ impl MoveableBindCollector<DuckDb> for DuckDbBindCollector<'_> {
         self.binds.extend(from.binds.iter().cloned().map(DuckValueRef::from));
     }
 
-    #[doc = " Push bind data as debug representation"]
+    /// Pushes each bind's `Debug` representation, used by `debug_query`/`EXPLAIN` output.
     fn push_debug_binds<'a, 'b>(
-        _bind_data: &Self::BindData,
-        _f: &'a mut Vec<Box<dyn std::fmt::Debug + 'b>>,
+        bind_data: &Self::BindData,
+        f: &'a mut Vec<Box<dyn std::fmt::Debug + 'b>>,
     ) {
-        todo!()
+        f.extend(bind_data.binds.iter().map(|b| Box::new(b.clone()) as Box<dyn std::fmt::Debug>));
     }
 }

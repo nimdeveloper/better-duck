@@ -43,6 +43,24 @@ fn parse_db_url(url: &str) -> &str {
     url.strip_prefix("duckdb://").unwrap_or(url)
 }
 
+impl DuckDbConnection {
+    /// Wraps an existing [`better_duck_core::connection::Connection`] as a Diesel
+    /// connection.
+    ///
+    /// Use this together with [`better_duck_core::database::Database::connect`]
+    /// to build a connection pool where every connection shares one database —
+    /// see `crate::pool::SharedDuckDbConnectionManager` (requires the `r2d2`
+    /// feature; not linked here since it's conditionally compiled).
+    pub fn from_core(inner: better_duck_core::connection::Connection) -> DuckDbConnection {
+        DuckDbConnection {
+            inner,
+            transaction_manager: AnsiTransactionManager::default(),
+            instrumentation: get_default_instrumentation(),
+            statement_cache: StatementCache::new(),
+        }
+    }
+}
+
 // Diesel sealed trait
 
 impl ConnectionSealed for DuckDbConnection {}

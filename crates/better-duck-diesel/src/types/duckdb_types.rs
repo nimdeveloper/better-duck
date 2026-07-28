@@ -40,3 +40,10 @@ duck_sql_type!(
     DuckEnum,
     "DuckDB `ENUM` — a categorical string type backed by a dictionary encoding."
 );
+duck_sql_type!(DuckStruct, "DuckDB `STRUCT` — named heterogeneous fields with a fixed schema.");
+duck_sql_type!(DuckMap, "DuckDB `MAP` — a dynamic key\u{2192}value collection.");
+duck_sql_type!(DuckUnion, "DuckDB `UNION` — a tagged sum type; holds the active member value.");
+duck_sql_type!(DuckArray, "DuckDB `ARRAY` — a fixed-length array of a uniform element type.");
+duck_sql_type!(DuckUuid, "DuckDB `UUID`.");
+duck_sql_type!(DuckBit, "DuckDB `BIT` — a bitstring.");
+duck_sql_type!(DuckBignum, "DuckDB `BIGNUM` — an arbitrary-precision integer.");
