@@ -69,6 +69,32 @@ impl RawDatabase {
         }
         Ok(RawDatabase(db))
     }
+
+    /// Opens a database at the given path with the specified config.
+    ///
+    /// Pass a path of `":memory:"` for an in-memory database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database cannot be opened.
+    pub(crate) fn open_with_flags(
+        c_path: &CStr,
+        config: Config,
+    ) -> Result<RawDatabase> {
+        // SAFETY: `c_path` is a valid null-terminated C string. `db` and `c_err` are valid
+        // output pointers. On error we free `c_err` via `duckdb_free`.
+        unsafe {
+            let mut db: duckdb_database = ptr::null_mut();
+            let mut c_err = std::ptr::null_mut();
+            let r = duckdb_open_ext(c_path.as_ptr(), &mut db, config.duckdb_config(), &mut c_err);
+            if r != DuckDBSuccess {
+                let msg = Some(CStr::from_ptr(c_err).to_string_lossy().to_string());
+                duckdb_free(c_err as *mut c_void);
+                return Err(Error::DuckDBFailure(FFIError::new(r), msg));
+            }
+            RawDatabase::new(db)
+        }
+    }
 }
 // SAFETY: The DuckDB database handle is internally reference-counted and thread-safe.
 // Multiple connections (each on its own thread) may share the same database handle.
@@ -146,7 +172,7 @@ impl RawConnection {
     ///
     /// Returns an error if the connection cannot be established.
     #[inline]
-    fn new(db: Arc<RawDatabase>) -> Result<RawConnection> {
+    pub(crate) fn new(db: Arc<RawDatabase>) -> Result<RawConnection> {
         let mut con: duckdb_connection = ptr::null_mut();
         // SAFETY: `db.0` is a valid open duckdb_database; `con` is a valid output pointer.
         let r = unsafe { duckdb_connect(db.0, &mut con) };
@@ -171,19 +197,7 @@ impl RawConnection {
         c_path: &CStr,
         config: Config,
     ) -> Result<RawConnection> {
-        // SAFETY: `c_path` is a valid null-terminated C string. `db` and `c_err` are valid
-        // output pointers. On error we free `c_err` via `duckdb_free`.
-        unsafe {
-            let mut db: duckdb_database = ptr::null_mut();
-            let mut c_err = std::ptr::null_mut();
-            let r = duckdb_open_ext(c_path.as_ptr(), &mut db, config.duckdb_config(), &mut c_err);
-            if r != DuckDBSuccess {
-                let msg = Some(CStr::from_ptr(c_err).to_string_lossy().to_string());
-                duckdb_free(c_err as *mut c_void);
-                return Err(Error::DuckDBFailure(FFIError::new(r), msg));
-            }
-            RawConnection::new(Arc::new(RawDatabase::new(db)?))
-        }
+        RawConnection::new(Arc::new(RawDatabase::open_with_flags(c_path, config)?))
     }
 
     /// Closes the connection, releasing the underlying DuckDB handle.

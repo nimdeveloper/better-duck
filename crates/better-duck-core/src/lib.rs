@@ -12,9 +12,12 @@ pub extern crate libduckdb_sys;
 /// Re-export of the raw `libduckdb_sys` FFI bindings.
 pub use libduckdb_sys as ffi;
 
-mod config;
+/// DuckDB database configuration.
+pub mod config;
 /// High-level DuckDB connection type.
 pub mod connection;
+/// A shared, cloneable handle to an open DuckDB database.
+pub mod database;
 /// Error types returned by this crate.
 pub mod error;
 mod helpers;
@@ -22,6 +25,13 @@ mod raw;
 /// DuckDB type system and value conversion traits.
 pub mod types;
 
+
+/// DuckDB database configuration.
+pub use config::{AccessMode, Config, DefaultNullOrder, DefaultOrder};
+/// A shared, cloneable handle to an open DuckDB database.
+pub use database::Database;
+/// A DuckDB appender for bulk-inserting rows into a table.
+pub use raw::appender::Appender;
 /// A fully iterable DuckDB query result.
 pub use raw::result::DuckResult;
 /// A single row from a DuckDB query result.

@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::{
     config::Config,
+    database::Database,
     error::Result,
     helpers::path::path_to_cstring,
     raw::{appender::Appender, connection::RawConnection, result::DuckResult},
@@ -23,6 +24,13 @@ use crate::{
 /// conn.execute_batch("INSERT INTO t VALUES (1)").expect("insert");
 /// ```
 pub struct Connection(RawConnection);
+
+impl Connection {
+    /// Wraps an existing [`RawConnection`], for use by [`Database::connect`].
+    pub(crate) fn from_raw(raw: RawConnection) -> Connection {
+        Connection(raw)
+    }
+}
 
 // File-db implementation
 impl Connection {
@@ -208,6 +216,28 @@ impl Connection {
     #[allow(private_interfaces)]
     pub fn db(&self) -> &RawConnection {
         &self.0
+    }
+
+    /// Opens a second, independent connection to the same database as this one.
+    ///
+    /// Cheap: one `duckdb_connect` call, no file I/O. See [`Database::connect`] for
+    /// details on what "the same database" means for `:memory:` connections.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection cannot be established.
+    #[inline]
+    pub fn try_clone(&self) -> Result<Connection> {
+        self.0.try_clone().map(Connection)
+    }
+
+    /// Returns a shareable handle to the database backing this connection.
+    ///
+    /// Use [`Database::connect`] to open further connections to the same database —
+    /// including, for `:memory:` databases, connections that observe the same data.
+    #[inline]
+    pub fn database(&self) -> Database {
+        Database::from_raw(std::sync::Arc::clone(&self.0.db))
     }
 }
 
