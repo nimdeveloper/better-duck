@@ -102,7 +102,13 @@ pub enum Error {
 
     /// An unexpected error with no more specific classification.
     #[allow(non_camel_case_types)]
-    UNKNOWN(Box<dyn ::std::error::Error>),
+    UNKNOWN(Box<dyn ::std::error::Error + Send + Sync + 'static>),
+
+    /// A background blocking task panicked or was cancelled before it produced a result.
+    BackgroundTaskFailed(String),
+
+    /// A connection pool operation failed (checkout timeout, manager error).
+    Pool(String),
 }
 
 /// A typedef of the result returned by many methods.
@@ -234,6 +240,8 @@ impl fmt::Display for Error {
                 DuckDBConversionError::PrecisionLoss(ref msg) => write!(f, "Precision loss: {msg}"),
             },
             Error::UNKNOWN(e) => write!(f, "Unknown error: {e}"),
+            Error::BackgroundTaskFailed(ref msg) => write!(f, "Background task failed: {msg}"),
+            Error::Pool(ref msg) => write!(f, "Connection pool error: {msg}"),
         }
     }
 }
@@ -263,6 +271,7 @@ impl error::Error for Error {
             // Error::FromSqlConversionFailure(_, _, ref err)
             Error::ToSqlConversionFailure(ref err) => Some(&**err),
             Error::UNKNOWN(e) => Some(e.as_ref()),
+            Error::BackgroundTaskFailed(_) | Error::Pool(_) => None,
         }
     }
 }
