@@ -65,7 +65,7 @@ impl Config {
         Ok(self)
     }
 
-    /// Access mode of the database ([AUTOMATIC], READ_ONLY or READ_WRITE)
+    /// Access mode of the database (`AUTOMATIC`, `READ_ONLY`, or `READ_WRITE`)
     #[allow(unused)]
     pub fn access_mode(
         mut self,
@@ -85,7 +85,7 @@ impl Config {
         Ok(self)
     }
 
-    /// The order type used when none is specified ([ASC] or DESC)
+    /// The order type used when none is specified (`ASC` or `DESC`)
     #[allow(unused)]
     pub fn default_order(
         mut self,
@@ -95,7 +95,7 @@ impl Config {
         Ok(self)
     }
 
-    /// Null ordering used when none is specified ([NULLS_FIRST] or NULLS_LAST)
+    /// Null ordering used when none is specified (`NULLS_FIRST` or `NULLS_LAST`)
     #[allow(unused)]
     pub fn default_null_order(
         mut self,
@@ -202,6 +202,12 @@ impl Config {
         Ok(())
     }
 }
+
+// SAFETY: `duckdb_config` is only mutated through `&mut self` methods (`set`), so no
+// two threads can touch it concurrently even after a move. DuckDB does not associate
+// the config handle with the thread that created it before it is consumed by
+// `duckdb_open_ext`/`duckdb_connect`.
+unsafe impl Send for Config {}
 
 impl Drop for Config {
     fn drop(&mut self) {

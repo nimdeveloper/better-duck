@@ -11,7 +11,7 @@ use std::ptr;
 ///
 /// Values are accessible by column index via [`get_idx`](DuckRow::get_idx)
 /// or by column name via [`get`](DuckRow::get).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DuckRow(Vec<DuckValue>, Box<[Box<str>]>);
 
 impl DuckRow {
