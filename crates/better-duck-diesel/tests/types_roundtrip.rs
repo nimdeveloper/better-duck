@@ -703,3 +703,201 @@ fn rt_enum_nullable_null() {
         diesel::sql_query("SELECT val FROM t_enum LIMIT 1").get_result(&mut conn).unwrap();
     assert_eq!(row.val, None);
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// Tests: non-chrono DATE (date_native)
+// ══════════════════════════════════════════════════════════════════════════
+
+#[cfg(not(feature = "chrono"))]
+#[test]
+fn rt_date_native() {
+    use better_duck_core::types::date_native::DuckDate;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = diesel::sql_types::Date)]
+        val: DuckDate,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_date_native (val DATE NOT NULL)");
+    conn.batch_execute("INSERT INTO t_date_native VALUES ('2024-06-15')").unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_date_native LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(row.val, DuckDate { year: 2024, month: 6, day: 15 });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Tests: STRUCT / MAP / UNION / ARRAY (via sql_query)
+// ══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn rt_struct_fields() {
+    use better_duck_core::types::value::DuckValue;
+    use better_duck_diesel::sql_types::DuckStruct;
+    use std::collections::HashMap;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckStruct)]
+        val: HashMap<String, DuckValue>,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_struct (val STRUCT(x INTEGER, y VARCHAR))");
+    conn.batch_execute("INSERT INTO t_struct VALUES (ROW(1, 'a'))").unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_struct LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(row.val.get("x"), Some(&DuckValue::Int(1)));
+    assert_eq!(row.val.get("y"), Some(&DuckValue::text("a")));
+}
+
+#[test]
+fn rt_struct_bind_and_read() {
+    use better_duck_core::types::value::DuckValue;
+    use better_duck_diesel::sql_types::DuckStruct;
+    use std::collections::HashMap;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckStruct)]
+        val: HashMap<String, DuckValue>,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_struct2 (id INTEGER, val STRUCT(x INTEGER))");
+    let fields: HashMap<String, DuckValue> = HashMap::from([("x".to_string(), DuckValue::Int(42))]);
+    diesel::sql_query("INSERT INTO t_struct2 VALUES ($1, $2)")
+        .bind::<diesel::sql_types::Integer, _>(1i32)
+        .bind::<DuckStruct, _>(&fields)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_struct2 LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(row.val.get("x"), Some(&DuckValue::Int(42)));
+}
+
+#[test]
+fn rt_map_entries() {
+    use better_duck_core::types::value::DuckValue;
+    use better_duck_diesel::sql_types::DuckMap;
+    use std::collections::HashMap;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckMap)]
+        val: HashMap<DuckValue, DuckValue>,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_map (val MAP(INTEGER, VARCHAR))");
+    conn.batch_execute("INSERT INTO t_map VALUES (MAP {1: 'one'})").unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_map LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(row.val.get(&DuckValue::Int(1)), Some(&DuckValue::text("one")));
+}
+
+#[test]
+fn rt_union_active_member() {
+    use better_duck_core::types::value::DuckValue;
+    use better_duck_diesel::sql_types::DuckUnion;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckUnion)]
+        val: Box<DuckValue>,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_union (val UNION(n INTEGER, s VARCHAR))");
+    conn.batch_execute("INSERT INTO t_union VALUES (union_value(n := 7))").unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_union LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(*row.val, DuckValue::Int(7));
+}
+
+#[test]
+fn rt_array_elements() {
+    use better_duck_core::types::value::DuckValue;
+    use better_duck_diesel::sql_types::DuckArray;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckArray)]
+        val: Vec<DuckValue>,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_array (val INTEGER[3])");
+    conn.batch_execute("INSERT INTO t_array VALUES ([1, 2, 3])").unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_array LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(row.val, vec![DuckValue::Int(1), DuckValue::Int(2), DuckValue::Int(3)]);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Tests: UUID / BIT / BIGNUM (via sql_query)
+// ══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn rt_uuid_bind_and_read() {
+    use better_duck_core::types::uuid::DuckUuid;
+    use better_duck_diesel::sql_types::DuckUuid as DuckUuidTy;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckUuidTy)]
+        val: DuckUuid,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_uuid (id INTEGER, val UUID)");
+    let value = DuckUuid(0x1234_5678_9abc_def0_0fed_cba9_8765_4321);
+    diesel::sql_query("INSERT INTO t_uuid VALUES ($1, $2)")
+        .bind::<diesel::sql_types::Integer, _>(1i32)
+        .bind::<DuckUuidTy, _>(value)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_uuid LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(row.val, value);
+}
+
+#[test]
+fn rt_bit_bind_and_read() {
+    use better_duck_core::types::bit::DuckBit;
+    use better_duck_diesel::sql_types::DuckBit as DuckBitTy;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckBitTy)]
+        val: DuckBit,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_bit (id INTEGER, val BIT)");
+    let value = DuckBit(vec![0u8, 0b1010_0000]);
+    diesel::sql_query("INSERT INTO t_bit VALUES ($1, $2)")
+        .bind::<diesel::sql_types::Integer, _>(1i32)
+        .bind::<DuckBitTy, _>(value.clone())
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_bit LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(row.val, value);
+}
+
+#[test]
+fn rt_bignum_bind_and_read() {
+    use better_duck_core::types::bignum::DuckBignum;
+    use better_duck_diesel::sql_types::DuckBignum as DuckBignumTy;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckBignumTy)]
+        val: DuckBignum,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_bignum (id INTEGER, val BIGNUM)");
+    let value = DuckBignum::new(vec![0xFF, 0x01], false);
+    diesel::sql_query("INSERT INTO t_bignum VALUES ($1, $2)")
+        .bind::<diesel::sql_types::Integer, _>(1i32)
+        .bind::<DuckBignumTy, _>(value.clone())
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_bignum LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(row.val, value);
+}

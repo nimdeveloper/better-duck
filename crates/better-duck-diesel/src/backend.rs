@@ -3,8 +3,9 @@
 use super::query_builder::DuckDbQueryBuilder;
 pub use crate::bind_collector::DuckDbBindCollector;
 use crate::types::duckdb_types::{
-    DuckEnum, DuckHugeInt, DuckInterval, DuckList, DuckTimeNs, DuckTimeTz, DuckTimestamptz,
-    DuckTinyInt, DuckUBigInt, DuckUHugeInt, DuckUInt, DuckUSmallInt, DuckUTinyInt,
+    DuckArray, DuckBignum, DuckBit, DuckEnum, DuckHugeInt, DuckInterval, DuckList, DuckMap,
+    DuckStruct, DuckTimeNs, DuckTimeTz, DuckTimestamptz, DuckTinyInt, DuckUBigInt, DuckUHugeInt,
+    DuckUInt, DuckUSmallInt, DuckUTinyInt, DuckUnion, DuckUuid,
 };
 use better_duck_core::types::value_ref::DuckValueRef;
 use better_duck_core::types::Type as DuckDbType;
@@ -257,6 +258,48 @@ impl HasSqlType<DuckInterval> for DuckDb {
 impl HasSqlType<DuckList> for DuckDb {
     fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
         DuckDbTypeWrapper(DuckDbType::List)
+    }
+}
+
+impl HasSqlType<DuckStruct> for DuckDb {
+    fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
+        DuckDbTypeWrapper(DuckDbType::Struct)
+    }
+}
+
+impl HasSqlType<DuckMap> for DuckDb {
+    fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
+        DuckDbTypeWrapper(DuckDbType::Map)
+    }
+}
+
+impl HasSqlType<DuckUnion> for DuckDb {
+    fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
+        DuckDbTypeWrapper(DuckDbType::Union(Box::new(DuckDbType::Any)))
+    }
+}
+
+impl HasSqlType<DuckArray> for DuckDb {
+    fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
+        DuckDbTypeWrapper(DuckDbType::Array(Box::new([DuckDbType::Any])))
+    }
+}
+
+impl HasSqlType<DuckUuid> for DuckDb {
+    fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
+        DuckDbTypeWrapper(DuckDbType::Uuid)
+    }
+}
+
+impl HasSqlType<DuckBit> for DuckDb {
+    fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
+        DuckDbTypeWrapper(DuckDbType::Bit)
+    }
+}
+
+impl HasSqlType<DuckBignum> for DuckDb {
+    fn metadata(_: &mut Self::MetadataLookup) -> DuckDbTypeWrapper {
+        DuckDbTypeWrapper(DuckDbType::Bignum)
     }
 }
 

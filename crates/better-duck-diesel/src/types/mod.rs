@@ -13,17 +13,30 @@ use crate::backend::DuckDb;
 /// Chrono `FromSql`/`ToSql` implementations for date/time types.
 #[cfg(feature = "chrono")]
 pub mod date_chrono;
+/// Non-chrono `FromSql`/`ToSql` implementations for date/time types.
+#[cfg(not(feature = "chrono"))]
+pub mod date_native;
 
-// TODO: enable date_native for non-chrono date/time FromSql/ToSql (currently requires chrono)
-// #[cfg(not(feature = "chrono"))]
-// pub mod date_native;
-
+/// `FromSql`/`ToSql` implementations for DuckDB `ARRAY`.
+pub mod array;
+/// `FromSql`/`ToSql` implementation for DuckDB `BIGNUM`.
+pub mod bignum;
 /// `FromSql`/`ToSql` implementations for `BLOB` / `Binary`.
 pub mod binary;
+/// `FromSql`/`ToSql` implementation for DuckDB `BIT`.
+pub mod bit;
+/// `FromSql`/`ToSql` implementations for DuckDB `STRUCT`.
+pub mod duck_struct;
 /// `FromSql`/`ToSql` implementations for DuckDB `LIST`.
 pub mod list;
+/// `FromSql`/`ToSql` implementations for DuckDB `MAP`.
+pub mod map;
 /// `FromSql`/`ToSql` implementations for all numeric types.
 pub mod numeric;
+/// `FromSql`/`ToSql` implementations for DuckDB `UNION`.
+pub mod union;
+/// `FromSql`/`ToSql` implementation for DuckDB `UUID`.
+pub mod uuid;
 /// `FromSql`/`ToSql` implementations for `VARCHAR` / `Text`.
 pub mod varchar;
 
