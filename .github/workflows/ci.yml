@@ -37,8 +37,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run Clippy
-        # buildtime_bindgen requires LLVM; skip it in CI
-        run: cargo clippy --all-targets --features "chrono,decimal,json,parquet,r2d2" -- -D warnings
+        # buildtime_bindgen requires LLVM; skip it in CI. --workspace is required, and
+        # r2d2 (a better-duck-diesel-only feature) must use pkg/feature syntax: cargo
+        # validates an unqualified --features list against the first workspace member
+        # (better-duck-core), which does not have r2d2 (it has pool instead).
+        run: cargo clippy --workspace --all-targets --features "chrono,decimal,json,parquet,async,pool,better-duck-diesel/r2d2" -- -D warnings
 
   # Documentation
   docs:
@@ -51,7 +54,7 @@ jobs:
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --workspace --no-deps --features "chrono,decimal"
+        run: cargo doc --workspace --no-deps --features "chrono,decimal,async,pool"
 
   # Tests — Linux (default)
   test_linux:
@@ -62,7 +65,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
-        run: cargo test --workspace --verbose
+        # Scoped per-package, not `--workspace`: better-duck-core defaults to
+        # chrono=on, better-duck-diesel defaults to chrono=off. A `--workspace`
+        # build unifies the shared better-duck-core dependency to chrono=on (since
+        # core is also tested directly with its own defaults), which does not match
+        # what diesel's non-chrono code (compiled for diesel's own chrono=off) expects.
+        run: |
+          cargo test -p better-duck-core --verbose
+          cargo test -p better-duck-diesel --verbose
 
   # Tests — Linux with chrono
   test_linux_chrono:
@@ -84,7 +94,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run doctests
-        run: cargo test --workspace --doc
+        run: cargo test --workspace --doc --features "chrono,decimal,async,pool"
 
   # Tests — Windows
   test_windows:
@@ -95,7 +105,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
-        run: cargo test --workspace --verbose
+        # Scoped per-package — see the comment on the Linux job for why.
+        run: |
+          cargo test -p better-duck-core --verbose
+          cargo test -p better-duck-diesel --verbose
 
   # Tests — macOS + iOS cross-build
   test_macos_and_ios_build:
@@ -106,7 +119,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run tests on macOS
-        run: cargo test --workspace --verbose
+        # Scoped per-package — see the comment on the Linux job for why.
+        run: |
+          cargo test -p better-duck-core --verbose
+          cargo test -p better-duck-diesel --verbose
       - name: Add iOS targets
         run: |
           rustup target add aarch64-apple-ios
@@ -158,6 +174,20 @@ jobs:
           - name: diesel/all
             package: better-duck-diesel
             args: --features "chrono,decimal,r2d2"
+          - name: core/async
+            package: better-duck-core
+            args: --features async
+          - name: core/pool
+            package: better-duck-core
+            args: --features pool
+          - name: core/async-pool
+            package: better-duck-core
+            args: --features "async,pool"
+          # compile-only: cfg-correctness of async/pool without linking DuckDB
+          - name: core/no-default-async-pool
+            package: better-duck-core
+            args: --no-default-features --features "async,pool"
+            cmd: check
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -178,7 +208,7 @@ jobs:
         with:
           key: msrv-1.96
       - name: Check workspace compiles on MSRV
-        run: cargo check --workspace --features "chrono,decimal"
+        run: cargo check --workspace --features "chrono,decimal,async,pool"
 
   # Security audit
   audit:
@@ -209,7 +239,7 @@ jobs:
         run: cargo install cargo-llvm-cov --locked
       - name: Generate coverage report
         run: |
-          cargo llvm-cov --workspace --features "chrono,decimal" \
+          cargo llvm-cov --workspace --features "chrono,decimal,async,pool" \
             --lcov --output-path lcov.info
       - name: Upload to Codecov
         uses: codecov/codecov-action@v7
