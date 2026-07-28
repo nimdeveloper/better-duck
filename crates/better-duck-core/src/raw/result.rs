@@ -2,6 +2,7 @@ use std::{
     cell::OnceCell,
     ffi::CStr,
     ops::{Deref, DerefMut},
+    sync::Arc,
 };
 
 use crate::ffi::{duckdb_column_count, duckdb_column_name, duckdb_destroy_result, DUCKDB_TYPE};
@@ -28,17 +29,28 @@ use super::data_chunk::DataChunk;
 pub struct DuckResult {
     res: ffi::duckdb_result,
     chunk: Option<DataChunk>,
-    /// Owned column names, populated once on construction.
-    column_names: OnceCell<Box<[Box<str>]>>,
+    /// Owned column names, populated once on construction. `Arc`-shared so every
+    /// [`DuckRow`] built from this result clones it in O(1) instead of re-allocating
+    /// the whole column-name array per row.
+    column_names: OnceCell<Arc<[Box<str>]>>,
     column_types: Box<[DUCKDB_TYPE]>,
     /// Number of columns in the result.
     pub col_count: u64,
-    /// Rows already pulled from the underlying result, enabling [`rewind`](DuckResult::rewind).
+    /// Rows already pulled from the underlying result. Only populated once
+    /// [`enable_rewind`](DuckResult::enable_rewind) has been called — plain forward
+    /// iteration (the common case) never touches this, so it costs nothing unless
+    /// a caller opts in.
     cache: Vec<DuckRow>,
     /// Read position into `cache` consulted by the `Iterator` implementation.
     cursor: usize,
     /// `true` once the underlying result has yielded its last row.
     exhausted: bool,
+    /// Set by [`enable_rewind`](DuckResult::enable_rewind); gates whether `next()`
+    /// clones each row into `cache`.
+    rewind_enabled: bool,
+    /// A single-row lookahead buffer for [`exists`](DuckResult::exists), independent
+    /// of `cache` — peeking a row must work whether or not rewind support is enabled.
+    peeked: Option<DuckRow>,
 }
 
 impl DuckResult {
@@ -59,6 +71,8 @@ impl DuckResult {
             cache: Vec::new(),
             cursor: 0,
             exhausted: false,
+            rewind_enabled: false,
+            peeked: None,
         };
         res.resolve_columns_name().expect("failed to resolve column names");
         res.resolve_columns_types().expect("failed to resolve column types");
@@ -119,7 +133,7 @@ impl DuckResult {
             .collect::<Result<Vec<Box<str>>>>()?;
 
         self.column_names
-            .set(names.into_boxed_slice())
+            .set(Arc::from(names))
             .map_err(|_| Error::UNKNOWN("column names already set".into()))
     }
 
@@ -183,7 +197,8 @@ impl DuckResult {
     ///
     /// Returns an error if the chunk is not available or value conversion fails.
     pub fn current(&mut self) -> Result<DuckRow> {
-        let col_names = self.column_names().to_vec().into_boxed_slice();
+        // O(1): `Arc` clone, not a fresh per-row allocation of the column-name array.
+        let col_names = self.column_names.get().expect("column names resolved in new()").clone();
         let chunk = self.chunk.as_mut().unwrap();
         DuckRow::from_chunk(chunk, col_names, &self.column_types)
     }
@@ -246,6 +261,18 @@ impl DuckResult {
         self.column_names.get().map(|v| v.as_ref()).unwrap_or(&[])
     }
 
+    /// Enables the [`rewind`](DuckResult::rewind) / replay cache.
+    ///
+    /// Plain forward iteration (the default) never clones or caches rows, so it
+    /// costs nothing beyond decoding each row once. Call this *before* consuming any
+    /// rows if you need [`rewind`](DuckResult::rewind) to replay from the start —
+    /// once enabled, every row pulled through `next()` from that point on is cloned
+    /// into a cache so it can be replayed. Rows already consumed before this call was
+    /// made cannot be recovered.
+    pub fn enable_rewind(&mut self) {
+        self.rewind_enabled = true;
+    }
+
     /// Returns the zero-based index of the column with the given name, or `None`
     /// if no column matches.
     #[allow(unused)]
@@ -264,7 +291,10 @@ impl DuckResult {
     ///
     /// Returns an error if pulling the first row fails.
     pub fn exists(&mut self) -> Result<bool> {
-        if self.cursor < self.cache.len() {
+        if self.rewind_enabled && self.cursor < self.cache.len() {
+            return Ok(true);
+        }
+        if self.peeked.is_some() {
             return Ok(true);
         }
         if self.exhausted {
@@ -272,8 +302,9 @@ impl DuckResult {
         }
         match self.pull_next() {
             Some(Ok(row)) => {
-                // Cache the row but leave `cursor` unmoved, so `next()` still returns it.
-                self.cache.push(row);
+                // Buffer the row but don't touch `cursor`/`cache`, so `next()` still
+                // returns it (from the peek buffer, then decides whether to cache it).
+                self.peeked = Some(row);
                 Ok(true)
             },
             Some(Err(e)) => Err(e),
@@ -286,9 +317,9 @@ impl DuckResult {
 
     /// Resets iteration to the first row.
     ///
-    /// Only rows already pulled (via prior iteration or [`exists`](DuckResult::exists))
-    /// are replayed; rows not yet pulled from the underlying result are fetched
-    /// normally as iteration continues past the cache.
+    /// Requires [`enable_rewind`](DuckResult::enable_rewind) to have been called
+    /// before the rows you want to replay were consumed — without it, `cache` is
+    /// always empty and this is a no-op (iteration just continues forward as normal).
     pub fn rewind(&mut self) {
         self.cursor = 0;
     }
@@ -317,9 +348,16 @@ impl Iterator for DuckResult {
     type Item = Result<DuckRow>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.cursor < self.cache.len() {
+        if self.rewind_enabled && self.cursor < self.cache.len() {
             let row = self.cache[self.cursor].clone();
             self.cursor += 1;
+            return Some(Ok(row));
+        }
+        if let Some(row) = self.peeked.take() {
+            if self.rewind_enabled {
+                self.cache.push(row.clone());
+                self.cursor += 1;
+            }
             return Some(Ok(row));
         }
         if self.exhausted {
@@ -327,8 +365,10 @@ impl Iterator for DuckResult {
         }
         match self.pull_next() {
             Some(Ok(row)) => {
-                self.cache.push(row.clone());
-                self.cursor += 1;
+                if self.rewind_enabled {
+                    self.cache.push(row.clone());
+                    self.cursor += 1;
+                }
                 Some(Ok(row))
             },
             Some(Err(e)) => {
@@ -362,5 +402,111 @@ impl Drop for DuckResult {
         unsafe {
             duckdb_destroy_result(&mut self.res);
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::undocumented_unsafe_blocks)]
+mod tests {
+    use crate::{config::Config, helpers::path::path_to_cstring, raw::connection::RawConnection};
+
+    fn get_test_connection() -> RawConnection {
+        let c_path = path_to_cstring(":memory:".as_ref()).unwrap();
+        let config = Config::default().with("duckdb_api", "rust").unwrap();
+        RawConnection::open_with_flags(&c_path, config).unwrap()
+    }
+
+    /// Plain forward iteration (the default, rewind not enabled) must not error and
+    /// must yield every row exactly once.
+    #[test]
+    fn forward_iteration_without_rewind_yields_all_rows() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE t (v INTEGER)").unwrap();
+        con.query("INSERT INTO t VALUES (1), (2), (3)").unwrap();
+
+        let mut stmt = con.prepare("SELECT v FROM t ORDER BY v").unwrap();
+        let result = stmt.execute().unwrap();
+        let rows: Vec<_> = result.collect::<Result<_, _>>().unwrap();
+        assert_eq!(rows.len(), 3);
+    }
+
+    /// `exists()` must peek without consuming — a subsequent full iteration still
+    /// yields every row, including the one that was peeked.
+    #[test]
+    fn exists_peeks_without_consuming() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE t (v INTEGER)").unwrap();
+        con.query("INSERT INTO t VALUES (1), (2)").unwrap();
+
+        let mut stmt = con.prepare("SELECT v FROM t ORDER BY v").unwrap();
+        let mut result = stmt.execute().unwrap();
+
+        assert!(result.exists().unwrap());
+        assert!(result.exists().unwrap()); // idempotent — still doesn't consume
+
+        let rows: Vec<_> = result.collect::<Result<_, _>>().unwrap();
+        assert_eq!(rows.len(), 2, "the peeked row must still be yielded by next()");
+    }
+
+    /// Without `enable_rewind()`, `rewind()` is a documented no-op: the cache stays
+    /// empty, so iteration just continues forward from wherever it was.
+    #[test]
+    fn rewind_without_enable_is_a_no_op() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE t (v INTEGER)").unwrap();
+        con.query("INSERT INTO t VALUES (1), (2), (3)").unwrap();
+
+        let mut stmt = con.prepare("SELECT v FROM t ORDER BY v").unwrap();
+        let mut result = stmt.execute().unwrap();
+
+        let first = result.next().unwrap().unwrap();
+        result.rewind();
+        // Not the first row again — rewind had nothing cached to replay.
+        let second = result.next().unwrap().unwrap();
+        assert_ne!(first.get("v"), second.get("v"));
+    }
+
+    /// With `enable_rewind()`, `rewind()` replays every row pulled after it was
+    /// called, from the start.
+    #[test]
+    fn enable_rewind_then_rewind_replays_from_start() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE t (v INTEGER)").unwrap();
+        con.query("INSERT INTO t VALUES (1), (2), (3)").unwrap();
+
+        let mut stmt = con.prepare("SELECT v FROM t ORDER BY v").unwrap();
+        let mut result = stmt.execute().unwrap();
+        result.enable_rewind();
+
+        let first_pass: Vec<_> = (&mut result).take(3).map(|r| r.unwrap()).collect();
+        assert_eq!(first_pass.len(), 3);
+
+        result.rewind();
+        let second_pass: Vec<_> = result.collect::<Result<_, _>>().unwrap();
+        assert_eq!(second_pass.len(), 3);
+        for (a, b) in first_pass.iter().zip(second_pass.iter()) {
+            assert_eq!(a.get("v"), b.get("v"));
+        }
+    }
+
+    /// `enable_rewind()` after `exists()` has already peeked a row must still cache
+    /// that row once it's consumed via `next()` — the peek buffer and the rewind
+    /// cache must not race each other.
+    #[test]
+    fn enable_rewind_after_exists_peek_still_caches_the_peeked_row() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE t (v INTEGER)").unwrap();
+        con.query("INSERT INTO t VALUES (1), (2)").unwrap();
+
+        let mut stmt = con.prepare("SELECT v FROM t ORDER BY v").unwrap();
+        let mut result = stmt.execute().unwrap();
+
+        assert!(result.exists().unwrap()); // peeks row 1, before rewind is enabled
+        result.enable_rewind();
+        let first = result.next().unwrap().unwrap(); // drains the peek, now cached
+
+        result.rewind();
+        let replayed = result.next().unwrap().unwrap();
+        assert_eq!(first.get("v"), replayed.get("v"));
     }
 }
