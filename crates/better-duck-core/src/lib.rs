@@ -22,6 +22,8 @@ pub mod database;
 pub mod error;
 mod helpers;
 mod raw;
+/// An owned, thread-safe, fully materialized query result.
+pub mod result_set;
 /// DuckDB type system and value conversion traits.
 pub mod types;
 
@@ -38,6 +40,8 @@ pub use raw::result::DuckResult;
 pub use raw::row::DuckRow;
 /// A prepared statement suitable for caching and re-execution.
 pub use raw::statement::CachedStatement;
+/// An owned, thread-safe, fully materialized query result.
+pub use result_set::ResultSet;
 /// Trait for binding values to DuckDB prepared statements and appenders.
 pub use types::appendable::AppendAble;
 /// A calendar date value for use without the `chrono` feature.
