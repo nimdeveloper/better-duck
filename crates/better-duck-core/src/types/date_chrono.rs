@@ -10,12 +10,17 @@ use crate::error::DuckDBConversionError;
 use crate::types::appendable::AppendAble;
 use crate::{
     ffi::{
-        duckdb_create_date, duckdb_create_interval, duckdb_create_time, duckdb_create_time_ns,
-        duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_create_timestamp_ms,
-        duckdb_create_timestamp_ns, duckdb_create_timestamp_s, duckdb_create_timestamp_tz,
-        duckdb_date, duckdb_from_date, duckdb_from_time_tz, duckdb_interval, duckdb_time,
-        duckdb_time_ns, duckdb_time_tz, duckdb_timestamp, duckdb_timestamp_ms, duckdb_timestamp_ns,
-        duckdb_timestamp_s, duckdb_value,
+        duckdb_create_date, duckdb_create_interval, duckdb_create_logical_type, duckdb_create_time,
+        duckdb_create_time_ns, duckdb_create_time_tz_value, duckdb_create_timestamp,
+        duckdb_create_timestamp_ms, duckdb_create_timestamp_ns, duckdb_create_timestamp_s,
+        duckdb_create_timestamp_tz, duckdb_date, duckdb_from_date, duckdb_from_time_tz,
+        duckdb_interval, duckdb_logical_type, duckdb_time, duckdb_time_ns, duckdb_time_tz,
+        duckdb_timestamp, duckdb_timestamp_ms, duckdb_timestamp_ns, duckdb_timestamp_s,
+        duckdb_value, DUCKDB_TYPE_DUCKDB_TYPE_DATE, DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL,
+        DUCKDB_TYPE_DUCKDB_TYPE_TIME, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP,
+        DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_MS, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_NS,
+        DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_TZ,
+        DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS, DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ,
     },
     impl_appendable_via_to_duck_native,
 };
@@ -460,6 +465,87 @@ impl AppendAble for TimestampTz {
         // SAFETY: `dv` was created above; destroy exactly once.
         unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
         Ok(())
+    }
+}
+
+// DuckLogicalType + From<T> for DuckValue
+
+macro_rules! impl_duck_logical_type {
+    ($rust_type:ty, $duck_type:expr) => {
+        impl DuckLogicalType for $rust_type {
+            fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError> {
+                // SAFETY: `$duck_type` is always a valid duckdb_type constant.
+                Ok(unsafe { duckdb_create_logical_type($duck_type) })
+            }
+        }
+    };
+}
+
+impl_duck_logical_type!(NaiveDate, DUCKDB_TYPE_DUCKDB_TYPE_DATE);
+impl_duck_logical_type!(NaiveTime, DUCKDB_TYPE_DUCKDB_TYPE_TIME);
+impl_duck_logical_type!(NaiveDateTime, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP);
+impl_duck_logical_type!(DateTime<Utc>, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_TZ);
+impl_duck_logical_type!(Duration, DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL);
+impl_duck_logical_type!(TimeTz, DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ);
+impl_duck_logical_type!(TimestampS, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S);
+impl_duck_logical_type!(TimestampMs, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_MS);
+impl_duck_logical_type!(TimestampNs, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_NS);
+impl_duck_logical_type!(TimestampTz, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_TZ);
+impl_duck_logical_type!(TimeNs, DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS);
+
+impl From<NaiveDate> for value::DuckValue {
+    fn from(v: NaiveDate) -> Self {
+        value::DuckValue::Date(v)
+    }
+}
+impl From<NaiveTime> for value::DuckValue {
+    fn from(v: NaiveTime) -> Self {
+        value::DuckValue::Time(v)
+    }
+}
+impl From<NaiveDateTime> for value::DuckValue {
+    fn from(v: NaiveDateTime) -> Self {
+        value::DuckValue::Timestamp(v)
+    }
+}
+impl From<DateTime<Utc>> for value::DuckValue {
+    fn from(v: DateTime<Utc>) -> Self {
+        value::DuckValue::TimestampTz(v)
+    }
+}
+impl From<Duration> for value::DuckValue {
+    fn from(v: Duration) -> Self {
+        value::DuckValue::Interval(v)
+    }
+}
+impl From<TimeTz> for value::DuckValue {
+    fn from(v: TimeTz) -> Self {
+        value::DuckValue::TimeTz(v)
+    }
+}
+impl From<TimestampS> for value::DuckValue {
+    fn from(v: TimestampS) -> Self {
+        value::DuckValue::TimestampS(v.0)
+    }
+}
+impl From<TimestampMs> for value::DuckValue {
+    fn from(v: TimestampMs) -> Self {
+        value::DuckValue::TimestampMs(v.0)
+    }
+}
+impl From<TimestampNs> for value::DuckValue {
+    fn from(v: TimestampNs) -> Self {
+        value::DuckValue::TimestampNs(v.0)
+    }
+}
+impl From<TimestampTz> for value::DuckValue {
+    fn from(v: TimestampTz) -> Self {
+        value::DuckValue::TimestampTz(v.0)
+    }
+}
+impl From<TimeNs> for value::DuckValue {
+    fn from(v: TimeNs) -> Self {
+        value::DuckValue::TimeNs(v.0)
     }
 }
 

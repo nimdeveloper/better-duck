@@ -47,6 +47,8 @@ serde_json = "1"
 serde      = { version = "1", features = ["derive"] }
 tokio      = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
 
+uuid = "1.24.0"
+
 [[bench]]
 name    = "my_benchmark"
 harness = false

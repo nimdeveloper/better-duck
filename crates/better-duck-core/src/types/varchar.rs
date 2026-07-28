@@ -4,11 +4,14 @@ use std::{
 };
 
 use crate::{
-    ffi::{duckdb_create_varchar, duckdb_free, duckdb_get_varchar, duckdb_value},
+    ffi::{
+        duckdb_create_logical_type, duckdb_create_varchar, duckdb_free, duckdb_get_varchar,
+        duckdb_logical_type, duckdb_value, DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
+    },
     types::appendable::AppendAble,
 };
 
-use super::{DuckDBConversionError, DuckDialect};
+use super::{value::DuckValue, DuckDBConversionError, DuckDialect, DuckLogicalType};
 
 impl DuckDialect for String {
     fn from_duck(value: duckdb_value) -> Result<Self, DuckDBConversionError> {
@@ -73,5 +76,30 @@ impl AppendAble for String {
             )
         };
         Ok(())
+    }
+}
+
+impl DuckLogicalType for String {
+    fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError> {
+        // SAFETY: DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR is always a valid duckdb_type constant.
+        Ok(unsafe { duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR) })
+    }
+}
+
+impl From<String> for DuckValue {
+    fn from(v: String) -> Self {
+        DuckValue::Text(v)
+    }
+}
+
+impl From<&str> for DuckValue {
+    fn from(v: &str) -> Self {
+        DuckValue::Text(v.to_owned())
+    }
+}
+
+impl DuckLogicalType for &str {
+    fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError> {
+        String::duck_logical_type()
     }
 }

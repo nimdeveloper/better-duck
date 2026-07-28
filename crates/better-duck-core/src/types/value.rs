@@ -12,19 +12,20 @@ use std::time::{Duration, SystemTime};
 use crate::{
     ffi::{
         duckdb_create_logical_type, duckdb_create_null_value, duckdb_create_uhugeint, duckdb_date,
-        duckdb_destroy_logical_type, duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
+        duckdb_decimal_internal_type, duckdb_decimal_scale, duckdb_destroy_logical_type,
+        duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
         duckdb_free, duckdb_interval, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
         duckdb_string_t_length, duckdb_time, duckdb_time_ns, duckdb_time_tz, duckdb_timestamp,
         duckdb_timestamp_ms, duckdb_timestamp_ns, duckdb_timestamp_s, duckdb_type, duckdb_uhugeint,
         duckdb_validity_row_is_valid, duckdb_value, duckdb_vector, duckdb_vector_get_column_type,
         duckdb_vector_get_data, duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
-        DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB,
-        DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
-        DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE,
-        DUCKDB_TYPE_DUCKDB_TYPE_ENUM, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT,
-        DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
-        DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL, DUCKDB_TYPE_DUCKDB_TYPE_INVALID,
-        DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP,
+        DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM,
+        DUCKDB_TYPE_DUCKDB_TYPE_BIT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN,
+        DUCKDB_TYPE_DUCKDB_TYPE_DATE, DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
+        DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_ENUM,
+        DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL,
+        DUCKDB_TYPE_DUCKDB_TYPE_INVALID, DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP,
         DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_SQLNULL,
         DUCKDB_TYPE_DUCKDB_TYPE_STRING_LITERAL, DUCKDB_TYPE_DUCKDB_TYPE_STRUCT,
         DUCKDB_TYPE_DUCKDB_TYPE_TIME, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP,
@@ -34,7 +35,8 @@ use crate::{
         DUCKDB_TYPE_DUCKDB_TYPE_TINYINT, DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT,
         DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER,
         DUCKDB_TYPE_DUCKDB_TYPE_UNION, DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT,
-        DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT, DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
+        DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT, DUCKDB_TYPE_DUCKDB_TYPE_UUID,
+        DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
     },
     types::value_ref::DuckValueRef,
 };
@@ -166,6 +168,12 @@ pub enum DuckValue {
     Map(HashMap<DuckValue, DuckValue>),
     /// The value is a union (tagged sum type; holds the active member value).
     Union(Box<DuckValue>),
+    /// The value is a UUID.
+    Uuid(crate::types::uuid::DuckUuid),
+    /// The value is a bitstring (`BIT`).
+    Bit(crate::types::bit::DuckBit),
+    /// The value is an arbitrary-precision integer (`BIGNUM`).
+    Bignum(crate::types::bignum::DuckBignum),
 }
 
 // PartialEq / Eq / Hash
@@ -251,6 +259,9 @@ impl PartialEq for DuckValue {
             (Struct(a), Struct(b)) => a == b,
             (Map(a), Map(b)) => a == b,
             (Union(a), Union(b)) => a == b,
+            (Uuid(a), Uuid(b)) => a == b,
+            (Bit(a), Bit(b)) => a == b,
+            (Bignum(a), Bignum(b)) => a == b,
             _ => false,
         }
     }
@@ -335,6 +346,9 @@ impl Hash for DuckValue {
                 map::map_entries_hash(m.iter(), m.len(), state);
             },
             DuckValue::Union(u) => u.hash(state),
+            DuckValue::Uuid(u) => u.hash(state),
+            DuckValue::Bit(b) => b.hash(state),
+            DuckValue::Bignum(b) => b.hash(state),
         }
     }
 }
@@ -418,6 +432,9 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
                 m.iter().map(|(k, v)| (DuckValue::from(k), DuckValue::from(v))).collect(),
             ),
             DuckValueRef::Union(u) => DuckValue::Union(Box::new(DuckValue::from(u.as_ref()))),
+            DuckValueRef::Uuid(u) => DuckValue::Uuid(*u),
+            DuckValueRef::Bit(b) => DuckValue::Bit(b.clone()),
+            DuckValueRef::Bignum(b) => DuckValue::Bignum(b.clone()),
         }
     }
 }
@@ -683,12 +700,62 @@ impl DuckValue {
             },
             #[cfg(feature = "decimal")]
             DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL => {
-                // SAFETY: `val` is a valid duckdb_vector; the data pointer is valid for the
-                // chunk's row count. We read the raw i64 at `row_idx` as a decimal.
-                let data_ptr = unsafe { duckdb_vector_get_data(val) as *mut i64 };
-                // SAFETY: `row_idx` is within [0, chunk_size).
-                let value = unsafe { *data_ptr.add(row_idx as usize) as crate::ffi::duckdb_value };
-                Decimal::from_duck(value).map(DuckValue::Decimal)
+                // DECIMAL's physical column storage is a *scaled integer*, packed as the
+                // narrowest of INT16/INT32/INT64/HUGEINT that fits the column's declared
+                // width — never a `duckdb_value` handle. The scale and physical width both
+                // come from the column's logical type, not from any per-row payload.
+                //
+                // SAFETY: `val` is a valid duckdb_vector; `duckdb_vector_get_column_type`
+                // always succeeds for a non-null vector and returns an owned logical type.
+                let mut logical_type = unsafe { duckdb_vector_get_column_type(val) };
+                // SAFETY: `logical_type` is a valid DECIMAL logical type.
+                let scale = unsafe { duckdb_decimal_scale(logical_type) };
+                // SAFETY: `logical_type` is a valid DECIMAL logical type.
+                let internal_type = unsafe { duckdb_decimal_internal_type(logical_type) };
+                // SAFETY: `logical_type` was obtained above and must be freed exactly once.
+                unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+
+                let mantissa: i128 = match internal_type {
+                    DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT => {
+                        // SAFETY: DuckDB packs DECIMAL(1..=4) columns as `i16`; `row_idx` is
+                        // within [0, chunk_size).
+                        unsafe {
+                            *(duckdb_vector_get_data(val) as *const i16).add(row_idx as usize)
+                        }
+                        .into()
+                    },
+                    DUCKDB_TYPE_DUCKDB_TYPE_INTEGER => {
+                        // SAFETY: DuckDB packs DECIMAL(5..=9) columns as `i32`; `row_idx` is
+                        // within [0, chunk_size).
+                        unsafe {
+                            *(duckdb_vector_get_data(val) as *const i32).add(row_idx as usize)
+                        }
+                        .into()
+                    },
+                    DUCKDB_TYPE_DUCKDB_TYPE_BIGINT => {
+                        // SAFETY: DuckDB packs DECIMAL(10..=18) columns as `i64`; `row_idx`
+                        // is within [0, chunk_size).
+                        unsafe {
+                            *(duckdb_vector_get_data(val) as *const i64).add(row_idx as usize)
+                        }
+                        .into()
+                    },
+                    DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT => {
+                        // SAFETY: DuckDB packs DECIMAL(19..=38) columns as `duckdb_hugeint`;
+                        // `row_idx` is within [0, chunk_size).
+                        let raw = unsafe {
+                            *(duckdb_vector_get_data(val) as *const duckdb_hugeint)
+                                .add(row_idx as usize)
+                        };
+                        (raw.upper as i128) << 64 | (raw.lower as i128)
+                    },
+                    other => {
+                        return Err(DuckDBConversionError::ConversionError(format!(
+                            "unexpected DECIMAL physical storage type: {other:?}"
+                        )))
+                    },
+                };
+                Ok(DuckValue::Decimal(Decimal::from_i128_with_scale(mantissa, scale as u32)))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_ENUM => {
                 // SAFETY: `val` is a valid duckdb_vector from an active DuckDB result.
@@ -809,6 +876,40 @@ impl DuckValue {
             DUCKDB_TYPE_DUCKDB_TYPE_STRUCT => crate::types::duck_struct::read_struct(val, row_idx),
             DUCKDB_TYPE_DUCKDB_TYPE_UNION => crate::types::union::read_union(val, row_idx),
             DUCKDB_TYPE_DUCKDB_TYPE_MAP => crate::types::map::read_map(val, row_idx),
+            DUCKDB_TYPE_DUCKDB_TYPE_UUID => {
+                // UUID's physical storage is fixed-width (16 bytes), same layout as
+                // UHUGEINT, so it's read directly from the packed vector data.
+                read_packed!(val, row_idx, duckdb_uhugeint, crate::types::uuid::DuckUuid)
+                    .map(DuckValue::Uuid)
+            },
+            DUCKDB_TYPE_DUCKDB_TYPE_BIT => {
+                // SAFETY: BIT columns use the same `duckdb_string_t` layout as VARCHAR/BLOB.
+                let bytes = unsafe {
+                    let values = duckdb_vector_get_data(val) as *mut duckdb_string_t;
+                    let mut s = *values.add(row_idx as usize);
+                    let ptr = duckdb_string_t_data(&mut s);
+                    let len = duckdb_string_t_length(s) as usize;
+                    std::slice::from_raw_parts(ptr as *const u8, len).to_vec()
+                };
+                Ok(DuckValue::Bit(crate::types::bit::DuckBit(bytes)))
+            },
+            DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM => {
+                // SAFETY: BIGNUM columns use the same `duckdb_string_t` layout as VARCHAR/BLOB.
+                let bytes = unsafe {
+                    let values = duckdb_vector_get_data(val) as *mut duckdb_string_t;
+                    let mut s = *values.add(row_idx as usize);
+                    let ptr = duckdb_string_t_data(&mut s);
+                    let len = duckdb_string_t_length(s) as usize;
+                    std::slice::from_raw_parts(ptr as *const u8, len).to_vec()
+                };
+                crate::types::bignum::decode_bignum_wire(&bytes).map(DuckValue::Bignum).ok_or_else(
+                    || {
+                        DuckDBConversionError::ConversionError(
+                            "malformed BIGNUM wire data".to_string(),
+                        )
+                    },
+                )
+            },
             _ => {
                 todo!()
             },
@@ -898,6 +999,9 @@ impl DuckValue {
             DuckValue::Struct(m) => crate::types::duck_struct::struct_to_duck(m),
             DuckValue::Map(m) => crate::types::map::map_to_duck(m),
             DuckValue::Union(inner) => crate::types::union::union_to_duck(inner),
+            DuckValue::Uuid(u) => u.to_duck(),
+            DuckValue::Bit(b) => b.to_duck(),
+            DuckValue::Bignum(b) => b.to_duck(),
         }
     }
 
@@ -954,6 +1058,9 @@ impl DuckValue {
             DuckValue::Struct(m) => crate::types::duck_struct::struct_logical_type(m),
             DuckValue::Map(m) => crate::types::map::map_logical_type(m),
             DuckValue::Union(inner) => crate::types::union::union_logical_type(inner),
+            DuckValue::Uuid(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_UUID),
+            DuckValue::Bit(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_BIT),
+            DuckValue::Bignum(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM),
         }
     }
 }
@@ -1053,6 +1160,25 @@ impl AppendAble for DuckValue {
         appender: crate::ffi::duckdb_appender,
     ) -> crate::error::Result<()> {
         DuckValueRef::from(&*self).appender_append(appender)
+    }
+}
+
+// Option<T> — generic, not tied to any specific inner type.
+
+impl<T: Into<DuckValue>> From<Option<T>> for DuckValue {
+    fn from(opt: Option<T>) -> Self {
+        match opt {
+            Some(v) => v.into(),
+            None => DuckValue::Null,
+        }
+    }
+}
+
+impl<T: super::DuckLogicalType> super::DuckLogicalType for Option<T> {
+    fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError> {
+        // NULL has no logical type of its own; it always takes on the type of the
+        // column/collection it appears in, i.e. `T`'s type.
+        T::duck_logical_type()
     }
 }
 

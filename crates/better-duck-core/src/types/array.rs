@@ -22,7 +22,7 @@ use crate::{
     types::appendable::AppendAble,
 };
 
-use super::value::DuckValue;
+use super::{value::DuckValue, DuckLogicalType};
 
 // Read path
 
@@ -204,16 +204,15 @@ pub(crate) fn array_to_duck(items: &[DuckValue]) -> Result<duckdb_value, DuckDBC
         unsafe { duckdb_destroy_logical_type(&mut child_lt) };
         return Err(e);
     }
-    // SAFETY: `child_lt` is valid; array_size matches item count.
-    let mut arr_lt = unsafe { duckdb_create_array_type(child_lt, child_dvs.len() as idx_t) };
-    // SAFETY: `child_lt` was allocated by `logical_type_of`; destroy once.
-    unsafe { duckdb_destroy_logical_type(&mut child_lt) };
-    // SAFETY: `arr_lt` is valid; `child_dvs` has `len()` elements.
+    // SAFETY: `child_lt` is valid; `duckdb_create_array_value` takes the *element* type
+    // (like `duckdb_create_list_value`), not a pre-built ARRAY type — it derives the
+    // array size from `value_count` itself. Passing a wrapped ARRAY type here would
+    // make DuckDB expect each child value to itself be an ARRAY, corrupting memory.
     let result = unsafe {
-        duckdb_create_array_value(arr_lt, child_dvs.as_mut_ptr(), child_dvs.len() as idx_t)
+        duckdb_create_array_value(child_lt, child_dvs.as_mut_ptr(), child_dvs.len() as idx_t)
     };
-    // SAFETY: `arr_lt` was allocated above; destroy once.
-    unsafe { duckdb_destroy_logical_type(&mut arr_lt) };
+    // SAFETY: `child_lt` was allocated by `logical_type_of` above; destroy once.
+    unsafe { duckdb_destroy_logical_type(&mut child_lt) };
     for mut v in child_dvs {
         // SAFETY: each `v` was created by `to_duck()` above.
         unsafe { duckdb_destroy_value(&mut v) };
@@ -258,20 +257,114 @@ pub(crate) fn array_logical_type(
 }
 
 // Generic AppendAble impls
+//
+// Unlike `list_to_duck`/`array_to_duck` above (which infer the element type from
+// `items[0]` and therefore reject empty collections), these use `T::duck_logical_type()`
+// — a property of the Rust type, not of any particular value — so they work for
+// empty `Vec<T>`/`Box<[T]>` too.
 
-/// Bind/append a `Vec<T>` as a DuckDB `LIST`.
+/// Builds a `duckdb_value` of type `LIST` from `items`, using `T`'s static logical
+/// type for the element type. Works even when `items` is empty.
+fn build_typed_list_value<T: Into<DuckValue> + Clone + DuckLogicalType>(
+    items: &[T]
+) -> Result<duckdb_value, DuckDBConversionError> {
+    let mut child_lt = T::duck_logical_type()?;
+    let mut child_dvs: Vec<duckdb_value> = Vec::with_capacity(items.len());
+    let mut err: Option<DuckDBConversionError> = None;
+    for item in items {
+        match item.clone().into().to_duck() {
+            Ok(v) => child_dvs.push(v),
+            Err(e) => {
+                err = Some(e);
+                break;
+            },
+        }
+    }
+    if let Some(e) = err {
+        for mut v in child_dvs {
+            // SAFETY: each `v` was created by `to_duck()` above.
+            unsafe { duckdb_destroy_value(&mut v) };
+        }
+        // SAFETY: `child_lt` was allocated by `T::duck_logical_type()` above.
+        unsafe { duckdb_destroy_logical_type(&mut child_lt) };
+        return Err(e);
+    }
+    // SAFETY: `child_lt` is valid; `child_dvs` has `len()` elements.
+    let result = unsafe {
+        duckdb_create_list_value(child_lt, child_dvs.as_mut_ptr(), child_dvs.len() as idx_t)
+    };
+    // SAFETY: `child_lt` was allocated above; destroy once.
+    unsafe { duckdb_destroy_logical_type(&mut child_lt) };
+    for mut v in child_dvs {
+        // SAFETY: each `v` was created by `to_duck()` above; destroy once.
+        unsafe { duckdb_destroy_value(&mut v) };
+    }
+    Ok(result)
+}
+
+/// Builds a `duckdb_value` of type `ARRAY` from `items`, using `T`'s static logical
+/// type for the element type.
 ///
-/// Each element is converted via `T: Into<DuckValue>`, then the entire `DuckValue::List`
-/// is serialized to a `duckdb_value` and bound/appended via the value path.
-impl<T: Into<DuckValue> + Clone> AppendAble for Vec<T> {
+/// Unlike LIST, DuckDB's C API hard-asserts `array_size > 0` inside
+/// `duckdb_create_array_value` (aborting the process, not returning an error), so an
+/// empty `items` is rejected up front with a proper `Err` instead.
+fn build_typed_array_value<T: Into<DuckValue> + Clone + DuckLogicalType>(
+    items: &[T]
+) -> Result<duckdb_value, DuckDBConversionError> {
+    if items.is_empty() {
+        return Err(DuckDBConversionError::ConversionError(
+            "cannot convert empty slice to a duckdb ARRAY value: DuckDB requires ARRAY size >= 1"
+                .into(),
+        ));
+    }
+    let mut child_lt = T::duck_logical_type()?;
+    let mut child_dvs: Vec<duckdb_value> = Vec::with_capacity(items.len());
+    let mut err: Option<DuckDBConversionError> = None;
+    for item in items {
+        match item.clone().into().to_duck() {
+            Ok(v) => child_dvs.push(v),
+            Err(e) => {
+                err = Some(e);
+                break;
+            },
+        }
+    }
+    if let Some(e) = err {
+        for mut v in child_dvs {
+            // SAFETY: each `v` was created by `to_duck()` above.
+            unsafe { duckdb_destroy_value(&mut v) };
+        }
+        // SAFETY: `child_lt` was allocated by `T::duck_logical_type()` above.
+        unsafe { duckdb_destroy_logical_type(&mut child_lt) };
+        return Err(e);
+    }
+    // SAFETY: `child_lt` is valid; `duckdb_create_array_value` takes the *element* type
+    // (like `duckdb_create_list_value`), not a pre-built ARRAY type — it derives the
+    // array size from `value_count` itself (0 is valid). Passing a wrapped ARRAY type
+    // here would make DuckDB expect each child value to itself be an ARRAY, corrupting
+    // memory.
+    let result = unsafe {
+        duckdb_create_array_value(child_lt, child_dvs.as_mut_ptr(), child_dvs.len() as idx_t)
+    };
+    // SAFETY: `child_lt` was allocated above; destroy once.
+    unsafe { duckdb_destroy_logical_type(&mut child_lt) };
+    for mut v in child_dvs {
+        // SAFETY: each `v` was created by `to_duck()` above; destroy once.
+        unsafe { duckdb_destroy_value(&mut v) };
+    }
+    Ok(result)
+}
+
+/// Bind/append a `Vec<T>` as a DuckDB `LIST`, for any `T` with a fixed DuckDB type
+/// (see [`DuckLogicalType`]). Works for empty vectors too.
+impl<T: Into<DuckValue> + Clone + DuckLogicalType> AppendAble for Vec<T> {
     fn stmt_append(
         &mut self,
         idx: u64,
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
-        let duck_list: Vec<DuckValue> = self.iter().cloned().map(Into::into).collect();
-        let mut dv = DuckValue::List(duck_list).to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `stmt`/`idx` are valid; `dv` was created by `to_duck()`.
+        let mut dv = build_typed_list_value(self).map_err(Error::ConversionError)?;
+        // SAFETY: `stmt`/`idx` are valid; `dv` was created by `build_typed_list_value`.
         unsafe { duckdb_bind_value(stmt, idx, dv) };
         // SAFETY: `dv` was created above; destroy exactly once.
         unsafe { duckdb_destroy_value(&mut dv) };
@@ -282,9 +375,8 @@ impl<T: Into<DuckValue> + Clone> AppendAble for Vec<T> {
         &mut self,
         appender: crate::ffi::duckdb_appender,
     ) -> Result<()> {
-        let duck_list: Vec<DuckValue> = self.iter().cloned().map(Into::into).collect();
-        let mut dv = DuckValue::List(duck_list).to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `appender` is valid; `dv` was created by `to_duck()`.
+        let mut dv = build_typed_list_value(self).map_err(Error::ConversionError)?;
+        // SAFETY: `appender` is valid; `dv` was created by `build_typed_list_value`.
         unsafe { duckdb_append_value(appender, dv) };
         // SAFETY: `dv` was created above; destroy exactly once.
         unsafe { duckdb_destroy_value(&mut dv) };
@@ -292,20 +384,17 @@ impl<T: Into<DuckValue> + Clone> AppendAble for Vec<T> {
     }
 }
 
-/// Bind/append a `Box<[T]>` as a DuckDB `ARRAY`.
-///
-/// Each element is converted via `T: Into<DuckValue>`, then the entire `DuckValue::Array`
-/// is serialized to a `duckdb_value` and bound/appended via the value path.
-impl<T: Into<DuckValue> + Clone> AppendAble for Box<[T]> {
+/// Bind/append a `Box<[T]>` as a DuckDB `ARRAY`, for any `T` with a fixed DuckDB type
+/// (see [`DuckLogicalType`]). An empty slice fails with a `ConversionError`: DuckDB
+/// requires `ARRAY` size >= 1.
+impl<T: Into<DuckValue> + Clone + DuckLogicalType> AppendAble for Box<[T]> {
     fn stmt_append(
         &mut self,
         idx: u64,
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
-        let duck_arr: Box<[DuckValue]> =
-            self.iter().cloned().map(Into::into).collect::<Vec<_>>().into_boxed_slice();
-        let mut dv = DuckValue::Array(duck_arr).to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `stmt`/`idx` are valid; `dv` was created by `to_duck()`.
+        let mut dv = build_typed_array_value(self).map_err(Error::ConversionError)?;
+        // SAFETY: `stmt`/`idx` are valid; `dv` was created by `build_typed_array_value`.
         unsafe { duckdb_bind_value(stmt, idx, dv) };
         // SAFETY: `dv` was created above; destroy exactly once.
         unsafe { duckdb_destroy_value(&mut dv) };
@@ -316,13 +405,107 @@ impl<T: Into<DuckValue> + Clone> AppendAble for Box<[T]> {
         &mut self,
         appender: crate::ffi::duckdb_appender,
     ) -> Result<()> {
-        let duck_arr: Box<[DuckValue]> =
-            self.iter().cloned().map(Into::into).collect::<Vec<_>>().into_boxed_slice();
-        let mut dv = DuckValue::Array(duck_arr).to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `appender` is valid; `dv` was created by `to_duck()`.
+        let mut dv = build_typed_array_value(self).map_err(Error::ConversionError)?;
+        // SAFETY: `appender` is valid; `dv` was created by `build_typed_array_value`.
         unsafe { duckdb_append_value(appender, dv) };
         // SAFETY: `dv` was created above; destroy exactly once.
         unsafe { duckdb_destroy_value(&mut dv) };
         Ok(())
+    }
+}
+
+// From<T> for DuckValue — composite List/Array
+
+impl From<Vec<DuckValue>> for DuckValue {
+    fn from(v: Vec<DuckValue>) -> Self {
+        DuckValue::List(v)
+    }
+}
+
+impl From<Box<[DuckValue]>> for DuckValue {
+    fn from(a: Box<[DuckValue]>) -> Self {
+        DuckValue::Array(a)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connection::Connection;
+
+    #[test]
+    fn empty_vec_appends_and_reads_back() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (v INTEGER[])").unwrap();
+        let mut list: Vec<i32> = vec![];
+        conn.execute_with("INSERT INTO t VALUES ($1)", &mut [&mut list]).unwrap();
+        let mut result = conn.execute("SELECT v FROM t").unwrap();
+        let row = result.next().unwrap().unwrap();
+        match row.get("v").unwrap() {
+            DuckValue::List(items) => assert!(items.is_empty()),
+            other => panic!("expected List, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nonempty_vec_appends_and_reads_back() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (v INTEGER[])").unwrap();
+        let mut list: Vec<i32> = vec![1, 2];
+        conn.execute_with("INSERT INTO t VALUES ($1)", &mut [&mut list]).unwrap();
+        let mut result = conn.execute("SELECT v FROM t").unwrap();
+        let row = result.next().unwrap().unwrap();
+        match row.get("v").unwrap() {
+            DuckValue::List(items) => {
+                assert_eq!(items, &vec![DuckValue::Int(1), DuckValue::Int(2)]);
+            },
+            other => panic!("expected List, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_boxed_slice_fails_with_conversion_error() {
+        // DuckDB's C API hard-asserts `array_size > 0` inside
+        // `duckdb_create_array_value` (process abort, not a recoverable error), so an
+        // empty fixed-size array must be rejected before reaching FFI.
+        let mut conn = Connection::open_in_memory().unwrap();
+        let mut arr: Box<[i32]> = Box::new([]);
+        match conn.execute_with("SELECT $1 AS v", &mut [&mut arr]) {
+            Err(Error::ConversionError(_)) => {},
+            Err(other) => panic!("expected ConversionError, got {other:?}"),
+            Ok(_) => panic!("expected ConversionError, got Ok"),
+        }
+    }
+
+    #[test]
+    fn nonempty_boxed_slice_appends_and_reads_back() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (v INTEGER[2])").unwrap();
+        let mut arr: Box<[i32]> = vec![1, 2].into_boxed_slice();
+        conn.execute_with("INSERT INTO t VALUES ($1)", &mut [&mut arr]).unwrap();
+        let mut result = conn.execute("SELECT v FROM t").unwrap();
+        let row = result.next().unwrap().unwrap();
+        match row.get("v").unwrap() {
+            DuckValue::Array(items) => {
+                assert_eq!(&**items, &[DuckValue::Int(1), DuckValue::Int(2)][..]);
+            },
+            other => panic!("expected Array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vec_of_strings_appends_and_reads_back() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (v VARCHAR[])").unwrap();
+        let mut list: Vec<String> = vec!["a".to_string(), "b".to_string()];
+        conn.execute_with("INSERT INTO t VALUES ($1)", &mut [&mut list]).unwrap();
+        let mut result = conn.execute("SELECT v FROM t").unwrap();
+        let row = result.next().unwrap().unwrap();
+        match row.get("v").unwrap() {
+            DuckValue::List(items) => {
+                assert_eq!(items, &vec![DuckValue::text("a"), DuckValue::text("b")]);
+            },
+            other => panic!("expected List, got {other:?}"),
+        }
     }
 }

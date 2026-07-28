@@ -1,4 +1,4 @@
-//! STRUCT read/write helpers + [`AppendAble`] impl for `HashMap<String, DuckValue>`.
+//! STRUCT read/write helpers + the [`DuckStruct`] newtype and its [`AppendAble`] impl.
 //!
 //! DuckDB `STRUCT` types have a fixed, named field schema.  Each field name is a
 //! `String` key; the value is any `DuckValue`.  The read path fetches field names
@@ -21,6 +21,24 @@ use crate::{
 };
 
 use super::value::DuckValue;
+
+/// A DuckDB `STRUCT` value: named fields with a fixed schema.
+///
+/// `DuckValue::Struct` still holds `HashMap<String, DuckValue>` directly; this new
+/// type is provided so that a plain `HashMap<String, DuckValue>` is **not** forced
+/// to mean STRUCT, freeing `HashMap<K, V>` for use in a generic `MAP` `AppendAble`
+/// impl (see `map.rs`) — the same reasoning [`Blob`](super::Blob) applies to
+/// `Vec<u8>` versus `LIST`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuckStruct(pub HashMap<String, DuckValue>);
+
+impl DuckStruct {
+    /// Creates a new `DuckStruct` from a field map.
+    #[inline]
+    pub fn new(fields: HashMap<String, DuckValue>) -> DuckStruct {
+        DuckStruct(fields)
+    }
+}
 
 // Read path
 
@@ -236,16 +254,14 @@ pub(crate) fn struct_logical_type(
 
 // AppendAble impl
 
-// TODO: disambiguate HashMap append — a plain HashMap is treated as MAP; DuckValue::Struct
-// forces the STRUCT path. Callers wrapping a struct should use DuckValue::Struct explicitly.
-/// Bind/append a `HashMap<String, DuckValue>` as a DuckDB `STRUCT`.
-impl AppendAble for HashMap<String, DuckValue> {
+/// Bind/append a [`DuckStruct`] as a DuckDB `STRUCT`.
+impl AppendAble for DuckStruct {
     fn stmt_append(
         &mut self,
         idx: u64,
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
-        let mut dv = DuckValue::Struct(self.clone()).to_duck().map_err(Error::ConversionError)?;
+        let mut dv = DuckValue::Struct(self.0.clone()).to_duck().map_err(Error::ConversionError)?;
         // SAFETY: `stmt`/`idx` are valid; `dv` was created by `to_duck()`.
         unsafe { duckdb_bind_value(stmt, idx, dv) };
         // SAFETY: `dv` was created above; destroy exactly once.
@@ -257,11 +273,43 @@ impl AppendAble for HashMap<String, DuckValue> {
         &mut self,
         appender: crate::ffi::duckdb_appender,
     ) -> Result<()> {
-        let mut dv = DuckValue::Struct(self.clone()).to_duck().map_err(Error::ConversionError)?;
+        let mut dv = DuckValue::Struct(self.0.clone()).to_duck().map_err(Error::ConversionError)?;
         // SAFETY: `appender` is valid; `dv` was created by `to_duck()`.
         unsafe { duckdb_append_value(appender, dv) };
         // SAFETY: `dv` was created above; destroy exactly once.
         unsafe { duckdb_destroy_value(&mut dv) };
         Ok(())
+    }
+}
+
+impl From<DuckStruct> for DuckValue {
+    fn from(s: DuckStruct) -> Self {
+        DuckValue::Struct(s.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connection::Connection;
+
+    #[test]
+    fn duck_struct_appends_and_reads_back() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (v STRUCT(a INTEGER, b VARCHAR))").unwrap();
+        let mut s = DuckStruct::new(HashMap::from([
+            ("a".to_string(), DuckValue::Int(1)),
+            ("b".to_string(), DuckValue::text("hi")),
+        ]));
+        conn.execute_with("INSERT INTO t VALUES ($1)", &mut [&mut s]).unwrap();
+        let mut result = conn.execute("SELECT v FROM t").unwrap();
+        let row = result.next().unwrap().unwrap();
+        match row.get("v").unwrap() {
+            DuckValue::Struct(m) => {
+                assert_eq!(m.get("a"), Some(&DuckValue::Int(1)));
+                assert_eq!(m.get("b"), Some(&DuckValue::text("hi")));
+            },
+            other => panic!("expected Struct, got {other:?}"),
+        }
     }
 }

@@ -6,6 +6,12 @@
 pub mod appendable;
 /// LIST and ARRAY read/write helpers + generic `AppendAble` impls.
 pub mod array;
+/// DuckDB `BIGNUM` type — arbitrary-precision integer.
+pub mod bignum;
+pub use bignum::DuckBignum;
+/// DuckDB `BIT` type — bitstring.
+pub mod bit;
+pub use bit::DuckBit;
 /// DuckDB BLOB type — [`Blob`] new type wrapping `Vec<u8>`.
 pub mod blob;
 pub use blob::Blob;
@@ -17,17 +23,19 @@ pub mod date_chrono;
 /// No-chrono date/time component types and DuckDialect implementations.
 #[cfg(not(feature = "chrono"))]
 pub mod date_native;
-/// STRUCT read/write helpers + `AppendAble` impl for `HashMap<String, DuckValue>`.
+/// STRUCT read/write helpers + [`DuckStruct`] newtype + its `AppendAble` impl.
 #[path = "duck_struct.rs"]
 pub mod duck_struct;
-/// Ergonomic `From<T>` conversions into `DuckValue`.
-pub mod from_impls;
-/// MAP read/write helpers + `AppendAble` impl for `HashMap<DuckValue, DuckValue>`.
+pub use duck_struct::DuckStruct;
+/// MAP read/write helpers + generic `AppendAble` impl for `HashMap<K, V>`.
 pub mod map;
 /// Numeric DuckDB type conversions and `AppendAble` implementations.
 pub mod numeric;
 /// UNION read/write helpers.
 pub mod union;
+/// DuckDB `UUID` type.
+pub mod uuid;
+pub use uuid::DuckUuid;
 /// The `DuckValue` enum representing any DuckDB column value.
 pub mod value;
 /// A reference-based variant of `DuckValue` for zero-copy scenarios.
@@ -40,7 +48,10 @@ use crate::error::Result;
 use crate::ffi::duckdb_bind_boolean;
 use appendable::AppendAble;
 
-use crate::ffi::{duckdb_append_bool, duckdb_create_bool, duckdb_get_bool, duckdb_value};
+use crate::ffi::{
+    duckdb_append_bool, duckdb_create_bool, duckdb_create_logical_type, duckdb_get_bool,
+    duckdb_logical_type, duckdb_value, DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN,
+};
 
 /// Trait for converting between DuckDB values and Rust types.
 ///
@@ -118,6 +129,29 @@ where
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError>;
 }
 
+/// Gives a Rust type its DuckDB logical type, independent of any particular value.
+///
+/// This is what lets [`Vec<T>`], `Box<[T]>`, and `HashMap<K, V>` convert to a DuckDB
+/// `LIST`/`ARRAY`/`MAP` even when empty (see their `AppendAble` impls in `array.rs`
+/// and `map.rs`): the target DuckDB type comes from `T` itself — a property of the
+/// Rust type, known at compile time — rather than from inspecting the first element,
+/// which doesn't exist for an empty collection.
+///
+/// [`DuckValue`](value::DuckValue) does **not** implement this trait: its DuckDB
+/// type depends on which variant a given value holds at runtime, so there is no
+/// single fixed logical type for the enum as a whole. A `Vec<DuckValue>` should be
+/// wrapped as `DuckValue::List(v)` and bound directly instead.
+pub trait DuckLogicalType {
+    /// Returns a newly-allocated logical type describing this Rust type.
+    ///
+    /// The caller must destroy the returned type with `duckdb_destroy_logical_type`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this Rust type has no fixed DuckDB representation.
+    fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError>;
+}
+
 macro_rules! impl_duck_append_able {
     ($rust_type:ty, $duck_type:expr, $duck_append_fn:expr, $duck_bind_fn:expr) => {
         impl AppendAble for $rust_type {
@@ -167,6 +201,19 @@ impl_duck_append_able!(
     duckdb_append_bool,
     duckdb_bind_boolean
 );
+
+impl DuckLogicalType for bool {
+    fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError> {
+        // SAFETY: DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN is always a valid duckdb_type.
+        Ok(unsafe { duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN) })
+    }
+}
+
+impl From<bool> for value::DuckValue {
+    fn from(v: bool) -> Self {
+        value::DuckValue::Boolean(v)
+    }
+}
 
 /// Represents a DuckDB column data type for use in Rust.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -234,4 +281,10 @@ pub enum Type {
     Union(Box<Type>),
     /// Any DuckDB type.
     Any,
+    /// The value is a UUID.
+    Uuid,
+    /// The value is a bitstring.
+    Bit,
+    /// The value is an arbitrary-precision integer.
+    Bignum,
 }
