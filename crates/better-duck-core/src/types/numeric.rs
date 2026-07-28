@@ -2,20 +2,28 @@
 // by design. Implementations are responsible for passing valid pointers.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use super::{DuckDBConversionError, DuckDialect};
+use super::{value::DuckValue, DuckDBConversionError, DuckDialect, DuckLogicalType};
 use crate::{
     error::{Error, Result},
     ffi::{
         duckdb_create_decimal, duckdb_create_double, duckdb_create_float, duckdb_create_hugeint,
         duckdb_create_int16, duckdb_create_int32, duckdb_create_int64, duckdb_create_int8,
-        duckdb_create_uint16, duckdb_create_uint32, duckdb_create_uint64, duckdb_create_uint8,
-        duckdb_decimal, duckdb_get_decimal, duckdb_get_double, duckdb_get_float, duckdb_get_int16,
-        duckdb_get_int32, duckdb_get_int64, duckdb_get_int8, duckdb_get_uint16, duckdb_get_uint32,
-        duckdb_get_uint64, duckdb_get_uint8, duckdb_hugeint, duckdb_value,
+        duckdb_create_logical_type, duckdb_create_uint16, duckdb_create_uint32,
+        duckdb_create_uint64, duckdb_create_uint8, duckdb_decimal, duckdb_get_decimal,
+        duckdb_get_double, duckdb_get_float, duckdb_get_int16, duckdb_get_int32, duckdb_get_int64,
+        duckdb_get_int8, duckdb_get_uint16, duckdb_get_uint32, duckdb_get_uint64, duckdb_get_uint8,
+        duckdb_hugeint, duckdb_logical_type, duckdb_value, DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT,
+        DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
+        DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_TINYINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER,
+        DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT,
     },
     types::appendable::AppendAble,
 };
 
+#[cfg(feature = "decimal")]
+use crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL;
 use crate::ffi::{
     duckdb_append_double, duckdb_append_float, duckdb_append_hugeint, duckdb_append_int16,
     duckdb_append_int32, duckdb_append_int64, duckdb_append_int8, duckdb_append_uint16,
@@ -96,6 +104,63 @@ impl_duck_dialect!(f32, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, duckdb_create_float, duck
 impl_duck_append_able!(f32, duckdb_append_float, duckdb_bind_float);
 impl_duck_dialect!(f64, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, duckdb_create_double, duckdb_get_double);
 impl_duck_append_able!(f64, duckdb_append_double, duckdb_bind_double);
+
+// DuckLogicalType + From<T> for DuckValue — one fixed DuckDB type per Rust numeric type.
+macro_rules! impl_duck_logical_type_and_from {
+    ($rust_type:ty, $duck_type:expr, $variant:ident) => {
+        impl DuckLogicalType for $rust_type {
+            fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError> {
+                // SAFETY: `$duck_type` is always a valid duckdb_type constant.
+                Ok(unsafe { duckdb_create_logical_type($duck_type) })
+            }
+        }
+        impl From<$rust_type> for DuckValue {
+            fn from(v: $rust_type) -> Self {
+                DuckValue::$variant(v)
+            }
+        }
+    };
+}
+
+impl_duck_logical_type_and_from!(i8, DUCKDB_TYPE_DUCKDB_TYPE_TINYINT, TinyInt);
+impl_duck_logical_type_and_from!(i16, DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT, SmallInt);
+impl_duck_logical_type_and_from!(i32, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, Int);
+impl_duck_logical_type_and_from!(i64, DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, BigInt);
+impl_duck_logical_type_and_from!(i128, DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT, HugeInt);
+impl_duck_logical_type_and_from!(u8, DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT, UTinyInt);
+impl_duck_logical_type_and_from!(u16, DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT, USmallInt);
+impl_duck_logical_type_and_from!(u32, DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER, UInt);
+impl_duck_logical_type_and_from!(u64, DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT, UBigInt);
+impl_duck_logical_type_and_from!(f32, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, Float);
+impl_duck_logical_type_and_from!(f64, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, Double);
+
+// u128 (UHUGEINT) has no dedicated DuckDialect impl (see `value.rs`'s inline handling),
+// but still needs DuckLogicalType + From for use in generic LIST/ARRAY/MAP collections.
+impl DuckLogicalType for u128 {
+    fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError> {
+        // SAFETY: DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT is always a valid duckdb_type constant.
+        Ok(unsafe { duckdb_create_logical_type(crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT) })
+    }
+}
+impl From<u128> for DuckValue {
+    fn from(v: u128) -> Self {
+        DuckValue::UHugeInt(v)
+    }
+}
+
+#[cfg(feature = "decimal")]
+impl DuckLogicalType for Decimal {
+    fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError> {
+        // SAFETY: DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL is always a valid duckdb_type constant.
+        Ok(unsafe { duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL) })
+    }
+}
+#[cfg(feature = "decimal")]
+impl From<Decimal> for DuckValue {
+    fn from(v: Decimal) -> Self {
+        DuckValue::Decimal(v)
+    }
+}
 
 /// Decode a DuckDB HUGEINT (two's-complement 128-bit) into an [`i128`].
 ///
@@ -225,6 +290,42 @@ impl AppendAble for Decimal {
 #[allow(clippy::undocumented_unsafe_blocks)]
 mod test_numeric_conversion {
     use crate::ffi::{duckdb_destroy_value, duckdb_get_hugeint};
+
+    /// Regression test: appending a `Decimal` whose dynamically-computed width (from its
+    /// own digit count) is narrower than the target column's declared width used to
+    /// dereference an invalid pointer on read — `from_duckdb_vec`'s DECIMAL arm cast the
+    /// raw scaled-integer payload straight to a `duckdb_value` handle instead of reading
+    /// it as the packed integer it actually is. See `value.rs`'s DECIMAL read arm.
+    #[cfg(feature = "decimal")]
+    #[test]
+    fn decimal_appender_narrow_width_into_wide_column_roundtrips() {
+        use crate::connection::Connection;
+        use crate::types::value::DuckValue;
+        use rust_decimal::Decimal;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (v DECIMAL(18,4))").unwrap();
+        let expected: Vec<Decimal> = (0i64..1_000).map(|i| Decimal::new(i * 12345, 4)).collect();
+        {
+            let mut app = conn.appender("t", "main").unwrap();
+            for v in &expected {
+                app.append(&mut v.clone()).unwrap();
+            }
+            app.save().unwrap();
+        }
+        let result = conn.execute("SELECT v FROM t").unwrap();
+        let mut actual: Vec<Decimal> = Vec::with_capacity(expected.len());
+        for row in result {
+            match row.unwrap().get("v").unwrap() {
+                DuckValue::Decimal(got) => actual.push(*got),
+                other => panic!("expected Decimal, got {other:?}"),
+            }
+        }
+        let mut expected_sorted = expected.clone();
+        expected_sorted.sort();
+        actual.sort();
+        assert_eq!(actual, expected_sorted);
+    }
 
     #[test]
     fn test_i8_conversion() {

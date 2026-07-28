@@ -1,6 +1,9 @@
 use super::*;
 use crate::{
-    ffi::{duckdb_create_blob, duckdb_get_blob},
+    ffi::{
+        duckdb_create_blob, duckdb_create_logical_type, duckdb_get_blob, duckdb_logical_type,
+        DUCKDB_TYPE_DUCKDB_TYPE_BLOB,
+    },
     types::appendable::AppendAble,
 };
 
@@ -95,5 +98,18 @@ impl AppendAble for Blob {
             )
         };
         Ok(())
+    }
+}
+
+impl DuckLogicalType for Blob {
+    fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError> {
+        // SAFETY: DUCKDB_TYPE_DUCKDB_TYPE_BLOB is always a valid duckdb_type constant.
+        Ok(unsafe { duckdb_create_logical_type(DUCKDB_TYPE_DUCKDB_TYPE_BLOB) })
+    }
+}
+
+impl From<Blob> for value::DuckValue {
+    fn from(b: Blob) -> Self {
+        value::DuckValue::Blob(b)
     }
 }

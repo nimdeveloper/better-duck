@@ -3,11 +3,14 @@ use super::*;
 use crate::types::appendable::AppendAble;
 use crate::{
     ffi::{
-        duckdb_create_date, duckdb_create_interval, duckdb_create_time, duckdb_create_time_ns,
-        duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_date, duckdb_date_struct,
-        duckdb_from_date, duckdb_from_time, duckdb_from_time_tz, duckdb_interval, duckdb_time,
-        duckdb_time_ns, duckdb_time_struct, duckdb_time_tz, duckdb_timestamp, duckdb_to_date,
-        duckdb_to_time,
+        duckdb_create_date, duckdb_create_interval, duckdb_create_logical_type, duckdb_create_time,
+        duckdb_create_time_ns, duckdb_create_time_tz_value, duckdb_create_timestamp, duckdb_date,
+        duckdb_date_struct, duckdb_from_date, duckdb_from_time, duckdb_from_time_tz,
+        duckdb_interval, duckdb_logical_type, duckdb_time, duckdb_time_ns, duckdb_time_struct,
+        duckdb_time_tz, duckdb_timestamp, duckdb_to_date, duckdb_to_time,
+        DUCKDB_TYPE_DUCKDB_TYPE_DATE, DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL,
+        DUCKDB_TYPE_DUCKDB_TYPE_TIME, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP,
+        DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS, DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ,
     },
     impl_appendable_via_to_duck_native,
 };
@@ -336,6 +339,57 @@ impl AppendAble for SystemTime {
 // `DuckTimeNs` and `DuckTimeTz` have no dedicated append/bind function; use the value path.
 impl_appendable_via_to_duck_native!(DuckTimeNs);
 impl_appendable_via_to_duck_native!(DuckTimeTz);
+
+// DuckLogicalType + From<T> for DuckValue
+
+macro_rules! impl_duck_logical_type {
+    ($rust_type:ty, $duck_type:expr) => {
+        impl DuckLogicalType for $rust_type {
+            fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError> {
+                // SAFETY: `$duck_type` is always a valid duckdb_type constant.
+                Ok(unsafe { duckdb_create_logical_type($duck_type) })
+            }
+        }
+    };
+}
+
+impl_duck_logical_type!(DuckDate, DUCKDB_TYPE_DUCKDB_TYPE_DATE);
+impl_duck_logical_type!(DuckTime, DUCKDB_TYPE_DUCKDB_TYPE_TIME);
+impl_duck_logical_type!(SystemTime, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP);
+impl_duck_logical_type!(StdDuration, DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL);
+impl_duck_logical_type!(DuckTimeTz, DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ);
+impl_duck_logical_type!(DuckTimeNs, DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS);
+
+impl From<DuckDate> for value::DuckValue {
+    fn from(v: DuckDate) -> Self {
+        value::DuckValue::Date(v)
+    }
+}
+impl From<DuckTime> for value::DuckValue {
+    fn from(v: DuckTime) -> Self {
+        value::DuckValue::Time(v)
+    }
+}
+impl From<SystemTime> for value::DuckValue {
+    fn from(v: SystemTime) -> Self {
+        value::DuckValue::Timestamp(v)
+    }
+}
+impl From<StdDuration> for value::DuckValue {
+    fn from(v: StdDuration) -> Self {
+        value::DuckValue::Interval(v)
+    }
+}
+impl From<DuckTimeTz> for value::DuckValue {
+    fn from(v: DuckTimeTz) -> Self {
+        value::DuckValue::TimeTz(v)
+    }
+}
+impl From<DuckTimeNs> for value::DuckValue {
+    fn from(v: DuckTimeNs) -> Self {
+        value::DuckValue::TimeNs(v)
+    }
+}
 
 /// Hash `SystemTime` by converting to `Duration` since UNIX_EPOCH (platform-stable).
 #[cfg(not(feature = "chrono"))]

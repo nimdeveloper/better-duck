@@ -24,7 +24,7 @@ use crate::{
     types::appendable::AppendAble,
 };
 
-use super::value::DuckValue;
+use super::{value::DuckValue, DuckLogicalType};
 
 // Read path
 
@@ -208,16 +208,107 @@ pub(crate) fn map_logical_type(
 }
 
 // AppendAble impl
+//
+// Unlike `map_to_duck` above (which infers key/value types from the first entry and
+// therefore rejects empty maps), this uses `K`/`V::duck_logical_type()` — a property
+// of the Rust types, not of any particular value — so it works for empty maps too.
+//
+// This generic impl covers `HashMap<DuckValue, DuckValue>` too (`DuckValue` does not
+// implement `DuckLogicalType`, but a caller with an actual `HashMap<DuckValue,
+// DuckValue>` can bind `DuckValue::Map(m)` directly, which goes through the
+// value-based `map_to_duck` path above instead).
+//
+// A plain `HashMap<String, DuckValue>` therefore means MAP here; wrap it in
+// `DuckStruct` (see `duck_struct.rs`) to mean STRUCT instead — mirroring how `Blob`
+// disambiguates `Vec<u8>` from a generic `LIST`.
 
-/// Bind/append a `HashMap<DuckValue, DuckValue>` as a DuckDB `MAP`.
-impl AppendAble for HashMap<DuckValue, DuckValue> {
+/// Builds a `duckdb_value` of type `MAP` from `m`, using `K`/`V`'s static logical
+/// types for the key/value types. Works even when `m` is empty.
+fn build_typed_map_value<K, V>(m: &HashMap<K, V>) -> Result<duckdb_value, DuckDBConversionError>
+where
+    K: Into<DuckValue> + Clone + DuckLogicalType,
+    V: Into<DuckValue> + Clone + DuckLogicalType,
+{
+    let mut key_lt = K::duck_logical_type()?;
+    let mut val_lt = match V::duck_logical_type() {
+        Ok(lt) => lt,
+        Err(e) => {
+            // SAFETY: `key_lt` was allocated by `K::duck_logical_type()` above.
+            unsafe { duckdb_destroy_logical_type(&mut key_lt) };
+            return Err(e);
+        },
+    };
+    // SAFETY: both types are valid; `duckdb_create_map_type` copies them.
+    let mut map_lt = unsafe { duckdb_create_map_type(key_lt, val_lt) };
+    // SAFETY: `key_lt` was allocated above; destroy once.
+    unsafe { duckdb_destroy_logical_type(&mut key_lt) };
+    // SAFETY: `val_lt` was allocated above; destroy once.
+    unsafe { duckdb_destroy_logical_type(&mut val_lt) };
+
+    let n = m.len();
+    let mut key_dvs: Vec<duckdb_value> = Vec::with_capacity(n);
+    let mut val_dvs: Vec<duckdb_value> = Vec::with_capacity(n);
+    let mut err: Option<DuckDBConversionError> = None;
+    for (k, v) in m {
+        match k.clone().into().to_duck() {
+            Ok(kv) => key_dvs.push(kv),
+            Err(e) => {
+                err = Some(e);
+                break;
+            },
+        }
+        match v.clone().into().to_duck() {
+            Ok(vv) => val_dvs.push(vv),
+            Err(e) => {
+                err = Some(e);
+                break;
+            },
+        }
+    }
+    if let Some(e) = err {
+        for mut kv in key_dvs {
+            // SAFETY: each `kv` was created by `to_duck()` above; destroy once.
+            unsafe { duckdb_destroy_value(&mut kv) };
+        }
+        for mut vv in val_dvs {
+            // SAFETY: each `vv` was created by `to_duck()` above; destroy once.
+            unsafe { duckdb_destroy_value(&mut vv) };
+        }
+        // SAFETY: `map_lt` was allocated above; destroy once.
+        unsafe { duckdb_destroy_logical_type(&mut map_lt) };
+        return Err(e);
+    }
+    // SAFETY: `map_lt` valid; key/val arrays have `n` elements each.
+    let result = unsafe {
+        duckdb_create_map_value(map_lt, key_dvs.as_mut_ptr(), val_dvs.as_mut_ptr(), n as idx_t)
+    };
+    // SAFETY: `map_lt` was allocated above; destroy once.
+    unsafe { duckdb_destroy_logical_type(&mut map_lt) };
+    for mut kv in key_dvs {
+        // SAFETY: each `kv` was created by `to_duck()` above; destroy once.
+        unsafe { duckdb_destroy_value(&mut kv) };
+    }
+    for mut vv in val_dvs {
+        // SAFETY: each `vv` was created by `to_duck()` above; destroy once.
+        unsafe { duckdb_destroy_value(&mut vv) };
+    }
+    Ok(result)
+}
+
+/// Bind/append a `HashMap<K, V>` as a DuckDB `MAP`, for any `K`/`V` with a fixed
+/// DuckDB type (see [`DuckLogicalType`]). Works for empty maps too.
+impl<K, V> AppendAble for HashMap<K, V>
+where
+    K: Into<DuckValue> + Clone + DuckLogicalType,
+    V: Into<DuckValue> + Clone + DuckLogicalType,
+{
     fn stmt_append(
         &mut self,
         idx: u64,
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
-        let mut dv = DuckValue::Map(self.clone()).to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `stmt`/`idx` are valid; `dv` was created by `to_duck()`.
+        let mut dv = build_typed_map_value(self).map_err(Error::ConversionError)?;
+        // SAFETY: `stmt`/`idx` are valid; `dv` was created by `build_typed_map_value`.
         unsafe { duckdb_bind_value(stmt, idx, dv) };
         // SAFETY: `dv` was created above; destroy exactly once.
         unsafe { duckdb_destroy_value(&mut dv) };
@@ -228,12 +319,36 @@ impl AppendAble for HashMap<DuckValue, DuckValue> {
         &mut self,
         appender: crate::ffi::duckdb_appender,
     ) -> Result<()> {
-        let mut dv = DuckValue::Map(self.clone()).to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `appender` is valid; `dv` was created by `to_duck()`.
+        let mut dv = build_typed_map_value(self).map_err(Error::ConversionError)?;
+        // SAFETY: `appender` is valid; `dv` was created by `build_typed_map_value`.
         unsafe { duckdb_append_value(appender, dv) };
         // SAFETY: `dv` was created above; destroy exactly once.
         unsafe { duckdb_destroy_value(&mut dv) };
         Ok(())
+    }
+}
+
+// From<T> for DuckValue — Map
+
+impl From<HashMap<DuckValue, DuckValue>> for DuckValue {
+    fn from(h: HashMap<DuckValue, DuckValue>) -> Self {
+        DuckValue::Map(h)
+    }
+}
+
+/// Converts a `HashMap<String, DuckValue>` into `DuckValue::Map` (keys become
+/// `DuckValue::Text`).
+impl From<HashMap<String, DuckValue>> for DuckValue {
+    fn from(h: HashMap<String, DuckValue>) -> Self {
+        DuckValue::Map(h.into_iter().map(|(k, v)| (DuckValue::Text(k), v)).collect())
+    }
+}
+
+/// Converts a `Vec<(String, DuckValue)>` into `DuckValue::Map` (keys become
+/// `DuckValue::Text`).
+impl From<Vec<(String, DuckValue)>> for DuckValue {
+    fn from(v: Vec<(String, DuckValue)>) -> Self {
+        DuckValue::Map(v.into_iter().map(|(k, v)| (DuckValue::Text(k), v)).collect())
     }
 }
 
@@ -276,4 +391,40 @@ pub(super) fn map_entries_hash_ref<'a, H: Hasher>(
         })
         .fold(0u64, |acc, x| acc ^ x);
     xor_fold.hash(state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connection::Connection;
+
+    #[test]
+    fn empty_hashmap_appends_and_reads_back() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (v MAP(INTEGER, VARCHAR))").unwrap();
+        let mut map: HashMap<i32, String> = HashMap::new();
+        conn.execute_with("INSERT INTO t VALUES ($1)", &mut [&mut map]).unwrap();
+        let mut result = conn.execute("SELECT v FROM t").unwrap();
+        let row = result.next().unwrap().unwrap();
+        match row.get("v").unwrap() {
+            DuckValue::Map(m) => assert!(m.is_empty()),
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nonempty_hashmap_appends_and_reads_back() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (v MAP(INTEGER, VARCHAR))").unwrap();
+        let mut map: HashMap<i32, String> = HashMap::from([(1, "one".to_string())]);
+        conn.execute_with("INSERT INTO t VALUES ($1)", &mut [&mut map]).unwrap();
+        let mut result = conn.execute("SELECT v FROM t").unwrap();
+        let row = result.next().unwrap().unwrap();
+        match row.get("v").unwrap() {
+            DuckValue::Map(m) => {
+                assert_eq!(m.get(&DuckValue::Int(1)), Some(&DuckValue::text("one")));
+            },
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
 }

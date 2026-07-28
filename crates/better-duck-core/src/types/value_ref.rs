@@ -141,6 +141,12 @@ pub enum DuckValueRef<'a> {
     Map(HashMap<DuckValueRef<'a>, DuckValueRef<'a>>),
     /// The value is a union (tagged sum type; holds the active member value).
     Union(Box<DuckValueRef<'a>>),
+    /// The value is a UUID.
+    Uuid(crate::types::uuid::DuckUuid),
+    /// The value is a bitstring (`BIT`).
+    Bit(crate::types::bit::DuckBit),
+    /// The value is an arbitrary-precision integer (`BIGNUM`).
+    Bignum(crate::types::bignum::DuckBignum),
 }
 
 // PartialEq / Eq / Hash
@@ -221,6 +227,9 @@ impl<'a> PartialEq for DuckValueRef<'a> {
             (Struct(a), Struct(b)) => a == b,
             (Map(a), Map(b)) => a == b,
             (Union(a), Union(b)) => a == b,
+            (Uuid(a), Uuid(b)) => a == b,
+            (Bit(a), Bit(b)) => a == b,
+            (Bignum(a), Bignum(b)) => a == b,
             _ => false,
         }
     }
@@ -314,6 +323,9 @@ impl<'a> Hash for DuckValueRef<'a> {
                 xor_fold.hash(state);
             },
             DuckValueRef::Union(u) => u.hash(state),
+            DuckValueRef::Uuid(u) => u.hash(state),
+            DuckValueRef::Bit(b) => b.hash(state),
+            DuckValueRef::Bignum(b) => b.hash(state),
         }
     }
 }
@@ -396,6 +408,9 @@ impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
                 m.iter().map(|(k, v)| (DuckValueRef::from(k), DuckValueRef::from(v))).collect(),
             ),
             DuckValue::Union(u) => DuckValueRef::Union(Box::new(DuckValueRef::from(u.as_ref()))),
+            DuckValue::Uuid(u) => DuckValueRef::Uuid(*u),
+            DuckValue::Bit(b) => DuckValueRef::Bit(b.clone()),
+            DuckValue::Bignum(b) => DuckValueRef::Bignum(b.clone()),
         }
     }
 }
@@ -493,6 +508,9 @@ impl<'a> From<DuckValue> for DuckValueRef<'a> {
                     .collect(),
             ),
             DuckValue::Union(b) => DuckValueRef::Union(Box::new(DuckValueRef::from(*b))),
+            DuckValue::Uuid(u) => DuckValueRef::Uuid(u),
+            DuckValue::Bit(b) => DuckValueRef::Bit(b),
+            DuckValue::Bignum(b) => DuckValueRef::Bignum(b),
         }
     }
 }
@@ -643,7 +661,10 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             | DuckValueRef::Array(_)
             | DuckValueRef::Struct(_)
             | DuckValueRef::Map(_)
-            | DuckValueRef::Union(_) => {
+            | DuckValueRef::Union(_)
+            | DuckValueRef::Uuid(_)
+            | DuckValueRef::Bit(_)
+            | DuckValueRef::Bignum(_) => {
                 bind_via_to_duck!();
             },
             DuckValueRef::Enum(v) => v.clone().into_owned().stmt_append(idx, stmt),
@@ -750,7 +771,10 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             | DuckValueRef::Array(_)
             | DuckValueRef::Struct(_)
             | DuckValueRef::Map(_)
-            | DuckValueRef::Union(_) => {
+            | DuckValueRef::Union(_)
+            | DuckValueRef::Uuid(_)
+            | DuckValueRef::Bit(_)
+            | DuckValueRef::Bignum(_) => {
                 append_via_to_duck!();
             },
             #[cfg(feature = "decimal")]
@@ -760,7 +784,8 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
 }
 
 //
-// From<primitive> for DuckValueRef — mirrors the DuckValue impls in from_impls.rs.
+// From<primitive> for DuckValueRef — mirrors the per-type `From<T> for DuckValue`
+// impls scattered across numeric.rs/varchar.rs/blob.rs/etc.
 // These allow callers to pass raw Rust primitives where a DuckValueRef is expected.
 //
 
