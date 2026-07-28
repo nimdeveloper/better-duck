@@ -5,26 +5,31 @@ use crate::{
     types::value::DuckValue,
 };
 use std::ptr;
+use std::sync::Arc;
 
 /// A single row of data returned by a DuckDB query, consisting of typed values
 /// and their associated column names.
 ///
 /// Values are accessible by column index via [`get_idx`](DuckRow::get_idx)
 /// or by column name via [`get`](DuckRow::get).
+///
+/// Column names are shared via `Arc` across every row of the same result set:
+/// cloning a `DuckRow` (as the iterator does internally when rewind support is
+/// enabled) is one `Arc` bump, not a fresh per-row allocation of every column name.
 #[derive(Debug, Clone)]
-pub struct DuckRow(Vec<DuckValue>, Box<[Box<str>]>);
+pub struct DuckRow(Vec<DuckValue>, Arc<[Box<str>]>);
 
 impl DuckRow {
-    /// Creates a new [`DuckRow`] from a vector of values and an owned boxed slice of
+    /// Creates a new [`DuckRow`] from a vector of values and a shared, owned slice of
     /// column names.
     ///
     /// # Arguments
     ///
     /// * `result` - The column values for this row.
-    /// * `col_names` - Owned column names, one per value.
+    /// * `col_names` - Owned column names, one per value, shared across the result set.
     pub fn new(
         result: Vec<DuckValue>,
-        col_names: Box<[Box<str>]>,
+        col_names: Arc<[Box<str>]>,
     ) -> DuckRow {
         DuckRow(result, col_names)
     }
@@ -79,7 +84,7 @@ impl DuckRow {
     /// Returns an error if the chunk has no columns or if a column vector is null.
     pub fn from_chunk(
         chunk: &mut DataChunk,
-        col_names: Box<[Box<str>]>,
+        col_names: Arc<[Box<str>]>,
         col_types: &[DUCKDB_TYPE],
     ) -> Result<Self> {
         let row_idx = chunk.current_row() - 1; // Adjust for 0-based index
