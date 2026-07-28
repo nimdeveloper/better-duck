@@ -10,12 +10,10 @@ use crate::{
     error::{DuckDBConversionError, Error, Result},
     ffi,
     raw::row::DuckRow,
+    result_set::ResultSet,
 };
 
 use super::data_chunk::DataChunk;
-
-// TODO: Implement rows cache by using Box<[DuckValue]> or Vec<DuckValue> to store rows
-// TODO: Implement exists method
 
 /// Represents the result of a DuckDB query, providing row-by-row iteration over
 /// the returned data.
@@ -35,6 +33,12 @@ pub struct DuckResult {
     column_types: Box<[DUCKDB_TYPE]>,
     /// Number of columns in the result.
     pub col_count: u64,
+    /// Rows already pulled from the underlying result, enabling [`rewind`](DuckResult::rewind).
+    cache: Vec<DuckRow>,
+    /// Read position into `cache` consulted by the `Iterator` implementation.
+    cursor: usize,
+    /// `true` once the underlying result has yielded its last row.
+    exhausted: bool,
 }
 
 impl DuckResult {
@@ -52,6 +56,9 @@ impl DuckResult {
             chunk: None,
             column_names: OnceCell::new(),
             column_types: Box::new([]),
+            cache: Vec::new(),
+            cursor: 0,
+            exhausted: false,
         };
         res.resolve_columns_name().expect("failed to resolve column names");
         res.resolve_columns_types().expect("failed to resolve column types");
@@ -156,6 +163,16 @@ impl DuckResult {
             }
         }
     }
+
+    /// Pulls the next row directly from the underlying DuckDB result, bypassing
+    /// the cache. Returns `None` once the underlying result is exhausted.
+    fn pull_next(&mut self) -> Option<Result<DuckRow>> {
+        if self.advance().is_some() {
+            Some(self.current())
+        } else {
+            None
+        }
+    }
 }
 
 // Exposed API
@@ -239,16 +256,89 @@ impl DuckResult {
     ) -> Option<usize> {
         self.column_names.get().unwrap().iter().position(|name| name.as_ref() == col_name)
     }
+
+    /// Returns whether this result contains at least one more row, without
+    /// consuming it — a subsequent call to `next()` still yields that row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if pulling the first row fails.
+    pub fn exists(&mut self) -> Result<bool> {
+        if self.cursor < self.cache.len() {
+            return Ok(true);
+        }
+        if self.exhausted {
+            return Ok(false);
+        }
+        match self.pull_next() {
+            Some(Ok(row)) => {
+                // Cache the row but leave `cursor` unmoved, so `next()` still returns it.
+                self.cache.push(row);
+                Ok(true)
+            },
+            Some(Err(e)) => Err(e),
+            None => {
+                self.exhausted = true;
+                Ok(false)
+            },
+        }
+    }
+
+    /// Resets iteration to the first row.
+    ///
+    /// Only rows already pulled (via prior iteration or [`exists`](DuckResult::exists))
+    /// are replayed; rows not yet pulled from the underlying result are fetched
+    /// normally as iteration continues past the cache.
+    pub fn rewind(&mut self) {
+        self.cursor = 0;
+    }
+
+    /// Consumes this result, materializing every row into an owned [`ResultSet`].
+    ///
+    /// Unlike `DuckResult`, the returned `ResultSet` holds no FFI handles and is
+    /// `Send` + `Sync` + `Clone`, so it can cross thread boundaries (e.g. out of a
+    /// `spawn_blocking` closure).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if row conversion fails partway through iteration.
+    pub fn materialize(mut self) -> Result<ResultSet> {
+        let changes = self.changes();
+        let column_names = self.column_names().to_vec().into_boxed_slice();
+        let mut rows = Vec::new();
+        for row in self {
+            rows.push(row?);
+        }
+        Ok(ResultSet::new(rows, changes, column_names))
+    }
 }
 
 impl Iterator for DuckResult {
     type Item = Result<DuckRow>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.advance().is_some() {
-            Some(self.current())
-        } else {
-            None
+        if self.cursor < self.cache.len() {
+            let row = self.cache[self.cursor].clone();
+            self.cursor += 1;
+            return Some(Ok(row));
+        }
+        if self.exhausted {
+            return None;
+        }
+        match self.pull_next() {
+            Some(Ok(row)) => {
+                self.cache.push(row.clone());
+                self.cursor += 1;
+                Some(Ok(row))
+            },
+            Some(Err(e)) => {
+                self.exhausted = true;
+                Some(Err(e))
+            },
+            None => {
+                self.exhausted = true;
+                None
+            },
         }
     }
 }
