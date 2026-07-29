@@ -22,6 +22,7 @@ strum         = { workspace = true, features = ["derive"] }
 rust_decimal  = { workspace = true, features = ["macros"], optional = true }
 r2d2          = { workspace = true, optional = true }
 tokio         = { workspace = true, features = ["rt"], optional = true }
+better-duck-macros = { path = "../better-duck-macros", version = "0.1.0-beta.2", optional = true }
 
 [features]
 default         = ["bundled", "chrono", "decimal"]
@@ -33,6 +34,7 @@ chrono          = ["dep:chrono"]
 decimal         = ["dep:rust_decimal"]
 pool            = ["dep:r2d2"]
 async           = ["dep:tokio"]
+udf             = ["dep:better-duck-macros"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -48,6 +50,7 @@ serde      = { version = "1", features = ["derive"] }
 tokio      = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
 duckdb     = { version = "1.10505.0", features = ["bundled", "chrono", "uuid", "rust_decimal"] }
 uuid = "1.24.0"
+trybuild = "1.0"
 
 [[bench]]
 name    = "my_benchmark"

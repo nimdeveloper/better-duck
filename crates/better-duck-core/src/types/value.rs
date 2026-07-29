@@ -9,11 +9,14 @@ use std::mem;
 #[cfg(not(feature = "chrono"))]
 use std::time::{Duration, SystemTime};
 
+#[cfg(feature = "decimal")]
+use crate::ffi::{
+    duckdb_decimal_internal_type, duckdb_decimal_scale, DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
+};
 use crate::{
     ffi::{
         duckdb_create_logical_type, duckdb_create_null_value, duckdb_create_uhugeint, duckdb_date,
-        duckdb_decimal_internal_type, duckdb_decimal_scale, duckdb_destroy_logical_type,
-        duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
+        duckdb_destroy_logical_type, duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
         duckdb_free, duckdb_interval, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
         duckdb_string_t_length, duckdb_time, duckdb_time_ns, duckdb_time_tz, duckdb_timestamp,
         duckdb_timestamp_ms, duckdb_timestamp_ns, duckdb_timestamp_s, duckdb_type, duckdb_uhugeint,
@@ -21,8 +24,7 @@ use crate::{
         duckdb_vector_get_data, duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
         DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM,
         DUCKDB_TYPE_DUCKDB_TYPE_BIT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN,
-        DUCKDB_TYPE_DUCKDB_TYPE_DATE, DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
-        DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_ENUM,
+        DUCKDB_TYPE_DUCKDB_TYPE_DATE, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_ENUM,
         DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT,
         DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL,
         DUCKDB_TYPE_DUCKDB_TYPE_INVALID, DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP,
