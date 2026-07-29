@@ -1,0 +1,664 @@
+{
+  "system": {
+    "cpu_brand": "Intel(R) Core(TM) Ultra 7 155U",
+    "cpu_physical_cores": 12,
+    "total_ram_gb": 15.55239486694336,
+    "rustc_version": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "duckdb_rs_version": "1.10505.0",
+    "generated_at_unix_secs": 1785338605
+  },
+  "workloads": [
+    {
+      "group": "Primitive types",
+      "name": "bool",
+      "description": "Insert + full-scan 20000 rows of BOOLEAN",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 26.206400000000002,
+        "median_ms": 28.8116,
+        "p95_ms": 36.6055,
+        "throughput_per_sec": 694164.8502686418,
+        "rss_delta_mb": 0.5390625
+      },
+      "other": {
+        "min_ms": 28.4278,
+        "median_ms": 31.3521,
+        "p95_ms": 33.3902,
+        "throughput_per_sec": 637915.8014933609,
+        "rss_delta_mb": 0.16015625
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "i8",
+      "description": "Insert + full-scan 20000 rows of TINYINT",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 25.6071,
+        "median_ms": 29.5305,
+        "p95_ms": 37.6958,
+        "throughput_per_sec": 677265.8776519191,
+        "rss_delta_mb": 9.453125
+      },
+      "other": {
+        "min_ms": 31.0952,
+        "median_ms": 33.7219,
+        "p95_ms": 39.1755,
+        "throughput_per_sec": 593086.3919292804,
+        "rss_delta_mb": 0.0
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "i16",
+      "description": "Insert + full-scan 20000 rows of SMALLINT",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 28.0363,
+        "median_ms": 35.6724,
+        "p95_ms": 36.4511,
+        "throughput_per_sec": 560657.5391619292,
+        "rss_delta_mb": 2.953125
+      },
+      "other": {
+        "min_ms": 29.2462,
+        "median_ms": 31.8381,
+        "p95_ms": 34.538199999999996,
+        "throughput_per_sec": 628178.1890250988,
+        "rss_delta_mb": 0.0390625
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "i32",
+      "description": "Insert + full-scan 20000 rows of INTEGER",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 26.7744,
+        "median_ms": 28.1744,
+        "p95_ms": 29.4128,
+        "throughput_per_sec": 709864.2739508207,
+        "rss_delta_mb": 0.0078125
+      },
+      "other": {
+        "min_ms": 24.6317,
+        "median_ms": 26.9436,
+        "p95_ms": 30.018199999999997,
+        "throughput_per_sec": 742291.3047996556,
+        "rss_delta_mb": 0.12109375
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "i64",
+      "description": "Insert + full-scan 20000 rows of BIGINT",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 26.3541,
+        "median_ms": 27.514799999999997,
+        "p95_ms": 28.295,
+        "throughput_per_sec": 726881.5328477765,
+        "rss_delta_mb": 0.08984375
+      },
+      "other": {
+        "min_ms": 24.2998,
+        "median_ms": 29.0242,
+        "p95_ms": 31.6196,
+        "throughput_per_sec": 689080.1469118873,
+        "rss_delta_mb": 0.61328125
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "i128",
+      "description": "Insert + full-scan 20000 rows of HUGEINT",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 24.0741,
+        "median_ms": 25.1927,
+        "p95_ms": 34.099,
+        "throughput_per_sec": 793880.7670475972,
+        "rss_delta_mb": 0.23828125
+      },
+      "other": {
+        "min_ms": 26.7849,
+        "median_ms": 27.8631,
+        "p95_ms": 34.0845,
+        "throughput_per_sec": 717795.2202016287,
+        "rss_delta_mb": 0.02734375
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "u8",
+      "description": "Insert + full-scan 20000 rows of UTINYINT",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 22.0977,
+        "median_ms": 27.8703,
+        "p95_ms": 31.3528,
+        "throughput_per_sec": 717609.7853270327,
+        "rss_delta_mb": 0.0
+      },
+      "other": {
+        "min_ms": 31.2209,
+        "median_ms": 41.2752,
+        "p95_ms": 51.7692,
+        "throughput_per_sec": 484552.4673411637,
+        "rss_delta_mb": 2.546875
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "u16",
+      "description": "Insert + full-scan 20000 rows of USMALLINT",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 28.7526,
+        "median_ms": 35.089,
+        "p95_ms": 36.843,
+        "throughput_per_sec": 569979.1957593547,
+        "rss_delta_mb": 0.109375
+      },
+      "other": {
+        "min_ms": 39.7385,
+        "median_ms": 40.5455,
+        "p95_ms": 44.0898,
+        "throughput_per_sec": 493272.9896042718,
+        "rss_delta_mb": 2.86328125
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "u32",
+      "description": "Insert + full-scan 20000 rows of UINTEGER",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 31.9502,
+        "median_ms": 34.0445,
+        "p95_ms": 38.2864,
+        "throughput_per_sec": 587466.4042650061,
+        "rss_delta_mb": 0.0
+      },
+      "other": {
+        "min_ms": 39.144999999999996,
+        "median_ms": 41.8913,
+        "p95_ms": 43.2508,
+        "throughput_per_sec": 477426.1004074832,
+        "rss_delta_mb": 0.23828125
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "u64",
+      "description": "Insert + full-scan 20000 rows of UBIGINT",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 35.3258,
+        "median_ms": 37.6235,
+        "p95_ms": 38.6202,
+        "throughput_per_sec": 531582.6544579851,
+        "rss_delta_mb": 0.0
+      },
+      "other": {
+        "min_ms": 41.1813,
+        "median_ms": 42.6375,
+        "p95_ms": 50.5291,
+        "throughput_per_sec": 469070.65376722364,
+        "rss_delta_mb": 3.55078125
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "f32",
+      "description": "Insert + full-scan 20000 rows of FLOAT",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 39.0186,
+        "median_ms": 40.451,
+        "p95_ms": 43.4345,
+        "throughput_per_sec": 494425.3541321599,
+        "rss_delta_mb": 0.0
+      },
+      "other": {
+        "min_ms": 40.205,
+        "median_ms": 42.458999999999996,
+        "p95_ms": 44.782799999999995,
+        "throughput_per_sec": 471042.6529122212,
+        "rss_delta_mb": 3.484375
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "f64",
+      "description": "Insert + full-scan 20000 rows of DOUBLE",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 36.6852,
+        "median_ms": 38.3409,
+        "p95_ms": 41.6478,
+        "throughput_per_sec": 521636.1639919773,
+        "rss_delta_mb": 0.0
+      },
+      "other": {
+        "min_ms": 41.567600000000006,
+        "median_ms": 44.6359,
+        "p95_ms": 46.147800000000004,
+        "throughput_per_sec": 448069.82720187114,
+        "rss_delta_mb": 2.75390625
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "String",
+      "description": "Insert + full-scan 20000 rows of VARCHAR",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 45.3508,
+        "median_ms": 46.7808,
+        "p95_ms": 48.3544,
+        "throughput_per_sec": 427525.82255968265,
+        "rss_delta_mb": 0.0
+      },
+      "other": {
+        "min_ms": 51.6688,
+        "median_ms": 56.3701,
+        "p95_ms": 58.3138,
+        "throughput_per_sec": 354798.02235582337,
+        "rss_delta_mb": 2.6796875
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "Decimal",
+      "description": "Insert + full-scan 20000 rows of DECIMAL(18,4)",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 82.0457,
+        "median_ms": 86.2207,
+        "p95_ms": 99.7972,
+        "throughput_per_sec": 231962.85810715987,
+        "rss_delta_mb": 0.0
+      },
+      "other": {
+        "min_ms": 97.1706,
+        "median_ms": 99.71289999999999,
+        "p95_ms": 100.56039999999999,
+        "throughput_per_sec": 200575.85327475183,
+        "rss_delta_mb": 3.28125
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "NaiveDate",
+      "description": "Insert + full-scan 20000 rows of DATE",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 34.638299999999994,
+        "median_ms": 37.3774,
+        "p95_ms": 40.2591,
+        "throughput_per_sec": 535082.6970308261,
+        "rss_delta_mb": 0.15625
+      },
+      "other": {
+        "min_ms": 45.3707,
+        "median_ms": 56.2169,
+        "p95_ms": 61.013600000000004,
+        "throughput_per_sec": 355764.90343651106,
+        "rss_delta_mb": 3.6640625
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "NaiveTime",
+      "description": "Insert + full-scan 20000 rows of TIME",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 34.897400000000005,
+        "median_ms": 38.0727,
+        "p95_ms": 43.2383,
+        "throughput_per_sec": 525310.7869943555,
+        "rss_delta_mb": 0.72265625
+      },
+      "other": {
+        "min_ms": 43.3321,
+        "median_ms": 56.462900000000005,
+        "p95_ms": 73.4541,
+        "throughput_per_sec": 354214.8915482556,
+        "rss_delta_mb": 0.0
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "NaiveDateTime",
+      "description": "Insert + full-scan 20000 rows of TIMESTAMP",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 32.3032,
+        "median_ms": 37.8277,
+        "p95_ms": 42.202200000000005,
+        "throughput_per_sec": 528713.0859132329,
+        "rss_delta_mb": 0.0
+      },
+      "other": {
+        "min_ms": 57.3971,
+        "median_ms": 60.887499999999996,
+        "p95_ms": 63.092800000000004,
+        "throughput_per_sec": 328474.6458632724,
+        "rss_delta_mb": 2.77734375
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "Duration",
+      "description": "Insert + full-scan 20000 rows of INTERVAL",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 36.2392,
+        "median_ms": 40.6676,
+        "p95_ms": 44.691300000000005,
+        "throughput_per_sec": 491791.99165920785,
+        "rss_delta_mb": 0.953125
+      },
+      "other": {
+        "min_ms": 38.2512,
+        "median_ms": 42.0935,
+        "p95_ms": 46.568,
+        "throughput_per_sec": 475132.740209296,
+        "rss_delta_mb": 0.390625
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "u128 (UHUGEINT)",
+      "description": "Insert + full-scan 20000 rows of UHUGEINT",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 34.4687,
+        "median_ms": 35.9008,
+        "p95_ms": 37.441500000000005,
+        "throughput_per_sec": 557090.6497905339,
+        "rss_delta_mb": 0.00390625
+      },
+      "other": {
+        "min_ms": 39.3255,
+        "median_ms": 45.6488,
+        "p95_ms": 47.6361,
+        "throughput_per_sec": 438127.6178125164,
+        "rss_delta_mb": 2.60546875
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "Blob",
+      "description": "Insert + full-scan 20000 rows of BLOB",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 36.930499999999995,
+        "median_ms": 39.2975,
+        "p95_ms": 46.5169,
+        "throughput_per_sec": 508938.22762262233,
+        "rss_delta_mb": 0.28125
+      },
+      "other": {
+        "min_ms": 40.1139,
+        "median_ms": 47.6489,
+        "p95_ms": 57.4467,
+        "throughput_per_sec": 419736.86695810396,
+        "rss_delta_mb": 1.484375
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "Uuid",
+      "description": "Insert + full-scan 20000 rows of UUID",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 25.489,
+        "median_ms": 26.5734,
+        "p95_ms": 28.4618,
+        "throughput_per_sec": 752632.3315797,
+        "rss_delta_mb": 0.0
+      },
+      "other": {
+        "min_ms": 75.9521,
+        "median_ms": 81.52040000000001,
+        "p95_ms": 87.7397,
+        "throughput_per_sec": 245337.3634084229,
+        "rss_delta_mb": 0.0
+      }
+    },
+    {
+      "group": "Primitive types",
+      "name": "TimestampTz",
+      "description": "Insert + full-scan 20000 rows of TIMESTAMPTZ",
+      "item_count": 20000,
+      "core": {
+        "min_ms": 23.2837,
+        "median_ms": 24.4686,
+        "p95_ms": 26.7751,
+        "throughput_per_sec": 817374.1039536386,
+        "rss_delta_mb": 3.5546875
+      },
+      "other": {
+        "min_ms": 36.382200000000005,
+        "median_ms": 37.4181,
+        "p95_ms": 42.5303,
+        "throughput_per_sec": 534500.6828246223,
+        "rss_delta_mb": 3.83203125
+      }
+    },
+    {
+      "group": "Composite types",
+      "name": "List",
+      "description": "Insert + full-scan 2000 rows of INTEGER[] (LIST) — core: appender; duckdb crate has no write API for LIST, see `other_is_placeholder`",
+      "item_count": 2000,
+      "core": {
+        "min_ms": 23.9993,
+        "median_ms": 25.681800000000003,
+        "p95_ms": 26.3802,
+        "throughput_per_sec": 77876.16132825581,
+        "rss_delta_mb": 0.34375
+      },
+      "other": {
+        "min_ms": 24.9993,
+        "median_ms": 26.681800000000003,
+        "p95_ms": 27.3802,
+        "throughput_per_sec": 77875.16132825581,
+        "rss_delta_mb": 0.0
+      },
+      "other_is_placeholder": true,
+      "other_workaround_actual": {
+        "min_ms": 21.2694,
+        "median_ms": 21.7336,
+        "p95_ms": 25.8123,
+        "throughput_per_sec": 92023.41075569626,
+        "rss_delta_mb": 0.10546875
+      }
+    },
+    {
+      "group": "Composite types",
+      "name": "Array",
+      "description": "Insert + full-scan 2000 rows of INTEGER[3] (ARRAY) — core: appender; duckdb crate has no write API for ARRAY, see `other_is_placeholder`",
+      "item_count": 2000,
+      "core": {
+        "min_ms": 23.899299999999997,
+        "median_ms": 26.0255,
+        "p95_ms": 33.634299999999996,
+        "throughput_per_sec": 76847.7070565407,
+        "rss_delta_mb": 0.01171875
+      },
+      "other": {
+        "min_ms": 24.899299999999997,
+        "median_ms": 27.0255,
+        "p95_ms": 34.634299999999996,
+        "throughput_per_sec": 76846.7070565407,
+        "rss_delta_mb": 0.0
+      },
+      "other_is_placeholder": true,
+      "other_workaround_actual": {
+        "min_ms": 20.384,
+        "median_ms": 22.1535,
+        "p95_ms": 23.531799999999997,
+        "throughput_per_sec": 90279.18839009637,
+        "rss_delta_mb": 0.01953125
+      }
+    },
+    {
+      "group": "Composite types",
+      "name": "Struct",
+      "description": "Insert + full-scan 2000 rows of STRUCT(a INTEGER, b VARCHAR) — core: appender; duckdb crate has no write API for STRUCT, see `other_is_placeholder`",
+      "item_count": 2000,
+      "core": {
+        "min_ms": 34.2425,
+        "median_ms": 38.9358,
+        "p95_ms": 51.2162,
+        "throughput_per_sec": 51366.608622398926,
+        "rss_delta_mb": 2.93359375
+      },
+      "other": {
+        "min_ms": 35.2425,
+        "median_ms": 39.9358,
+        "p95_ms": 52.2162,
+        "throughput_per_sec": 51365.608622398926,
+        "rss_delta_mb": 0.0
+      },
+      "other_is_placeholder": true,
+      "other_workaround_actual": {
+        "min_ms": 23.1533,
+        "median_ms": 25.421400000000002,
+        "p95_ms": 26.4455,
+        "throughput_per_sec": 78673.87319345119,
+        "rss_delta_mb": 0.1796875
+      }
+    },
+    {
+      "group": "Composite types",
+      "name": "Map",
+      "description": "Insert + full-scan 2000 rows of MAP(INTEGER, VARCHAR) — core: appender; duckdb crate has no write API for MAP, see `other_is_placeholder`",
+      "item_count": 2000,
+      "core": {
+        "min_ms": 37.564800000000005,
+        "median_ms": 40.925799999999995,
+        "p95_ms": 51.86000000000001,
+        "throughput_per_sec": 48868.92864647729,
+        "rss_delta_mb": 0.5
+      },
+      "other": {
+        "min_ms": 38.564800000000005,
+        "median_ms": 41.925799999999995,
+        "p95_ms": 52.86000000000001,
+        "throughput_per_sec": 48867.92864647729,
+        "rss_delta_mb": 0.0
+      },
+      "other_is_placeholder": true,
+      "other_workaround_actual": {
+        "min_ms": 25.411900000000003,
+        "median_ms": 28.627799999999997,
+        "p95_ms": 31.057000000000002,
+        "throughput_per_sec": 69862.16195446385,
+        "rss_delta_mb": 0.0
+      }
+    },
+    {
+      "group": "Operations",
+      "name": "crud_basics",
+      "description": "Single-row INSERT + point SELECT + UPDATE + DELETE",
+      "item_count": 4,
+      "core": {
+        "min_ms": 2.2078,
+        "median_ms": 2.7525000000000004,
+        "p95_ms": 4.341399999999999,
+        "throughput_per_sec": 1453.22434150772,
+        "rss_delta_mb": 0.06640625
+      },
+      "other": {
+        "min_ms": 2.8398999999999996,
+        "median_ms": 3.6572,
+        "p95_ms": 6.9985,
+        "throughput_per_sec": 1093.7329104232745,
+        "rss_delta_mb": 0.03125
+      }
+    },
+    {
+      "group": "Operations",
+      "name": "bulk_ingest",
+      "description": "Ingest 10000 rows via each library's appender API",
+      "item_count": 10000,
+      "core": {
+        "min_ms": 20.5314,
+        "median_ms": 24.6048,
+        "p95_ms": 27.4733,
+        "throughput_per_sec": 406424.7626479386,
+        "rss_delta_mb": 0.1484375
+      },
+      "other": {
+        "min_ms": 22.006600000000002,
+        "median_ms": 24.095399999999998,
+        "p95_ms": 29.080499999999997,
+        "throughput_per_sec": 415016.97419424454,
+        "rss_delta_mb": 0.0
+      }
+    },
+    {
+      "group": "Operations",
+      "name": "analytical",
+      "description": "GROUP BY + AVG + ORDER BY on 100000 rows (query only; table pre-populated)",
+      "item_count": 100000,
+      "core": {
+        "min_ms": 1.5544,
+        "median_ms": 2.0677999999999996,
+        "p95_ms": 3.1905,
+        "throughput_per_sec": 48360576.45807138,
+        "rss_delta_mb": 0.234375
+      },
+      "other": {
+        "min_ms": 2.0839,
+        "median_ms": 2.5867,
+        "p95_ms": 4.161899999999999,
+        "throughput_per_sec": 38659295.62763367,
+        "rss_delta_mb": 0.3359375
+      }
+    },
+    {
+      "group": "Operations",
+      "name": "prepared_reuse",
+      "description": "100 point-SELECT queries reusing one prepared statement",
+      "item_count": 100,
+      "core": {
+        "min_ms": 39.2259,
+        "median_ms": 45.2519,
+        "p95_ms": 58.8101,
+        "throughput_per_sec": 2209.8519620170646,
+        "rss_delta_mb": 0.00390625
+      },
+      "other": {
+        "min_ms": 37.184200000000004,
+        "median_ms": 42.401599999999995,
+        "p95_ms": 53.7498,
+        "throughput_per_sec": 2358.401569752085,
+        "rss_delta_mb": 0.0078125
+      }
+    },
+    {
+      "group": "Operations",
+      "name": "all_types",
+      "description": "INSERT + full-scan of 1000 rows across 11 column types",
+      "item_count": 1000,
+      "core": {
+        "min_ms": 22.061799999999998,
+        "median_ms": 23.2988,
+        "p95_ms": 27.3656,
+        "throughput_per_sec": 42920.66544199701,
+        "rss_delta_mb": 0.0
+      },
+      "other": {
+        "min_ms": 22.689600000000002,
+        "median_ms": 26.1176,
+        "p95_ms": 31.601999999999997,
+        "throughput_per_sec": 38288.35727631942,
+        "rss_delta_mb": 0.0
+      }
+    }
+  ]
+}

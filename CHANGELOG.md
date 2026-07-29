@@ -7,6 +7,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.0-beta.3] — 2026-07-29
+
+### `better-duck-core`
+
+#### Added
+
+**New types**
+- `DuckUuid`, `DuckBit`, `DuckBignum` — new `DuckValue`/`DuckValueRef` variants and `Type`
+  variants. UUID reads via the packed `duckdb_uhugeint` layout (no `duckdb_value` round-trip,
+  mirroring HUGEINT); BIT/BIGNUM read via the `duckdb_string_t` layout, mirroring BLOB/VARCHAR.
+  `GEOMETRY`/`VARIANT`/`ANY`/`INTEGER_LITERAL` remain unsupported — the DuckDB C API has no value
+  accessor for them — and continue to panic on read.
+
+**Shared database & pooling**
+- `Database` — a shared, cloneable handle to an open DuckDB database; `Database::connect()`
+  spawns connections that observe the same data, including for `:memory:` databases (unlike
+  `Connection::open_in_memory()`, which gives each call an independent database).
+- `Connection::try_clone()` / `Connection::database()` — open a second connection to the same
+  database, or recover a shareable `Database` handle from an existing `Connection`.
+- **`pool` feature** — `DuckDbConnectionManager` + `Pool`, an `r2d2` connection pool built on
+  `Database`, so pooled connections share one database instead of one-per-slot.
+
+**Async**
+- **`async` feature** — `AsyncConnection`, `AsyncDatabase`, and (with `pool` also enabled)
+  `AsyncPool`: a tokio-only facade over `spawn_blocking`. Bulk inserts are exposed via a scoped
+  `with_appender` closure rather than a standalone handle, since `Appender` is `!Send`.
+- `ResultSet` — an owned, `Send + Sync + Clone` materialized query result
+  (`DuckResult::materialize()`), used by the async and pool facades to cross thread boundaries.
+
+**User-defined functions**
+- **`udf` feature** — `#[duckdb_scalar]` and `#[duckdb_table_function]` attribute macros register
+  a plain Rust function as a DuckDB scalar or table function, with parameter/return types inferred
+  from the Rust signature via `DuckLogicalType`. `Option<T>` propagates `NULL` explicitly; a
+  `Result<T, E>` return fails the query with `E`'s message. Backed by hand-written `VScalar`/`VTab`
+  traits (also usable directly) and a new `better-duck-macros` proc-macro crate, re-exported from
+  `better-duck-core`. Callback panics are caught and reported as query errors under
+  `panic = "unwind"`. Not yet supported: named parameters, projection pushdown, `max_threads`,
+  `varargs`, LIST/STRUCT columns.
+
+**Result API**
+- `DuckResult::exists()` — peeks whether at least one row is available without consuming it.
+- `DuckResult` row cache — `rewind()` replays already-pulled rows from the start.
+
+**Generic binding**
+- **Generic `LIST`/`ARRAY`/`MAP` binding** — `Vec<T>`, `Box<[T]>`, and `HashMap<K, V>` accept any
+  `T`/`K`/`V` with a fixed DuckDB type (`DuckLogicalType`), converting via `Into<DuckValue>` — no
+  need to pre-convert elements to `DuckValue` by hand, and empty collections work too, since the
+  element type comes from the Rust type itself rather than from inspecting the first entry (which
+  the untyped `DuckValue::List`/`Array`/`Map` must still do, and still can't for zero entries).
+- `DuckStruct` newtype — `HashMap<String, DuckValue>` now means `MAP`; wrap it in `DuckStruct` to
+  bind it as `STRUCT` (mirrors how `Blob` disambiguates `Vec<u8>` from a generic `LIST`).
+
+**Misc**
+- `Error::BackgroundTaskFailed`, `Error::Pool` — new non-exhaustive variants for the async and pool
+  facades.
+- `pub mod config` — `Config` and friends are now part of the public API (previously unreachable
+  despite `Connection::open_with_flags` accepting one).
+
+#### Changed
+
+- **`Error::UNKNOWN`** now requires `Box<dyn Error + Send + Sync + 'static>` (previously
+  `Box<dyn Error>`), matching `ToSqlConversionFailure`. This makes `Error` — and therefore
+  `Result<T>` — `Send`, which the async facade requires. Only affects code constructing
+  `Error::UNKNOWN` directly with a non-`Send` payload.
+- `DuckRow` now derives `Clone`.
+
+#### Fixed
+
+- Deleted two stale `TODO: preserve TIME_TZ offset` comments — the offset was already preserved
+  correctly on both read and write; only the comments were out of date.
+- **`Decimal` insert/bind was allocating a `String` on every row** — `Decimal::to_duck()` computed
+  its DuckDB `width` by `format!("{value}").len()`; replaced with integer-only digit counting
+  (`checked_ilog10`), matching the allocation-free approach the `duckdb` crate itself uses.
+- **`u128` (UHUGEINT) had no fast append/bind path** — only `i128` (HUGEINT) had a direct
+  `AppendAble` impl calling the typed FFI functions; `u128` silently fell back to the generic
+  `DuckValue`-based path (heap-allocates and destroys a `duckdb_value` per row). Added
+  `AppendAble for u128` and `DuckDialect<duckdb_uhugeint> for u128`, mirroring the existing `i128`
+  impls and using `duckdb_append_uhugeint`/`duckdb_bind_uhugeint` directly.
+- **Every query execution heap-allocated a `Box<duckdb_result>` it didn't need** —
+  `RawConnection::query`, `Statement::execute`, and `CachedStatement::execute` each boxed a
+  `duckdb_result` purely to get a stable pointer for the FFI output parameter, then immediately
+  copied it back out (`duckdb_result` is a small `Copy` struct with no self-referential fields, and
+  `DuckResult::new` already takes it by value). Switched all three to a stack-local value, removing
+  one malloc/free pair from every single query on the connection.
+- **`DuckResult::count()` fully materialized every row it was about to discard** — the default
+  `Iterator::count()` called `next()` in a loop, which for each row heap-allocates a `Vec<DuckValue>`
+  and converts every column, even though the caller never reads the row. Added a specialized
+  `count()` that advances the chunk cursor without building a `DuckRow` at all — safe because
+  `count(self)` consumes the iterator, so no later call can observe the skipped cache/materialization.
+
+**Benchmarks**
+- `benches/comparison.rs` reworked: `prepared_reuse` now fairly reuses one `CachedStatement` per
+  rep on the core side (previously re-prepared on every one of 100 calls, unlike the `duckdb` crate
+  side it was compared against); `u128` folded into the generic type-benchmark loop now that it has
+  a fast path; SVG charts show one rotated label per core/duckdb bar pair instead of a mesh-drawn
+  tick label; the host/environment "System context" block was removed from `REPORT.md` and every
+  SVG chart caption.
+
+### `better-duck-diesel`
+
+#### Added
+
+- **`FromSql`/`ToSql` for STRUCT, MAP, UNION, ARRAY** (`DuckStruct`, `DuckMap`, `DuckUnion`,
+  `DuckArray`) and for the three new core types (`DuckUuid`, `DuckBit`, `DuckBignum`).
+- **Non-chrono date/time** — `date_native` is wired up; DATE/TIME/TIMESTAMP/INTERVAL/
+  TIMESTAMPTZ/TIME_TZ/TIME_NS all work over Diesel without the `chrono` feature (previously the
+  crate shipped with zero date/time support in a default, non-chrono build).
+- **`DuckDbConnection::from_core()`** and **`pool::SharedDuckDbConnectionManager`** (`r2d2`
+  feature) — an alternative to `diesel::r2d2::ConnectionManager<DuckDbConnection>` that shares one
+  `better_duck_core::database::Database` across the pool instead of opening one database per
+  connection. Both managers may be used side by side.
+
+#### Fixed
+
+- **`push_debug_binds`** — was `todo!()` (panicked on `debug_query`/`EXPLAIN`); now implemented.
+- **`prepare_for_cache`** — the TODO's premise was wrong (Diesel does expose the hint); replaced
+  with an accurate comment noting DuckDB's C API has a single prepare path, so there is nothing to
+  honour.
+
+### Infrastructure
+
+#### Added
+
+- **`better-duck-macros`** — new proc-macro crate (`#[duckdb_scalar]`, `#[duckdb_table_function]`),
+  added to the workspace and to CI's feature matrix / docs / doctest / MSRV / coverage jobs.
+
+#### Fixed
+
+- **`publish_crate.yml` publish order** — `cargo metadata` returns workspace packages
+  alphabetically, which would have tried to publish `better-duck-diesel` before its
+  `better-duck-core` path dependency existed on crates.io; hardcoded the correct topological
+  publish order (`better-duck-macros` → `better-duck-core` → `better-duck-diesel`).
+
+### Still open
+
+See the [roadmap](README.md#roadmap) — multi-arm `UNION` writes, `DECIMAL` precision, and the
+exploratory `better-duck-tauri` / WASM items remain unimplemented.
+
+---
+
 ## [0.1.0-beta.2] — 2026-06-07
 
 First public beta of the `better-duck` workspace.  The core API is settled enough for
@@ -114,20 +254,5 @@ upgrading.
 
 ---
 
-## [Unreleased]
-
-### Planned
-
-See the [roadmap section of the README](README.md#roadmap) for the full list. Key items:
-
-- **New core types** — `UUID`, `BIT`, `BIGNUM`/`VARINT`, `GEOMETRY`, `VARIANT`, `ANY`, `INTEGER_LITERAL` (currently return an error)
-- **`TIME_TZ` offset round-trip** — the UTC offset is decoded but currently discarded
-- **Diesel parity** — `FromSql`/`ToSql` for STRUCT, MAP, UNION; an ARRAY diesel module; new types above wired in once core supports them
-- **Non-chrono diesel date/time** — `date_native` module for `better-duck-diesel` without the `chrono` feature
-- **`DuckResult` rows cache** + `exists` helper; numeric precision surface (`decimal_value.width`)
-- **Async API** and core-level connection pooling
-- **`better-duck-tauri`** crate — Tauri plugin with auto-discovery, repository abstraction, and Tauri command bindings (exploratory / RFC)
-
----
-
+[0.1.0-beta.3]: https://github.com/nimdeveloper/better-duck/releases/tag/v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/nimdeveloper/better-duck/releases/tag/v0.1.0-beta.2
