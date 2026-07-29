@@ -381,6 +381,35 @@ impl Iterator for DuckResult {
             },
         }
     }
+
+    /// Counts the remaining rows without materializing each one into a [`DuckRow`].
+    ///
+    /// The default `Iterator::count()` would call [`next`](Self::next) in a loop,
+    /// which for every row allocates a `Vec<DuckValue>` and converts every column —
+    /// wasted work when the caller only wants the row count. `count(self)` consumes
+    /// `self`, so no further iteration can observe `cache`/`peeked` afterwards; the
+    /// remaining rows are tallied by advancing the chunk cursor only, skipping the
+    /// per-row/per-column conversion entirely.
+    fn count(mut self) -> usize
+    where
+        Self: Sized,
+    {
+        let mut n = 0usize;
+        if self.rewind_enabled && self.cursor < self.cache.len() {
+            n += self.cache.len() - self.cursor;
+            self.cursor = self.cache.len();
+        }
+        if self.peeked.take().is_some() {
+            n += 1;
+        }
+        if self.exhausted {
+            return n;
+        }
+        while self.advance().is_some() {
+            n += 1;
+        }
+        n
+    }
 }
 
 impl Deref for DuckResult {
@@ -508,5 +537,69 @@ mod tests {
         result.rewind();
         let replayed = result.next().unwrap().unwrap();
         assert_eq!(first.get("v"), replayed.get("v"));
+    }
+
+    /// The fast-path `count()` (which skips per-row `DuckRow` materialization) must
+    /// match plain forward iteration for a simple, single-chunk result.
+    #[test]
+    fn count_matches_iteration_length_for_plain_forward_iteration() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE t (v INTEGER)").unwrap();
+        con.query("INSERT INTO t VALUES (1), (2), (3)").unwrap();
+
+        let mut stmt = con.prepare("SELECT v FROM t").unwrap();
+        let result = stmt.execute().unwrap();
+        assert_eq!(result.count(), 3);
+    }
+
+    /// `count()` must correctly tally rows spanning more than one DuckDB vector
+    /// chunk (default chunk size is 2048 rows) — `advance()` must be called enough
+    /// times to cross chunk boundaries, not just enough for a single chunk.
+    #[test]
+    fn count_matches_iteration_length_across_multiple_chunks() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE t AS SELECT * FROM range(5000) t(v)").unwrap();
+
+        let mut stmt = con.prepare("SELECT v FROM t").unwrap();
+        let result = stmt.execute().unwrap();
+        assert_eq!(result.count(), 5000);
+    }
+
+    /// `exists()` peeks a row without consuming it; `count()` must still include
+    /// that already-materialized peeked row in its total.
+    #[test]
+    fn count_after_exists_peek_includes_the_peeked_row() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE t (v INTEGER)").unwrap();
+        con.query("INSERT INTO t VALUES (1), (2), (3)").unwrap();
+
+        let mut stmt = con.prepare("SELECT v FROM t").unwrap();
+        let mut result = stmt.execute().unwrap();
+        assert!(result.exists().unwrap());
+        assert_eq!(result.count(), 3);
+    }
+
+    /// With rewind enabled, some rows may already sit in `cache` (already pulled,
+    /// not yet re-consumed via `cursor`) when `count()` is called on the remainder.
+    /// `count()` must count both the not-yet-replayed cached rows and the rows still
+    /// to be freshly pulled.
+    #[test]
+    fn count_with_rewind_enabled_after_partial_consumption() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE t (v INTEGER)").unwrap();
+        con.query("INSERT INTO t VALUES (1), (2), (3), (4), (5)").unwrap();
+
+        let mut stmt = con.prepare("SELECT v FROM t").unwrap();
+        let mut result = stmt.execute().unwrap();
+        result.enable_rewind();
+
+        // Pull the first two rows (now cached) and rewind, moving the cursor back
+        // to the start of the cache without clearing it.
+        let _ = result.next().unwrap().unwrap();
+        let _ = result.next().unwrap().unwrap();
+        result.rewind();
+
+        // From the start: 2 cached rows to replay + 3 rows still to be pulled fresh.
+        assert_eq!(result.count(), 5);
     }
 }

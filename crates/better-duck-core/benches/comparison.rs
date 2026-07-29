@@ -40,6 +40,7 @@ use better_duck_core::{
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use duckdb::{types::Value as RsValue, Connection as RsConn, ToSql as RsToSql};
 use plotters::prelude::*;
+use plotters::style::text_anchor::{HPos, Pos, VPos};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use sysinfo::{Pid, ProcessesToUpdate, System};
@@ -951,8 +952,9 @@ fn bench_prepared_reuse() -> WorkloadResult {
     // would re-prepare from scratch on every call, which is not what this workload
     // is meant to measure.
     let (samples, rss_b, rss_a) = run_reps(WARMUP_REPS, MEASURE_REPS, || {
-        let mut stmt = CoreCachedStatement::prepare(core_conn.db(), "SELECT v FROM vals WHERE v = $1")
-            .expect("prepare");
+        let mut stmt =
+            CoreCachedStatement::prepare(core_conn.db(), "SELECT v FROM vals WHERE v = $1")
+                .expect("prepare");
         for i in 0i32..PREPARED_QUERIES as i32 {
             let mut row = I32Row(i);
             stmt.bind(1, &mut row).expect("bind");
@@ -1116,20 +1118,11 @@ fn slugify(s: &str) -> String {
 
 fn write_markdown(
     out_dir: &Path,
-    ctx: &SystemCtx,
     results: &[WorkloadResult],
 ) -> std::io::Result<()> {
     let mut md = String::with_capacity(8192);
 
     md.push_str("# better-duck-core vs `duckdb` crate — Benchmark Report\n\n");
-
-    md.push_str("## System context\n\n");
-    md.push_str("| Key | Value |\n|---|---|\n");
-    md.push_str(&format!("| CPU | {} ({} cores) |\n", ctx.cpu_brand, ctx.cpu_physical_cores));
-    md.push_str(&format!("| RAM | {:.1} GB |\n", ctx.total_ram_gb));
-    md.push_str(&format!("| rustc | {} |\n", ctx.rustc_version));
-    md.push_str(&format!("| duckdb crate | v{} (bundled) |\n", ctx.duckdb_rs_version));
-    md.push_str(&format!("| Generated at (Unix) | {} |\n\n", ctx.generated_at_unix_secs));
 
     md.push_str(
         "> **Latency** columns: min / median / p95 over the measured reps (warmup discarded).\n",
@@ -1201,7 +1194,6 @@ fn draw_chart(
     other_vals: &[f64],
     x_label: &str,
     y_label: &str,
-    caption: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let n = workload_names.len();
     // Each workload gets 3 slots: [core bar | other bar | gap]
@@ -1210,29 +1202,23 @@ fn draw_chart(
     let max_y = core_vals.iter().chain(other_vals.iter()).copied().fold(0.0_f64, f64::max) * 1.15;
     let max_y = if max_y == 0.0 { 1.0 } else { max_y };
 
-    let root = SVGBackend::new(path, (width, 560)).into_drawing_area();
+    // `upper` holds the plot; `lower` holds one rotated label per individual bar
+    // (not one shared label per group) plus the x-axis title beneath them.
+    let root = SVGBackend::new(path, (width, 620)).into_drawing_area();
     root.fill(&WHITE)?;
+    let (upper, lower) = root.split_vertically(430);
 
-    let (upper, lower) = root.split_vertically(500);
     let mut chart = ChartBuilder::on(&upper)
         .caption(title, ("sans-serif", 18).into_font())
         .margin(20u32)
-        .x_label_area_size(110u32)
+        .x_label_area_size(15u32)
         .y_label_area_size(80u32)
         .build_cartesian_2d(0u32..total_x, 0.0f64..max_y)?;
 
     chart
         .configure_mesh()
         .x_labels(n)
-        .x_label_formatter(&|slot| {
-            let group = (*slot / 3) as usize;
-            if *slot % 3 == 1 {
-                workload_names.get(group).map(|s| s.to_string()).unwrap_or_default()
-            } else {
-                String::new()
-            }
-        })
-        .x_label_style(("sans-serif", 11).into_font())
+        .x_label_formatter(&|_| String::new())
         .axis_desc_style(("sans-serif", 13))
         .y_label_formatter(&|v| {
             if *v >= 1_000.0 {
@@ -1243,7 +1229,6 @@ fn draw_chart(
                 format!("{v:.3}")
             }
         })
-        .x_desc(x_label)
         .y_desc(y_label)
         .draw()?;
 
@@ -1271,10 +1256,29 @@ fn draw_chart(
         .border_style(BLACK)
         .draw()?;
 
+    // One label per individual bar (not a single shared label centered over the
+    // core/duckdb pair): a small "core"/"duckdb" tag directly under each bar, then
+    // the type/workload name rotated 90° below that so long names have room.
+    let name_style = TextStyle::from(("sans-serif", 10).into_font())
+        .transform(FontTransform::Rotate90)
+        .pos(Pos::new(HPos::Left, VPos::Center));
+    let tag_style = TextStyle::from(("sans-serif", 8).into_font())
+        .color(&RGBColor(90, 90, 90))
+        .pos(Pos::new(HPos::Center, VPos::Top));
+    for (i, name) in workload_names.iter().enumerate() {
+        for (slot_offset, tag) in [(0u32, "core"), (1u32, "duckdb")] {
+            let x0 = (i * 3) as u32 + slot_offset;
+            let px0 = chart.plotting_area().map_coordinate(&(x0, 0.0)).0;
+            let px1 = chart.plotting_area().map_coordinate(&(x0 + 1, 0.0)).0;
+            let center_x = (px0 + px1) / 2;
+            lower.draw_text(tag, &tag_style, (center_x, 4))?;
+            lower.draw_text(name, &name_style, (center_x, 18))?;
+        }
+    }
     lower.draw_text(
-        caption,
-        &("sans-serif", 11).into_font().color(&RGBColor(80, 80, 80)),
-        (20, 10),
+        x_label,
+        &TextStyle::from(("sans-serif", 13).into_font()).pos(Pos::new(HPos::Center, VPos::Top)),
+        ((width / 2) as i32, 175),
     )?;
 
     root.present()?;
@@ -1283,18 +1287,8 @@ fn draw_chart(
 
 fn write_charts(
     out_dir: &Path,
-    ctx: &SystemCtx,
     results: &[WorkloadResult],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let caption = format!(
-        "System: {} ({} cores, {:.0} GB RAM) — {} — duckdb crate v{}",
-        ctx.cpu_brand,
-        ctx.cpu_physical_cores,
-        ctx.total_ram_gb,
-        ctx.rustc_version,
-        ctx.duckdb_rs_version,
-    );
-
     for group in GROUP_ORDER {
         let slug = slugify(group);
         let group_results: Vec<&WorkloadResult> =
@@ -1335,7 +1329,6 @@ fn write_charts(
             &other_lat,
             x_label,
             "Latency (ms)",
-            &caption,
         )?;
         println!("  → {}", latency_path.display());
 
@@ -1349,7 +1342,6 @@ fn write_charts(
             &other_tp,
             x_label,
             "Items / second",
-            &caption,
         )?;
         println!("  → {}", throughput_path.display());
     }
@@ -1407,8 +1399,8 @@ fn main() {
     println!("Writing outputs to: {}\n", out_dir.display());
 
     write_json(&out_dir, &ctx, &results).expect("write JSON");
-    write_markdown(&out_dir, &ctx, &results).expect("write Markdown");
-    write_charts(&out_dir, &ctx, &results).expect("write SVG charts");
+    write_markdown(&out_dir, &results).expect("write Markdown");
+    write_charts(&out_dir, &results).expect("write SVG charts");
 
     println!("\nDone. Open docs/benchmarks/REPORT.md for the full comparison table.");
 }

@@ -115,14 +115,16 @@ impl Statement<'_> {
     #[allow(unused)]
     pub fn execute(&mut self) -> Result<DuckResult> {
         // SAFETY: `mem::zeroed::<duckdb_result>()` produces an all-zeros value, which is
-        // the correct initial state for a `duckdb_result` output parameter.
-        let mut out = Box::new(unsafe { mem::zeroed::<duckdb_result>() });
-        // SAFETY: `self.stmt` is a valid prepared statement. `&mut *out` provides a
-        // pointer to the heap-allocated zeroed `duckdb_result`. Ownership of `*out`
-        // transfers to `DuckResult::new`, whose `Drop` calls `duckdb_destroy_result` once.
-        let resp = unsafe { duckdb_execute_prepared(self.stmt, &mut *out as *mut duckdb_result) };
-        result_from_duckdb_result(resp, &mut *out as *mut duckdb_result)?;
-        Ok(DuckResult::new(*out))
+        // the correct initial state for a `duckdb_result` output parameter. `duckdb_result`
+        // is a small `Copy` struct with no self-referential fields, so it needs no stable
+        // heap address — DuckResult::new takes it by value.
+        let mut out = unsafe { mem::zeroed::<duckdb_result>() };
+        // SAFETY: `self.stmt` is a valid prepared statement. `&mut out` provides a pointer
+        // to the stack-local zeroed `duckdb_result`. Ownership transfers to `DuckResult::new`,
+        // whose `Drop` calls `duckdb_destroy_result` once.
+        let resp = unsafe { duckdb_execute_prepared(self.stmt, &mut out as *mut duckdb_result) };
+        result_from_duckdb_result(resp, &mut out as *mut duckdb_result)?;
+        Ok(DuckResult::new(out))
     }
 
     /// Returns the number of parameters in the prepared statement.
@@ -261,18 +263,18 @@ impl CachedStatement {
     /// Returns [`Error::DuckDBFailure`] if execution fails.
     #[must_use = "the DuckResult carries both affected-row count (.changes()) and row iterator — consume it"]
     pub fn execute(&mut self) -> Result<DuckResult> {
-        // SAFETY: `mem::zeroed::<ffi::duckdb_result>()` is the correct initialization
-        // for a DuckDB result output parameter.
-        let mut out = Box::new(unsafe { mem::zeroed::<ffi::duckdb_result>() });
-        // SAFETY: `self.stmt` is a valid prepared statement. `&mut *out` provides a
-        // raw pointer to the heap-allocated zeroed duckdb_result output buffer.
-        // Ownership of `*out` transfers to DuckResult::new; its Drop calls
-        // duckdb_destroy_result exactly once.
-        let r = unsafe {
-            ffi::duckdb_execute_prepared(self.stmt, &mut *out as *mut ffi::duckdb_result)
-        };
-        result_from_duckdb_result(r, &mut *out as *mut ffi::duckdb_result)?;
-        Ok(DuckResult::new(*out))
+        // SAFETY: `mem::zeroed::<ffi::duckdb_result>()` is the correct initialization for a
+        // DuckDB result output parameter. `duckdb_result` is a small `Copy` struct with no
+        // self-referential fields, so it needs no stable heap address — DuckResult::new
+        // takes it by value.
+        let mut out = unsafe { mem::zeroed::<ffi::duckdb_result>() };
+        // SAFETY: `self.stmt` is a valid prepared statement. `&mut out` provides a raw
+        // pointer to the stack-local zeroed duckdb_result output buffer. Ownership
+        // transfers to DuckResult::new; its Drop calls duckdb_destroy_result exactly once.
+        let r =
+            unsafe { ffi::duckdb_execute_prepared(self.stmt, &mut out as *mut ffi::duckdb_result) };
+        result_from_duckdb_result(r, &mut out as *mut ffi::duckdb_result)?;
+        Ok(DuckResult::new(out))
     }
 }
 
