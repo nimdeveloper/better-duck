@@ -32,15 +32,12 @@ use better_duck_core::{
     connection::Connection as CoreConn,
     error::Result as CoreResult,
     types::{
-        appendable::AppendAble as CoreAppendAble, value::DuckValue, Blob as CoreBlob,
-        DuckStruct, DuckUuid,
+        appendable::AppendAble as CoreAppendAble, value::DuckValue, Blob as CoreBlob, DuckStruct,
+        DuckUuid,
     },
 };
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
-use duckdb::{
-    types::Value as RsValue,
-    Connection as RsConn, ToSql as RsToSql,
-};
+use duckdb::{types::Value as RsValue, Connection as RsConn, ToSql as RsToSql};
 use plotters::prelude::*;
 use rust_decimal::Decimal;
 use serde::Serialize;
@@ -484,8 +481,7 @@ fn bench_primitives() -> Vec<WorkloadResult> {
             {
                 let mut app = conn.appender("t").expect("appender");
                 for i in 0..count as i64 {
-                    let bytes =
-                        (i as u128 * 0x1_0000_0000_0000_0000 + i as u128).to_be_bytes();
+                    let bytes = (i as u128 * 0x1_0000_0000_0000_0000 + i as u128).to_be_bytes();
                     let v = RsUuid::from_bytes(bytes);
                     app.append_row((v,)).expect("append");
                 }
@@ -1226,10 +1222,7 @@ fn write_markdown(
                 md.push_str("*Reference only — not used in the comparison above:*\n\n");
                 md.push_str("| Contender | Latency (min / median / p95) | Throughput |\n");
                 md.push_str("|---|---|---|\n");
-                md.push_str(&stats_row(
-                    "duckdb crate (SQL-literal workaround)",
-                    Some(actual),
-                ));
+                md.push_str(&stats_row("duckdb crate (SQL-literal workaround)", Some(actual)));
                 md.push('\n');
             }
         }
@@ -1354,8 +1347,10 @@ fn write_charts(
         }
 
         let names: Vec<&str> = group_results.iter().map(|r| r.name.as_str()).collect();
-        let core_lat: Vec<f64> =
-            group_results.iter().map(|r| r.core.as_ref().map(|s| s.median_ms).unwrap_or(0.0)).collect();
+        let core_lat: Vec<f64> = group_results
+            .iter()
+            .map(|r| r.core.as_ref().map(|s| s.median_ms).unwrap_or(0.0))
+            .collect();
         let other_lat: Vec<f64> = group_results
             .iter()
             .map(|r| r.other.as_ref().map(|s| s.median_ms).unwrap_or(0.0))
@@ -1431,13 +1426,9 @@ fn main() {
         for r in &group_results {
             let core_ms =
                 r.core.as_ref().map(|s| fmt_ms(s.median_ms)).unwrap_or_else(|| "N/A".to_owned());
-            let other_ms = r
-                .other
-                .as_ref()
-                .map(|s| fmt_ms(s.median_ms))
-                .unwrap_or_else(|| "N/A".to_owned());
             let other_ms =
-                if r.other_is_placeholder { format!("{other_ms}*") } else { other_ms };
+                r.other.as_ref().map(|s| fmt_ms(s.median_ms)).unwrap_or_else(|| "N/A".to_owned());
+            let other_ms = if r.other_is_placeholder { format!("{other_ms}*") } else { other_ms };
             println!("{:<20} {:>14} {:>14}", r.name, core_ms, other_ms);
         }
         if group_results.iter().any(|r| r.other_is_placeholder) {
