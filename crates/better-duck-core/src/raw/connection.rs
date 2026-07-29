@@ -248,18 +248,20 @@ impl RawConnection {
     ) -> Result<DuckResult> {
         let c_str = CString::new(sql.as_ref())?;
         // SAFETY: `mem::zeroed::<duckdb_result>()` produces an all-zeros value, which is
-        // the correct initial state for a `duckdb_result` output parameter.
-        let mut out = Box::new(unsafe { mem::zeroed::<duckdb_result>() });
+        // the correct initial state for a `duckdb_result` output parameter. `duckdb_result`
+        // is a small `Copy` struct (a handful of counters/pointers) with no self-referential
+        // fields, so it needs no stable heap address — DuckResult::new takes it by value.
+        let mut out = unsafe { mem::zeroed::<duckdb_result>() };
         // SAFETY: `self.con` is a valid open duckdb_connection established in
         // `open_with_flags` and not yet disconnected. `c_str` is a valid null-terminated
-        // CString that outlives this call. `&mut *out` provides a pointer to the
-        // heap-allocated zeroed `duckdb_result`. Ownership transfers to `DuckResult::new`,
-        // whose `Drop` calls `duckdb_destroy_result` exactly once.
+        // CString that outlives this call. `&mut out` provides a pointer to the stack-local
+        // zeroed `duckdb_result`. Ownership transfers to `DuckResult::new`, whose `Drop`
+        // calls `duckdb_destroy_result` exactly once.
         let r = unsafe {
-            duckdb_query(self.con, c_str.as_ptr() as *const c_char, &mut *out as *mut duckdb_result)
+            duckdb_query(self.con, c_str.as_ptr() as *const c_char, &mut out as *mut duckdb_result)
         };
-        result_from_duckdb_result(r, &mut *out as *mut duckdb_result)?;
-        Ok(DuckResult::new(*out))
+        result_from_duckdb_result(r, &mut out as *mut duckdb_result)?;
+        Ok(DuckResult::new(out))
     }
 
     /// Prepares a SQL statement for execution.
