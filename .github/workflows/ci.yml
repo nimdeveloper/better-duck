@@ -41,7 +41,7 @@ jobs:
         # r2d2 (a better-duck-diesel-only feature) must use pkg/feature syntax: cargo
         # validates an unqualified --features list against the first workspace member
         # (better-duck-core), which does not have r2d2 (it has pool instead).
-        run: cargo clippy --workspace --all-targets --features "chrono,decimal,json,parquet,async,pool,better-duck-diesel/r2d2" -- -D warnings
+        run: cargo clippy --workspace --all-targets --features "chrono,decimal,json,parquet,async,pool,udf,better-duck-diesel/r2d2" -- -D warnings
 
   # Documentation
   docs:
@@ -54,7 +54,7 @@ jobs:
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --workspace --no-deps --features "chrono,decimal,async,pool"
+        run: cargo doc --workspace --no-deps --features "chrono,decimal,async,pool,udf"
 
   # Tests — Linux (default)
   test_linux:
@@ -72,7 +72,14 @@ jobs:
         # what diesel's non-chrono code (compiled for diesel's own chrono=off) expects.
         run: |
           cargo test -p better-duck-core --verbose
+          cargo test -p better-duck-core --features udf --verbose
           cargo test -p better-duck-diesel --verbose
+      - name: Release build (udf) — proves it compiles under panic=abort, lto=fat
+        # `cargo test --release` cannot exercise callback panic containment: Cargo
+        # forces `panic = "unwind"` for test harness targets even under --release.
+        # This step proves only that the udf path compiles under this workspace's
+        # actual release profile; see `udf` module docs for the abort caveat.
+        run: cargo build --release -p better-duck-core --features udf --verbose
 
   # Tests — Linux with chrono
   test_linux_chrono:
@@ -94,7 +101,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run doctests
-        run: cargo test --workspace --doc --features "chrono,decimal,async,pool"
+        run: cargo test --workspace --doc --features "chrono,decimal,async,pool,udf"
 
   # Tests — Windows
   test_windows:
@@ -105,9 +112,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
-        # Scoped per-package — see the comment on the Linux job for why.
+        # Scoped per-package — see the comment on the Linux job for why. The udf
+        # feature is exercised here specifically because MSVC's `duckdb_string_t`
+        # layout/alignment is exactly the class of bug the udf write path can hide.
         run: |
           cargo test -p better-duck-core --verbose
+          cargo test -p better-duck-core --features udf --verbose
           cargo test -p better-duck-diesel --verbose
 
   # Tests — macOS + iOS cross-build
@@ -188,6 +198,22 @@ jobs:
             package: better-duck-core
             args: --no-default-features --features "async,pool"
             cmd: check
+          - name: core/udf
+            package: better-duck-core
+            args: --features udf
+          # catches #[cfg(feature = "chrono")] mistakes in udf marshalling code
+          # that the default (chrono-on) build would hide.
+          - name: core/udf-no-chrono
+            package: better-duck-core
+            args: --no-default-features --features "bundled,udf"
+          - name: core/udf-all
+            package: better-duck-core
+            args: --features "udf,async,pool,json"
+          # compile-only: no bundled DuckDB → can't link+run tests
+          - name: core/no-default-udf
+            package: better-duck-core
+            args: --no-default-features --features udf
+            cmd: check
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -208,7 +234,7 @@ jobs:
         with:
           key: msrv-1.96
       - name: Check workspace compiles on MSRV
-        run: cargo check --workspace --features "chrono,decimal,async,pool"
+        run: cargo check --workspace --features "chrono,decimal,async,pool,udf"
 
   # Security audit
   audit:
@@ -239,7 +265,7 @@ jobs:
         run: cargo install cargo-llvm-cov --locked
       - name: Generate coverage report
         run: |
-          cargo llvm-cov --workspace --features "chrono,decimal,async,pool" \
+          cargo llvm-cov --workspace --features "chrono,decimal,async,pool,udf" \
             --lcov --output-path lcov.info
       - name: Upload to Codecov
         uses: codecov/codecov-action@v7

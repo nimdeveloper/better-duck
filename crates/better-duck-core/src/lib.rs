@@ -32,6 +32,9 @@ mod raw;
 pub mod result_set;
 /// DuckDB type system and value conversion traits.
 pub mod types;
+/// User-defined DuckDB functions: scalar functions and table functions.
+#[cfg(feature = "udf")]
+pub mod udf;
 
 /// Async facade over [`connection::Connection`].
 #[cfg(feature = "async")]
@@ -43,6 +46,12 @@ pub use asynchronous::AsyncDatabase;
 #[cfg(all(feature = "async", feature = "pool"))]
 pub use asynchronous::AsyncPool;
 
+/// Registers a plain Rust function as a DuckDB scalar function. See [`udf`].
+#[cfg(feature = "udf")]
+pub use better_duck_macros::duckdb_scalar;
+/// Registers a plain Rust function as a DuckDB table function. See [`udf`].
+#[cfg(feature = "udf")]
+pub use better_duck_macros::duckdb_table_function;
 /// DuckDB database configuration.
 pub use config::{AccessMode, Config, DefaultNullOrder, DefaultOrder};
 /// A shared, cloneable handle to an open DuckDB database.

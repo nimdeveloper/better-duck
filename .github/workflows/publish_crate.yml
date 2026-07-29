@@ -73,28 +73,27 @@ jobs:
       - name: Login to crates.io
         run: cargo login ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Install jq
-        run: sudo apt-get install -y jq
-
       - name: Confirm clean working tree
         run: git diff --exit-code
 
-      - name: Get workspace crate names
-        id: get_crates
-        run: |
-          CRATES=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name')
-          echo "crates=$CRATES" >> $GITHUB_OUTPUT
-        shell: bash
-
       - name: Publish crates to crates.io
         env:
-          CRATES_TO_PUBLISH: ${{ steps.get_crates.outputs.crates }}
+          # Explicit topological order: better-duck-core depends on
+          # better-duck-macros, and better-duck-diesel depends on
+          # better-duck-core. `cargo metadata` returns packages alphabetically
+          # (core, diesel, macros), which is the wrong order — publishing core
+          # first would fail because crates.io rejects a manifest whose
+          # dependency (macros) isn't in the index yet, and --no-verify does
+          # not skip that check (it only skips the local build).
+          CRATES_TO_PUBLISH: "better-duck-macros better-duck-core better-duck-diesel"
         run: |
           for CRATE in $CRATES_TO_PUBLISH; do
             echo "Publishing $CRATE..."
             cargo publish -p "$CRATE" --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --no-verify
             echo "$CRATE published."
-            sleep 5
+            # Index propagation routinely exceeds a few seconds; the next crate
+            # in the loop may depend on this one and needs it resolvable.
+            sleep 30
           done
         shell: bash
 

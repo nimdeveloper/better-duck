@@ -239,6 +239,14 @@ impl Connection {
     pub fn database(&self) -> Database {
         Database::from_raw(std::sync::Arc::clone(&self.0.db))
     }
+
+    /// Returns the raw `duckdb_connection` handle for internal FFI use (e.g. the
+    /// `udf` module's function registration, which needs the handle directly).
+    #[cfg(feature = "udf")]
+    #[inline]
+    pub(crate) fn raw_con(&self) -> crate::ffi::duckdb_connection {
+        self.0.con
+    }
 }
 
 // SAFETY: DuckDB connections are safe to move between threads (they do not hold
