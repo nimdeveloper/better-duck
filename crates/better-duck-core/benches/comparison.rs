@@ -35,6 +35,7 @@ use better_duck_core::{
         appendable::AppendAble as CoreAppendAble, value::DuckValue, Blob as CoreBlob, DuckStruct,
         DuckUuid,
     },
+    CachedStatement as CoreCachedStatement,
 };
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use duckdb::{types::Value as RsValue, Connection as RsConn, ToSql as RsToSql};
@@ -337,66 +338,18 @@ fn bench_primitives() -> Vec<WorkloadResult> {
         bench_primitive_type::<ChronoDuration, _>("Duration", "INTERVAL", n, |i| {
             ChronoDuration::seconds(i)
         }),
+        // UHUGEINT — both crates bind/read a bare u128 via a direct typed FFI call
+        // (`duckdb_append_uhugeint`/`duckdb_bind_uhugeint` on the core side), so this
+        // now shares the same generic path as every other primitive instead of being
+        // hand-written.
+        bench_primitive_type::<u128, _>("u128 (UHUGEINT)", "UHUGEINT", n, |i| {
+            i as u128 * 1_000_000_000_000
+        }),
     ];
 
     // Hand-written: representations diverge between the two crates.
 
     println!("  Primitive types (hand-written) …");
-
-    // UHUGEINT — core binds via `DuckValue::UHugeInt`; duckdb-rs binds a bare u128.
-    println!("    → u128 (UHUGEINT)");
-    {
-        let ddl = "CREATE TABLE t (v UHUGEINT)";
-        let count = PRIMITIVE_ROWS;
-
-        let (samples, rss_b, rss_a) = run_reps(TYPE_WARMUP_REPS, TYPE_MEASURE_REPS, || {
-            let mut conn = CoreConn::open_in_memory().expect("open db");
-            conn.execute_batch(ddl).expect("create table");
-            {
-                let mut app = conn.appender("t", "main").expect("appender");
-                for i in 0..count as i64 {
-                    let mut v = DuckValue::UHugeInt(i as u128 * 1_000_000_000_000);
-                    app.append(&mut v).expect("append");
-                }
-                app.save().expect("flush");
-            }
-            let result = conn.execute("SELECT v FROM t").expect("select");
-            black_box(result.count());
-        });
-        let core_stats = compute_stats(samples, count, rss_b, rss_a);
-
-        let (samples2, rss_b2, rss_a2) = run_reps(TYPE_WARMUP_REPS, TYPE_MEASURE_REPS, || {
-            let conn = RsConn::open_in_memory().expect("open db");
-            conn.execute_batch(ddl).expect("create table");
-            {
-                let mut app = conn.appender("t").expect("appender");
-                for i in 0..count as i64 {
-                    let v: u128 = i as u128 * 1_000_000_000_000;
-                    app.append_row((v,)).expect("append");
-                }
-                app.flush().expect("flush");
-            }
-            let mut stmt = conn.prepare("SELECT v FROM t").expect("prepare");
-            let n = stmt
-                .query_map([], |row| row.get::<_, u128>(0))
-                .expect("query")
-                .filter_map(|r| r.ok())
-                .count();
-            black_box(n);
-        });
-        let other_stats = compute_stats(samples2, count, rss_b2, rss_a2);
-
-        results.push(WorkloadResult {
-            group: "Primitive types".to_owned(),
-            name: "u128 (UHUGEINT)".to_owned(),
-            description: format!("Insert + full-scan {count} rows of UHUGEINT"),
-            item_count: count,
-            core: Some(core_stats),
-            other: Some(other_stats),
-            other_is_placeholder: false,
-            other_workaround_actual: None,
-        });
-    }
 
     // BLOB — core wraps `Vec<u8>` in `Blob`; duckdb-rs binds `Vec<u8>` directly.
     println!("    → Blob (BLOB)");
@@ -993,15 +946,17 @@ fn bench_prepared_reuse() -> WorkloadResult {
 
     let mut core_conn = CoreConn::open_in_memory().expect("open db");
     core_conn.execute_batch(&setup_sql).expect("setup prepared table");
+    // Prepare once per rep (matching the duckdb-rs side below) and reuse the same
+    // `CachedStatement` across all `PREPARED_QUERIES` executions — `execute_with`
+    // would re-prepare from scratch on every call, which is not what this workload
+    // is meant to measure.
     let (samples, rss_b, rss_a) = run_reps(WARMUP_REPS, MEASURE_REPS, || {
+        let mut stmt = CoreCachedStatement::prepare(core_conn.db(), "SELECT v FROM vals WHERE v = $1")
+            .expect("prepare");
         for i in 0i32..PREPARED_QUERIES as i32 {
             let mut row = I32Row(i);
-            let result = core_conn
-                .execute_with(
-                    "SELECT v FROM vals WHERE v = $1",
-                    &mut [&mut row as &mut dyn CoreAppendAble],
-                )
-                .expect("prepared select");
+            stmt.bind(1, &mut row).expect("bind");
+            let result = stmt.execute().expect("prepared select");
             let _ = result.count();
         }
     });
@@ -1244,6 +1199,7 @@ fn draw_chart(
     workload_names: &[&str],
     core_vals: &[f64],
     other_vals: &[f64],
+    x_label: &str,
     y_label: &str,
     caption: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1261,7 +1217,7 @@ fn draw_chart(
     let mut chart = ChartBuilder::on(&upper)
         .caption(title, ("sans-serif", 18).into_font())
         .margin(20u32)
-        .x_label_area_size(90u32)
+        .x_label_area_size(110u32)
         .y_label_area_size(80u32)
         .build_cartesian_2d(0u32..total_x, 0.0f64..max_y)?;
 
@@ -1287,6 +1243,7 @@ fn draw_chart(
                 format!("{v:.3}")
             }
         })
+        .x_desc(x_label)
         .y_desc(y_label)
         .draw()?;
 
@@ -1366,6 +1323,7 @@ fn write_charts(
 
         // Widen the chart for groups with many entries (e.g. Primitive types).
         let width = (300 + names.len() as u32 * 90).clamp(900, 2400);
+        let x_label = if group == "Operations" { "Workload" } else { "Type" };
 
         let latency_path = out_dir.join(format!("comparison-{slug}-latency.svg"));
         draw_chart(
@@ -1375,6 +1333,7 @@ fn write_charts(
             &names,
             &core_lat,
             &other_lat,
+            x_label,
             "Latency (ms)",
             &caption,
         )?;
@@ -1388,6 +1347,7 @@ fn write_charts(
             &names,
             &core_tp,
             &other_tp,
+            x_label,
             "Items / second",
             &caption,
         )?;

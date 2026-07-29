@@ -8,10 +8,11 @@ use crate::{
     ffi::{
         duckdb_create_double, duckdb_create_float, duckdb_create_hugeint, duckdb_create_int16,
         duckdb_create_int32, duckdb_create_int64, duckdb_create_int8, duckdb_create_logical_type,
-        duckdb_create_uint16, duckdb_create_uint32, duckdb_create_uint64, duckdb_create_uint8,
-        duckdb_get_double, duckdb_get_float, duckdb_get_int16, duckdb_get_int32, duckdb_get_int64,
-        duckdb_get_int8, duckdb_get_uint16, duckdb_get_uint32, duckdb_get_uint64, duckdb_get_uint8,
-        duckdb_hugeint, duckdb_logical_type, duckdb_uhugeint, duckdb_value,
+        duckdb_create_uhugeint, duckdb_create_uint16, duckdb_create_uint32, duckdb_create_uint64,
+        duckdb_create_uint8, duckdb_get_double, duckdb_get_float, duckdb_get_int16,
+        duckdb_get_int32, duckdb_get_int64, duckdb_get_int8, duckdb_get_uint16, duckdb_get_uint32,
+        duckdb_get_uint64, duckdb_get_uint8, duckdb_hugeint, duckdb_logical_type, duckdb_uhugeint,
+        duckdb_value,
         DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE,
         DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT,
         DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT,
@@ -26,11 +27,11 @@ use crate::{
 use crate::error::Error;
 use crate::ffi::{
     duckdb_append_double, duckdb_append_float, duckdb_append_hugeint, duckdb_append_int16,
-    duckdb_append_int32, duckdb_append_int64, duckdb_append_int8, duckdb_append_uint16,
-    duckdb_append_uint32, duckdb_append_uint64, duckdb_append_uint8, duckdb_bind_double,
-    duckdb_bind_float, duckdb_bind_hugeint, duckdb_bind_int16, duckdb_bind_int32,
-    duckdb_bind_int64, duckdb_bind_int8, duckdb_bind_uint16, duckdb_bind_uint32,
-    duckdb_bind_uint64, duckdb_bind_uint8,
+    duckdb_append_int32, duckdb_append_int64, duckdb_append_int8, duckdb_append_uhugeint,
+    duckdb_append_uint16, duckdb_append_uint32, duckdb_append_uint64, duckdb_append_uint8,
+    duckdb_bind_double, duckdb_bind_float, duckdb_bind_hugeint, duckdb_bind_int16,
+    duckdb_bind_int32, duckdb_bind_int64, duckdb_bind_int8, duckdb_bind_uhugeint,
+    duckdb_bind_uint16, duckdb_bind_uint32, duckdb_bind_uint64, duckdb_bind_uint8,
 };
 #[cfg(feature = "decimal")]
 use crate::ffi::{
@@ -138,8 +139,6 @@ impl_duck_logical_type_and_from!(u64, DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT, UBigInt);
 impl_duck_logical_type_and_from!(f32, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, Float);
 impl_duck_logical_type_and_from!(f64, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, Double);
 
-// u128 (UHUGEINT) has no dedicated DuckDialect impl (see `value.rs`'s inline handling),
-// but still needs DuckLogicalType + From for use in generic LIST/ARRAY/MAP collections.
 impl DuckLogicalType for u128 {
     fn duck_logical_type() -> Result<duckdb_logical_type, DuckDBConversionError> {
         // SAFETY: DUCKDB_TYPE_DUCKDB_TYPE_UHUGEINT is always a valid duckdb_type constant.
@@ -230,6 +229,41 @@ impl AppendAble for i128 {
     }
 }
 
+impl DuckDialect<duckdb_uhugeint> for u128 {
+    fn from_duck(uhugeint: duckdb_uhugeint) -> Result<Self, DuckDBConversionError> {
+        Ok(u128_from_uhugeint(uhugeint))
+    }
+
+    fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
+        // SAFETY: `uhugeint_from_u128` converts any u128 to the correct duckdb_uhugeint
+        // layout. The full u128 range is supported without panicking.
+        Ok(unsafe { duckdb_create_uhugeint(uhugeint_from_u128(*self)) })
+    }
+}
+
+impl AppendAble for u128 {
+    fn appender_append(
+        &mut self,
+        appender: crate::ffi::duckdb_appender,
+    ) -> Result<()> {
+        // SAFETY: `appender` is a valid duckdb_appender. `uhugeint_from_u128` converts the
+        // value to a valid duckdb_uhugeint.
+        unsafe { duckdb_append_uhugeint(appender, uhugeint_from_u128(*self)) };
+        Ok(())
+    }
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: crate::ffi::duckdb_prepared_statement,
+    ) -> Result<()> {
+        // SAFETY: `stmt` is a valid prepared statement. `idx` is a 1-based parameter index
+        // within the statement's parameter count (as required by the DuckDB C API).
+        // `uhugeint_from_u128` converts the value to a valid duckdb_uhugeint.
+        unsafe { duckdb_bind_uhugeint(stmt, idx, uhugeint_from_u128(*self)) };
+        Ok(())
+    }
+}
+
 #[cfg(feature = "decimal")]
 impl DuckDialect for Decimal {
     fn from_duck(value: duckdb_value) -> Result<Self, super::DuckDBConversionError>
@@ -257,7 +291,11 @@ impl DuckDialect for Decimal {
         let scale = scale as u8;
         let value = self.mantissa();
 
-        let mut num_width = format!("{}", value).len();
+        // Digit count of `value` including a leading `-` for negatives, matching
+        // `format!("{value}").len()` but without allocating a `String` on every call
+        // (this runs once per appended/bound row).
+        let digits = value.unsigned_abs().checked_ilog10().map_or(1, |d| d as usize + 1);
+        let mut num_width = if value < 0 { digits + 1 } else { digits };
         if scale as usize >= num_width {
             num_width += scale as usize - num_width + 1;
         }
@@ -304,7 +342,7 @@ impl AppendAble for Decimal {
 #[cfg(test)]
 #[allow(clippy::undocumented_unsafe_blocks)]
 mod test_numeric_conversion {
-    use crate::ffi::{duckdb_destroy_value, duckdb_get_hugeint};
+    use crate::ffi::{duckdb_destroy_value, duckdb_get_hugeint, duckdb_get_uhugeint};
 
     /// Regression test: appending a `Decimal` whose dynamically-computed width (from its
     /// own digit count) is narrower than the target column's declared width used to
@@ -460,6 +498,50 @@ mod test_numeric_conversion {
         let converted_value = i128::from_duck(unsafe { duckdb_get_hugeint(duck_value) }).unwrap();
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
+    }
+    #[test]
+    fn test_u128_conversion() {
+        use super::*;
+
+        let value: u128 = 5;
+        let mut duck_value = value.to_duck().unwrap();
+        let converted_value = u128::from_duck(unsafe { duckdb_get_uhugeint(duck_value) }).unwrap();
+        assert_eq!(value, converted_value);
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+
+        let value: u128 = u128::MAX;
+        let mut duck_value = value.to_duck().unwrap();
+        let converted_value = u128::from_duck(unsafe { duckdb_get_uhugeint(duck_value) }).unwrap();
+        assert_eq!(value, converted_value);
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+    }
+    #[test]
+    fn test_u128_appendable_round_trip() {
+        use crate::connection::Connection;
+        use crate::types::value::DuckValue;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (v UHUGEINT)").unwrap();
+        let expected: Vec<u128> = vec![0, 5, u64::MAX as u128, u128::MAX];
+        {
+            let mut app = conn.appender("t", "main").unwrap();
+            for v in &expected {
+                app.append(&mut { *v }).unwrap();
+            }
+            app.save().unwrap();
+        }
+        let result = conn.execute("SELECT v FROM t").unwrap();
+        let mut actual: Vec<u128> = Vec::with_capacity(expected.len());
+        for row in result {
+            match row.unwrap().get("v").unwrap() {
+                DuckValue::UHugeInt(got) => actual.push(*got),
+                other => panic!("expected UHugeInt, got {other:?}"),
+            }
+        }
+        actual.sort_unstable();
+        let mut expected_sorted = expected.clone();
+        expected_sorted.sort_unstable();
+        assert_eq!(actual, expected_sorted);
     }
     #[cfg(feature = "decimal")]
     #[test]
