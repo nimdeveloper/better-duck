@@ -4,26 +4,26 @@
 
 use super::{value::DuckValue, DuckDBConversionError, DuckDialect, DuckLogicalType};
 use crate::{
-    error::{Error, Result},
+    error::Result,
     ffi::{
-        duckdb_create_decimal, duckdb_create_double, duckdb_create_float, duckdb_create_hugeint,
-        duckdb_create_int16, duckdb_create_int32, duckdb_create_int64, duckdb_create_int8,
-        duckdb_create_logical_type, duckdb_create_uint16, duckdb_create_uint32,
-        duckdb_create_uint64, duckdb_create_uint8, duckdb_decimal, duckdb_get_decimal,
+        duckdb_create_double, duckdb_create_float, duckdb_create_hugeint, duckdb_create_int16,
+        duckdb_create_int32, duckdb_create_int64, duckdb_create_int8, duckdb_create_logical_type,
+        duckdb_create_uint16, duckdb_create_uint32, duckdb_create_uint64, duckdb_create_uint8,
         duckdb_get_double, duckdb_get_float, duckdb_get_int16, duckdb_get_int32, duckdb_get_int64,
         duckdb_get_int8, duckdb_get_uint16, duckdb_get_uint32, duckdb_get_uint64, duckdb_get_uint8,
-        duckdb_hugeint, duckdb_logical_type, duckdb_value, DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
-        DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT,
-        DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
-        DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_TINYINT,
-        DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT, DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER,
-        DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT,
+        duckdb_hugeint, duckdb_logical_type, duckdb_uhugeint, duckdb_value,
+        DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE,
+        DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_TINYINT, DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER, DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT,
     },
     types::appendable::AppendAble,
 };
 
 #[cfg(feature = "decimal")]
-use crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL;
+use crate::error::Error;
 use crate::ffi::{
     duckdb_append_double, duckdb_append_float, duckdb_append_hugeint, duckdb_append_int16,
     duckdb_append_int32, duckdb_append_int64, duckdb_append_int8, duckdb_append_uint16,
@@ -31,6 +31,10 @@ use crate::ffi::{
     duckdb_bind_float, duckdb_bind_hugeint, duckdb_bind_int16, duckdb_bind_int32,
     duckdb_bind_int64, duckdb_bind_int8, duckdb_bind_uint16, duckdb_bind_uint32,
     duckdb_bind_uint64, duckdb_bind_uint8,
+};
+#[cfg(feature = "decimal")]
+use crate::ffi::{
+    duckdb_create_decimal, duckdb_decimal, duckdb_get_decimal, DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
 };
 #[cfg(feature = "decimal")]
 use rust_decimal::Decimal;
@@ -168,7 +172,7 @@ impl From<Decimal> for DuckValue {
 /// unsigned `u64` lower half (bits 63–0): `value = upper * 2^64 + lower`.
 /// Shifting `upper` left by 64 and OR-ing the zero-extended `lower` half
 /// reconstructs the full two's-complement value for the entire `i128` range.
-fn i128_from_hugeint(hugeint: duckdb_hugeint) -> i128 {
+pub(crate) fn i128_from_hugeint(hugeint: duckdb_hugeint) -> i128 {
     (hugeint.upper as i128) << 64 | (hugeint.lower as i128)
 }
 
@@ -176,8 +180,19 @@ fn i128_from_hugeint(hugeint: duckdb_hugeint) -> i128 {
 ///
 /// Truncating `as u64` extracts the low 64 bits; an arithmetic right-shift of 64
 /// sign-extends the high bits into an `i64`.  The full `i128` range is supported.
-fn hugeint_from_i128(value: i128) -> duckdb_hugeint {
+pub(crate) fn hugeint_from_i128(value: i128) -> duckdb_hugeint {
     duckdb_hugeint { upper: (value >> 64) as i64, lower: value as u64 }
+}
+
+/// Decode a DuckDB UHUGEINT into a [`u128`], mirroring [`i128_from_hugeint`]
+/// for the unsigned case: `value = upper * 2^64 + lower`.
+pub(crate) fn u128_from_uhugeint(uhugeint: duckdb_uhugeint) -> u128 {
+    (uhugeint.upper as u128) << 64 | (uhugeint.lower as u128)
+}
+
+/// Encode a [`u128`] as a DuckDB UHUGEINT, mirroring [`hugeint_from_i128`].
+pub(crate) fn uhugeint_from_u128(value: u128) -> duckdb_uhugeint {
+    duckdb_uhugeint { upper: (value >> 64) as u64, lower: value as u64 }
 }
 
 impl DuckDialect<duckdb_hugeint> for i128 {
