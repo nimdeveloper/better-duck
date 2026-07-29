@@ -22,7 +22,7 @@ strum         = { workspace = true, features = ["derive"] }
 rust_decimal  = { workspace = true, features = ["macros"], optional = true }
 r2d2          = { workspace = true, optional = true }
 tokio         = { workspace = true, features = ["rt"], optional = true }
-better-duck-macros = { path = "../better-duck-macros", version = "0.1.0-beta.2", optional = true }
+better-duck-macros = { path = "../better-duck-macros", version = "0.1.0-beta.3", optional = true }
 
 [features]
 default         = ["bundled", "chrono", "decimal"]

@@ -1202,8 +1202,8 @@ fn draw_chart(
     let max_y = core_vals.iter().chain(other_vals.iter()).copied().fold(0.0_f64, f64::max) * 1.15;
     let max_y = if max_y == 0.0 { 1.0 } else { max_y };
 
-    // `upper` holds the plot; `lower` holds one rotated label per individual bar
-    // (not one shared label per group) plus the x-axis title beneath them.
+    // `upper` holds the plot; `lower` holds one rotated label per core/duckdb bar
+    // pair (not the mesh's own per-tick labels) plus the x-axis title beneath them.
     let root = SVGBackend::new(path, (width, 620)).into_drawing_area();
     root.fill(&WHITE)?;
     let (upper, lower) = root.split_vertically(430);
@@ -1256,24 +1256,17 @@ fn draw_chart(
         .border_style(BLACK)
         .draw()?;
 
-    // One label per individual bar (not a single shared label centered over the
-    // core/duckdb pair): a small "core"/"duckdb" tag directly under each bar, then
-    // the type/workload name rotated 90° below that so long names have room.
+    // One rotated label per group, centered under its core/duckdb bar pair (the
+    // color-coded legend already distinguishes the two bars within a pair).
     let name_style = TextStyle::from(("sans-serif", 10).into_font())
         .transform(FontTransform::Rotate90)
         .pos(Pos::new(HPos::Left, VPos::Center));
-    let tag_style = TextStyle::from(("sans-serif", 8).into_font())
-        .color(&RGBColor(90, 90, 90))
-        .pos(Pos::new(HPos::Center, VPos::Top));
     for (i, name) in workload_names.iter().enumerate() {
-        for (slot_offset, tag) in [(0u32, "core"), (1u32, "duckdb")] {
-            let x0 = (i * 3) as u32 + slot_offset;
-            let px0 = chart.plotting_area().map_coordinate(&(x0, 0.0)).0;
-            let px1 = chart.plotting_area().map_coordinate(&(x0 + 1, 0.0)).0;
-            let center_x = (px0 + px1) / 2;
-            lower.draw_text(tag, &tag_style, (center_x, 4))?;
-            lower.draw_text(name, &name_style, (center_x, 18))?;
-        }
+        // The pair spans [i*3, i*3+2]; its midpoint is the exact boundary between
+        // the two bars, at i*3+1.
+        let mid_x = (i * 3) as u32 + 1;
+        let center_x = chart.plotting_area().map_coordinate(&(mid_x, 0.0)).0;
+        lower.draw_text(name, &name_style, (center_x, 4))?;
     }
     lower.draw_text(
         x_label,

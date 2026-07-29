@@ -39,12 +39,17 @@ Most Rust DuckDB bindings depend on Arrow or require a system-installed DuckDB l
 ```toml
 [dependencies]
 # Core only
-better-duck-core = "0.1"
+better-duck-core = "0.1.0-beta.3"
 
 # Or: Core + Diesel ORM backend
-better-duck-core   = "0.1"
-better-duck-diesel = "0.1"
+better-duck-core   = "0.1.0-beta.3"
+better-duck-diesel = "0.1.0-beta.3"
 ```
+
+> [!NOTE]
+> Cargo's default version requirement (e.g. `"0.1"`) excludes pre-release versions like
+> `-beta.3` — pin the exact pre-release version as shown above, or run
+> `cargo add better-duck-core --version 0.1.0-beta.3`.
 
 ---
 
@@ -145,6 +150,47 @@ app.save()?; // flush to DuckDB
 
 The appender auto-flushes on drop (errors go to stderr); call `.save()` explicitly if you want to handle flush errors.
 
+### Sharing a database, pooling, and async
+
+`Connection::open_in_memory()` gives each connection its own independent in-memory
+database. To share one database across multiple connections — including in-memory
+ones — open a `Database` and `connect()` from it:
+
+```rust
+use better_duck_core::database::Database;
+
+let db = Database::open_in_memory()?;
+let mut a = db.connect()?;
+let mut b = db.connect()?;
+a.execute_batch("CREATE TABLE t (id INTEGER)")?;
+b.execute_batch("INSERT INTO t VALUES (1)")?; // b sees a's table
+```
+
+With the `pool` feature, `Database` backs an `r2d2` connection pool:
+
+```rust
+use better_duck_core::pool::{DuckDbConnectionManager, Pool};
+
+let manager = DuckDbConnectionManager::memory()?;
+let pool = Pool::builder().max_size(8).build(manager)?;
+let mut conn = pool.get()?;
+```
+
+With the `async` feature, `AsyncConnection` wraps a `Connection` behind
+`tokio::task::spawn_blocking`, so it never blocks the async executor:
+
+```rust
+use better_duck_core::AsyncConnection;
+
+let conn = AsyncConnection::open_in_memory().await?;
+conn.execute_batch("CREATE TABLE t (id INTEGER)").await?;
+let result = conn.execute("SELECT * FROM t").await?; // returns a ResultSet
+```
+
+`async` + `pool` together enable `AsyncPool`, whose `with()` method checks a
+connection out and runs a closure on a blocking thread, matching the pattern used
+for transactions (which must not span an `.await` point).
+
 ### `DuckValue` type hierarchy
 
 Rows are yielded as `DuckRow`, and each column value is a `DuckValue`:
@@ -182,13 +228,50 @@ match value {
 | `TIME` | `chrono::NaiveTime` _(chrono)_ / `DuckTime` |
 | `TIMESTAMP` | `chrono::NaiveDateTime` _(chrono)_ |
 | `TIMESTAMPTZ` | `chrono::DateTime<Utc>` _(chrono)_ |
-| `TIME_TZ` | `CoreTimeTz` (offset read; full preservation: see roadmap) |
+| `TIME_TZ` | `date_chrono::TimeTz` _(chrono)_ / `DuckTimeTz` — UTC offset fully preserved |
 | `INTERVAL` | `chrono::Duration` _(chrono)_ / `std::time::Duration` |
 | `LIST` / `ARRAY` | `Vec<DuckValue>` / `Box<[DuckValue]>` |
 | `STRUCT` | `HashMap<String, DuckValue>` |
 | `MAP` | `HashMap<DuckValue, DuckValue>` |
-| `UNION` | `Box<DuckValue>` (active member) |
+| `UNION` | `Box<DuckValue>` (active member; see roadmap for multi-arm write support) |
 | `ENUM` | `String` |
+| `UUID` | `better_duck_core::types::uuid::DuckUuid` |
+| `BIT` | `better_duck_core::types::bit::DuckBit` |
+| `BIGNUM` | `better_duck_core::types::bignum::DuckBignum` |
+
+### User-defined functions _(feature: udf)_
+
+Register plain Rust functions as DuckDB scalar or table functions with the
+`#[duckdb_scalar]` / `#[duckdb_table_function]` attribute macros — no `unsafe`,
+no manual vector handling. Parameter and return types are inferred from the
+Rust signature.
+
+```rust
+use better_duck_core::{connection::Connection, duckdb_scalar, duckdb_table_function};
+
+/// Scalar function: one value per row, usable in a SELECT list.
+#[duckdb_scalar]
+fn repeat_str(s: &str, n: i32) -> String {
+    s.repeat(n.max(0) as usize)
+}
+
+/// Table function: rows and columns, usable in a FROM clause.
+#[duckdb_table_function(name = "series", columns("n"))]
+fn series(start: i64, stop: i64) -> impl Iterator<Item = i64> + Send {
+    start..stop
+}
+
+let mut conn = Connection::open_in_memory()?;
+repeat_str::register(&mut conn)?;
+series::register(&mut conn)?;
+
+conn.execute("SELECT repeat_str('ab', 3)")?;        // "ababab"
+conn.execute("SELECT sum(n) FROM series(1, 101)")?;  // 5050
+```
+
+`Option<T>` parameters/returns propagate `NULL` explicitly; a `Result<T, E>`
+return fails the query with `E`'s message. See the [`udf` module docs](https://docs.rs/better-duck-core)
+for the full attribute reference and the panic-containment/`panic = "abort"` caveat.
 
 ---
 
@@ -327,9 +410,16 @@ diesel::table! {
 | `DuckTimeNs` | `TIME_NS` | `chrono::NaiveTime` _(chrono)_ |
 | `DuckEnum` | `ENUM` | `String` |
 | `DuckList` | `LIST` | `Vec<DuckValue>` |
+| `DuckArray` | `ARRAY` | `Vec<DuckValue>` |
+| `DuckStruct` | `STRUCT` | `HashMap<String, DuckValue>` |
+| `DuckMap` | `MAP` | `HashMap<DuckValue, DuckValue>` |
+| `DuckUnion` | `UNION` | `Box<DuckValue>` (active member) |
+| `DuckUuid` | `UUID` | `better_duck_core::types::uuid::DuckUuid` |
+| `DuckBit` | `BIT` | `better_duck_core::types::bit::DuckBit` |
+| `DuckBignum` | `BIGNUM` | `better_duck_core::types::bignum::DuckBignum` |
 
 > [!NOTE]
-> date/time types in `better-duck-diesel` require the `chrono` feature (not enabled by default — add `features = ["chrono"]`).
+> Date/time types work either way: with the `chrono` feature they map to `chrono` types; without it, they map to `better_duck_core::types::date_native`'s plain structs and `std::time` types. Only one set is compiled at a time.
 
 ---
 
@@ -345,6 +435,9 @@ diesel::table! {
 | `json` | — | Enable DuckDB's JSON extension (requires `bundled`) |
 | `parquet` | — | Enable DuckDB's Parquet extension (requires `bundled`) |
 | `buildtime_bindgen` | — | Regenerate FFI bindings at build time (requires LLVM/clang) |
+| `async` | — | Tokio-based async facade (`AsyncConnection`, `AsyncDatabase`) over `spawn_blocking` |
+| `pool` | — | `r2d2` connection pool backed by a shared `Database` handle |
+| `udf` | — | `#[duckdb_scalar]` / `#[duckdb_table_function]` user-defined functions |
 
 ### `better-duck-diesel`
 
@@ -359,25 +452,37 @@ diesel::table! {
 
 ## Benchmarks
 
-The workspace includes a custom Core-vs-CLI benchmark harness at [`crates/better-duck-core/benches/comparison.rs`](crates/better-duck-core/benches/comparison.rs). Run it with:
+The workspace includes a benchmark harness at
+[`crates/better-duck-core/benches/comparison.rs`](crates/better-duck-core/benches/comparison.rs)
+that compares `better-duck-core` against the community [`duckdb`](https://crates.io/crates/duckdb)
+crate, in-process (no subprocess overhead on either side), across primitive types, composite
+types, and five representative operations. Run it with:
 
 ```sh
 cargo bench -p better-duck-core --bench comparison
 ```
 
-Results are written to `docs/benchmarks/` (Markdown report + JSON + SVG charts). If the `duckdb` CLI binary is on your PATH, the harness will also time it as a comparison; otherwise the CLI column is skipped.
+Results are written to [`docs/benchmarks/`](docs/benchmarks/): `REPORT.md` (full tables + charts),
+`results.json` (raw numbers), and one latency/throughput SVG pair per group
+(`comparison-primitive-types-*.svg`, `comparison-composite-types-*.svg`,
+`comparison-operations-*.svg`).
 
-**Sample results** (Intel Core Ultra 7 155U, 12 cores, 16 GB RAM, Windows 11):
+**Sample results** (Operations group; see [`REPORT.md`](docs/benchmarks/REPORT.md) for the full
+primitive- and composite-type tables):
 
-| Workload | Median latency | Throughput |
+| Workload | `better-duck-core` | `duckdb` crate |
 |---|---|---|
-| CRUD basics (4 ops) | 2.36 ms | 1.7 k ops/s |
-| Bulk ingest — 10k rows (appender) | 16.43 ms | 608 k rows/s |
-| Analytical GROUP BY — 100k rows | 1.16 ms | 86 M rows/s |
-| Prepared reuse — 100 queries | 27.75 ms | 3.6 k queries/s |
-| All-types scan — 1k rows, 11 cols | 18.76 ms | 53 k rows/s |
+| CRUD basics (4 ops) | 4.73 ms / 846 ops/s | 4.59 ms / 871 ops/s |
+| Bulk ingest — 10k rows (appender) | 31.94 ms / 313.1 k rows/s | 38.55 ms / 259.4 k rows/s |
+| Analytical GROUP BY — 100k rows | 4.19 ms / 23.9 M rows/s | 4.24 ms / 23.6 M rows/s |
+| Prepared reuse — 100 queries | 75.72 ms / 1.3 k queries/s | 68.16 ms / 1.5 k queries/s |
+| All-types scan — 1k rows, 11 cols | 32.91 ms / 30.4 k rows/s | 27.46 ms / 36.4 k rows/s |
 
-![Latency comparison](docs/benchmarks/comparison-latency.svg)
+![Operations — median latency](docs/benchmarks/comparison-operations-latency.svg)
+![Operations — throughput](docs/benchmarks/comparison-operations-throughput.svg)
+
+Numbers move somewhat between runs due to normal system noise — the relative comparison within a
+single run is what's meaningful, not absolute milliseconds across runs.
 
 ---
 
@@ -411,24 +516,54 @@ Results are written to `docs/benchmarks/` (Markdown report + JSON + SVG charts).
 
 The library is usable today for most workloads. Here's an honest list of what's still in progress — contributions are very welcome.
 
-### Near-term (before `1.0`)
+### Recently landed
 
-- **New core types** — `UUID`, `BIT`, `BIGNUM`/`VARINT`, `GEOMETRY`, `VARIANT`, `ANY`, and `INTEGER_LITERAL` are not yet handled; reading a column of these types currently returns an error. Each needs a `DuckValue` variant, a read path in `value.rs`, and a matching `DuckValueRef` variant.
-- **`TIME_TZ` timezone offset** — the UTC offset stored in `duckdb_time_tz` is read but discarded. Full round-trip support requires preserving it in `DuckValue::TimeTz`.
-- **Diesel `FromSql`/`ToSql` for composite types** — STRUCT, MAP, UNION, and ARRAY have full core support but no Diesel impl yet. The gap is documented in [`crates/better-duck-diesel/tests/README.md`](crates/better-duck-diesel/tests/README.md).
-- **Diesel date/time without `chrono`** — the `date_native` module in `better-duck-diesel` is not yet wired up; date/time columns over Diesel currently require `features = ["chrono"]`.
-- **`DuckResult::exists()`** — a convenience method to check whether a SELECT returned any rows, without consuming the iterator.
-- **`DuckResult` row cache** — allow rewinding / iterating a result set more than once.
+- **New core types** — `UUID`, `BIT`, and `BIGNUM` are implemented end-to-end (core read/write +
+  Diesel `FromSql`/`ToSql`). `GEOMETRY`, `VARIANT`, `ANY`, and `INTEGER_LITERAL` remain unsupported
+  — the DuckDB C API has no value accessor for them (unlike the three above), so reading a column
+  of these types still panics.
+- **`TIME_TZ` timezone offset** — fully preserved on both read and write, in core and in Diesel.
+- **Diesel `FromSql`/`ToSql` for composite types** — STRUCT, MAP, UNION, and ARRAY are implemented.
+  UNION's Rust mirror is the active member's value only (see Mid-term below for multi-arm support).
+- **Diesel date/time without `chrono`** — `date_native` is wired up; DATE/TIME/TIMESTAMP/INTERVAL/
+  TIMESTAMPTZ/TIME_TZ/TIME_NS all work over Diesel without the `chrono` feature.
+- **`DuckResult::exists()` and row cache** — `exists()` peeks without consuming the iterator;
+  `rewind()` replays already-pulled rows.
+- **`push_debug_binds`** — implemented; `debug_query`/`EXPLAIN` logging works.
+- **Empty-collection type inference** — `Vec<T>`, `Box<[T]>`, and `HashMap<K, V>` convert to
+  `LIST`/`ARRAY`/`MAP` using `T`'s (or `K`/`V`'s) static [`DuckLogicalType`], not by inspecting the
+  first element — so they work even when empty, unlike the untyped `DuckValue::List`/`Array`/`Map`,
+  which still can't infer an element type from zero entries.
+- **`async` API** — `AsyncConnection`/`AsyncDatabase`/`AsyncPool` (feature `async`), a tokio-only
+  facade over `spawn_blocking`.
+- **Core-level connection pooling** — `Database` + `r2d2`-backed `Pool` (feature `pool`), which
+  shares one database across every pooled connection (unlike opening N independent connections).
+  `better-duck-diesel`'s own `r2d2` feature (via `diesel::r2d2::ConnectionManager`) is unaffected —
+  both may be used side by side.
+- **User-defined functions** (feature `udf`) — `#[duckdb_scalar]` and `#[duckdb_table_function]`
+  register a plain Rust function as a DuckDB scalar or table function, with parameter/return types
+  inferred from the Rust signature via `DuckLogicalType`. Backed by a new `better-duck-macros`
+  proc-macro crate. Panics are caught and reported as query errors under `panic = "unwind"`; see the
+  `udf` module docs for the `panic = "abort"` caveat. Named parameters, projection pushdown,
+  `max_threads`, and `varargs` are not yet supported.
+- **Query-path performance fixes** — `Decimal` binds no longer allocate a `String` per row;
+  `u128`/UHUGEINT has a direct typed append/bind path (previously fell back to a slower generic
+  one); every query execution no longer heap-allocates a throwaway `duckdb_result` box; and
+  `DuckResult::count()` no longer materializes a `DuckRow` for rows it's about to discard. See the
+  [benchmarks](#benchmarks) section and the changelog for details and before/after numbers.
 
 ### Mid-term
 
-- **Diesel wiring for new types** — once UUID, BIT, GEOMETRY, etc. land in core, add the corresponding Diesel SQL type markers and `FromSql`/`ToSql` impls.
-- **`push_debug_binds`** — Diesel's debug-bind output currently panics (unimplemented); fix it so `EXPLAIN` / logging works.
-- **Diesel `prepare_for_cache` distinction** — honor the `PrepareForCache::No` / `Yes` hint from Diesel's statement-cache API once a stable path exists for third-party backends.
-- **Multi-arm UNION write** — the current write path only builds single-member unions. Real multi-arm unions need a richer `DuckValue::Union` variant or a builder API.
-- **Empty-collection type inference** — `Appender`/`struct_to_duck`/`map_to_duck` currently return an error when given an empty `Vec`/`HashMap` because the element type can't be inferred. A `TypedEmpty` wrapper or a default-type convention would fix this.
-- **`async` API** — `Connection` is synchronous. An async facade wrapping `spawn_blocking` would make `better-duck` usable in async runtimes without blocking the executor.
-- **Core-level connection pooling** — pooling is currently only available via `better-duck-diesel` + `r2d2`. A standalone pool (e.g. `deadpool`-backed) would help non-ORM users.
+- **Diesel `prepare_for_cache` distinction** — DuckDB's C API has a single `duckdb_prepare` path
+  with no unnamed/one-shot variant, so there is currently nothing to honour here; revisit if that
+  changes upstream.
+- **Multi-arm UNION write** — the current write path only builds single-member unions, and
+  `DuckValue::Union` carries no tag or member names. Real multi-arm unions need a richer variant.
+- **DECIMAL precision** — `decimal_value.width` is read but discarded; `DECIMAL(18,2)` round-trips
+  to a different declared precision. Needs a `DuckValue::Decimal` shape change to carry width.
+- **`RawConnection` panic-on-drop hardening** — a connection that fails to close panics in `Drop`;
+  under `panic = "abort"` this aborts the process. Low risk today (`close()` always returns `Ok`),
+  but worth hardening to log-and-continue, especially now that the pool multiplies the exposure.
 
 ### Exploratory / RFC
 
