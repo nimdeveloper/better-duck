@@ -78,14 +78,15 @@ jobs:
 
       - name: Publish crates to crates.io
         env:
-          # Explicit topological order: better-duck-core depends on
-          # better-duck-macros, and better-duck-diesel depends on
-          # better-duck-core. `cargo metadata` returns packages alphabetically
-          # (core, diesel, macros), which is the wrong order — publishing core
-          # first would fail because crates.io rejects a manifest whose
-          # dependency (macros) isn't in the index yet, and --no-verify does
-          # not skip that check (it only skips the local build).
-          CRATES_TO_PUBLISH: "better-duck-macros better-duck-core better-duck-diesel"
+          # Explicit topological order: better-duck-core depends on both
+          # better-duck-sys and better-duck-macros, and better-duck-diesel
+          # depends on better-duck-core. `cargo metadata` returns packages
+          # alphabetically (core, diesel, macros, sys), which is the wrong
+          # order — publishing core first would fail because crates.io
+          # rejects a manifest whose dependency isn't in the index yet, and
+          # --no-verify does not skip that check (it only skips the local
+          # build).
+          CRATES_TO_PUBLISH: "better-duck-sys better-duck-macros better-duck-core better-duck-diesel"
         run: |
           for CRATE in $CRATES_TO_PUBLISH; do
             echo "Publishing $CRATE..."

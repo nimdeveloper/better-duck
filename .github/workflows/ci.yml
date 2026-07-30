@@ -37,10 +37,10 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run Clippy
-        # buildtime_bindgen requires LLVM; skip it in CI. --workspace is required, and
-        # r2d2 (a better-duck-diesel-only feature) must use pkg/feature syntax: cargo
-        # validates an unqualified --features list against the first workspace member
-        # (better-duck-core), which does not have r2d2 (it has pool instead).
+        # --workspace is required, and r2d2 (a better-duck-diesel-only feature) must
+        # use pkg/feature syntax: cargo validates an unqualified --features list
+        # against the first workspace member (better-duck-core), which does not have
+        # r2d2 (it has pool instead).
         run: cargo clippy --workspace --all-targets --features "chrono,decimal,json,parquet,async,pool,udf,better-duck-diesel/r2d2" -- -D warnings
 
   # Documentation
@@ -150,21 +150,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Core crate
-          # compile-only: no bundled DuckDB → can't link+run tests on CI runners
+          # Core crate. `better-duck-sys` is a required (non-optional)
+          # dependency, so its vendored DuckDB always compiles and links
+          # regardless of feature flags — there's no more "no DuckDB linked"
+          # mode to fall back to `cmd: check` for (unlike the old external
+          # `libduckdb-sys`'s `bundled` feature, now removed entirely).
           - name: core/no-default-features
             package: better-duck-core
             args: --no-default-features
-            cmd: check
-          - name: core/bundled-only
-            package: better-duck-core
-            args: --no-default-features --features bundled
           - name: core/chrono-only
             package: better-duck-core
-            args: --no-default-features --features "bundled,chrono"
+            args: --no-default-features --features chrono
           - name: core/decimal-only
             package: better-duck-core
-            args: --no-default-features --features "bundled,decimal"
+            args: --no-default-features --features decimal
           - name: core/json
             package: better-duck-core
             args: --features json
@@ -193,7 +192,8 @@ jobs:
           - name: core/async-pool
             package: better-duck-core
             args: --features "async,pool"
-          # compile-only: cfg-correctness of async/pool without linking DuckDB
+          # compile-only: just cfg-correctness of async/pool, no need to
+          # exercise them at runtime for this check.
           - name: core/no-default-async-pool
             package: better-duck-core
             args: --no-default-features --features "async,pool"
@@ -205,15 +205,10 @@ jobs:
           # that the default (chrono-on) build would hide.
           - name: core/udf-no-chrono
             package: better-duck-core
-            args: --no-default-features --features "bundled,udf"
+            args: --no-default-features --features udf
           - name: core/udf-all
             package: better-duck-core
             args: --features "udf,async,pool,json"
-          # compile-only: no bundled DuckDB → can't link+run tests
-          - name: core/no-default-udf
-            package: better-duck-core
-            args: --no-default-features --features udf
-            cmd: check
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

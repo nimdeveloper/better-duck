@@ -55,11 +55,13 @@ body:
     attributes:
       label: Active features
       options:
-        - label: bundled (default)
-        - label: chrono
-        - label: decimal
+        - label: chrono (default)
+        - label: decimal (default)
         - label: json
         - label: parquet
+        - label: udf
+        - label: async
+        - label: pool
         - label: r2d2
 
   - type: textarea

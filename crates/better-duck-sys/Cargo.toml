@@ -1,0 +1,39 @@
+[package]
+name                  = "better-duck-sys"
+version.workspace     = true
+edition.workspace     = true
+license.workspace     = true
+description           = "Vendored DuckDB C API and bindings for the better-duck workspace"
+repository.workspace  = true
+homepage.workspace    = true
+keywords.workspace    = true
+categories.workspace  = true
+readme.workspace      = true
+links                 = "duckdb"
+build                 = "build.rs"
+# Only ship what a consumer's build actually needs — not `xtask/`-adjacent
+# tooling or anything used solely to regenerate the vendored archive.
+include = [
+    "src/**/*.rs",
+    "build.rs",
+    "vendor/duckdb.tar.gz",
+]
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[build-dependencies]
+cc         = "1.2"
+flate2     = "1.1"
+tar        = "0.4"
+serde      = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[features]
+default = []
+# Enables DuckDB's JSON extension (adds its translation units to the build).
+json = []
+# Enables DuckDB's Parquet extension (adds its translation units to the build).
+parquet = []

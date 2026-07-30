@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! `better-duck-core` — a safe, low-level Rust wrapper around the
-//! [DuckDB](https://duckdb.org) C API (`libduckdb-sys`).
+//! [DuckDB](https://duckdb.org) C API (vendored in-workspace via `better-duck-sys`).
 //!
 //! This crate provides:
 //! - A high-level [`connection::Connection`] for opening databases and executing SQL.
@@ -8,9 +8,9 @@
 //! - Type conversion traits ([`types::DuckDialect`], [`types::appendable::AppendAble`]) for
 //!   mapping between Rust types and DuckDB values.
 
-pub extern crate libduckdb_sys;
-/// Re-export of the raw `libduckdb_sys` FFI bindings.
-pub use libduckdb_sys as ffi;
+pub extern crate better_duck_sys as libduckdb_sys;
+/// Re-export of the raw `better-duck-sys` FFI bindings.
+pub use better_duck_sys as ffi;
 
 /// Async facade over [`connection::Connection`], gated by the `async` feature.
 #[cfg(feature = "async")]

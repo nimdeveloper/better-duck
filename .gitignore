@@ -1,1 +1,6 @@
 /target
+
+# Intermediate handoff between core-bench/reference-bench and run-all — not a
+# deliverable itself (docs/benchmarks/{results.json,REPORT.md,*.svg} are).
+/docs/benchmarks/_raw_core.json
+/docs/benchmarks/_raw_reference.json

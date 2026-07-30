@@ -1,7 +1,7 @@
 
 [workspace]
 resolver = "2"
-members = ["crates/better-duck-core", "crates/better-duck-diesel", "crates/better-duck-macros"]
+members = ["crates/better-duck-core", "crates/better-duck-diesel", "crates/better-duck-macros", "crates/better-duck-sys", "xtask"]
 
 [workspace.package]
 version       = "0.1.0-beta.3"
@@ -17,7 +17,7 @@ categories  = ["database", "database-implementations"]
 readme      = "README.md"
 
 [workspace.dependencies]
-libduckdb-sys  = { version = "1.10505", default-features = false }
+better-duck-sys = { path = "crates/better-duck-sys" }
 chrono         = { version = "0.4.45", default-features = false }
 log            = "0.4"
 parking_lot    = "0.12"

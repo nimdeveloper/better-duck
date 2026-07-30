@@ -14,7 +14,7 @@ readme.workspace      = true
 workspace = true
 
 [dependencies]
-libduckdb-sys = { workspace = true }
+better-duck-sys = { workspace = true }
 log           = { workspace = true }
 parking_lot   = { workspace = true }
 chrono        = { workspace = true, optional = true }
@@ -25,11 +25,9 @@ tokio         = { workspace = true, features = ["rt"], optional = true }
 better-duck-macros = { path = "../better-duck-macros", version = "0.1.0-beta.3", optional = true }
 
 [features]
-default         = ["bundled", "chrono", "decimal"]
-bundled         = ["libduckdb-sys/bundled"]
-json            = ["libduckdb-sys/json", "bundled"]
-parquet         = ["libduckdb-sys/parquet", "bundled"]
-buildtime_bindgen = ["libduckdb-sys/buildtime_bindgen"]
+default         = ["chrono", "decimal"]
+json            = ["better-duck-sys/json"]
+parquet         = ["better-duck-sys/parquet"]
 chrono          = ["dep:chrono"]
 decimal         = ["dep:rust_decimal"]
 pool            = ["dep:r2d2"]
