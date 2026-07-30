@@ -25,8 +25,7 @@ rust_decimal   = { workspace = true, optional = true }
 chrono         = { workspace = true, optional = true }
 
 [features]
-default = ["bundled", "decimal"]
-bundled = ["better-duck-core/bundled"]
+default = ["decimal"]
 chrono  = ["better-duck-core/chrono", "diesel/chrono", "dep:chrono"]
 decimal = ["better-duck-core/decimal", "dep:rust_decimal"]
 r2d2    = ["diesel/r2d2"]

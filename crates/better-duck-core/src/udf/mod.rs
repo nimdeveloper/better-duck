@@ -83,7 +83,11 @@
 //! | `name = "sql_name"` | yes | yes | the SQL function name (defaults to the Rust fn's name) |
 //! | `crate = ::path` | yes | yes | re-export escape hatch for generated code's `::better_duck_core` path |
 //! | `volatile` | yes | — | disables DuckDB's zero-argument constant-folding |
+//! | `state(Type, init_expr)` | yes | — | shared `VScalar::State`, readable via [`duck_state!`] |
 //! | `columns("a", "b")` | — | yes | result column names (defaults: the fn name for one column, `column_0`, `column_1`, … for several) |
+//! | `named_params("a", "b")` | — | yes | binds the named fn parameters as SQL named (keyword) parameters instead of positional; a non-`Option` field becomes a required named parameter, an `Option<T>` field an optional one |
+//! | `projection_pushdown` | — | yes | declares that this function honors [`duck_projection!`] to skip work for columns the query doesn't need |
+//! | `extra_info(Type, init_expr)` | — | yes | shared, registration-time context, readable via [`duck_extra_info!`] |
 //!
 //! `special_handling` (whether `NULL` inputs still invoke the function) is
 //! inferred automatically: present whenever any parameter is `Option<T>`.
@@ -100,8 +104,12 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 pub(crate) mod callback;
+mod context;
 mod data_chunk;
 mod logical_type;
+/// DuckDB replacement scans: rewrite an unresolved table reference into a
+/// table function call. **Experimental** — see the module docs.
+pub mod replacement;
 /// DuckDB scalar functions: row-wise functions used in a `SELECT` list or
 /// `WHERE` clause.
 pub mod scalar;
@@ -114,8 +122,13 @@ mod vector;
 pub use data_chunk::DataChunkHandle;
 /// An owned DuckDB logical type handle.
 pub use logical_type::LogicalType;
+/// The trait behind DuckDB replacement scans, and its callback-info type.
+/// **Experimental** — see the [`replacement`] module docs.
+pub use replacement::{ReplacementScan, ReplacementScanInfo};
 /// The trait behind DuckDB scalar functions, and its signature type.
 pub use scalar::{ScalarSignature, VScalar};
+/// Opt-in trait for a [`VTab`] with per-worker-thread ("local") init data.
+pub use table::VTabLocalInit;
 /// The row type produced by a `#[duckdb_table_function]`-generated function,
 /// and the shared init-data/execution-loop helpers it compiles down to.
 pub use table::{run_table_func, TableInitData, TableRow};
@@ -158,6 +171,82 @@ macro_rules! duck_bail {
     };
 }
 
+/// Returns the 0-based column indices the current query actually needs, as a
+/// `Vec<usize>`, from inside a `#[duckdb_table_function(projection_pushdown)]`
+/// function body.
+///
+/// Empty if the query didn't request pushdown (every column is wanted).
+///
+/// # Panics
+///
+/// Panics if called outside a table function's `init` callback — contained by
+/// this crate's callback machinery, so it always surfaces as a normal query
+/// error, never undefined behavior.
+///
+/// # Examples
+///
+/// ```
+/// use better_duck_core::{connection::Connection, duck_projection, duckdb_table_function};
+///
+/// #[duckdb_table_function(columns("a", "b"), projection_pushdown)]
+/// fn two_cols() -> impl Iterator<Item = (i32, i32)> + Send {
+///     let wanted = duck_projection!();
+///     // `wanted` lists which of columns 0 (`a`) / 1 (`b`) the query needs.
+///     let _ = wanted;
+///     std::iter::once((1, 2))
+/// }
+/// # fn main() -> better_duck_core::error::Result<()> {
+/// let mut conn = Connection::open_in_memory()?;
+/// two_cols::register(&mut conn)?;
+/// # Ok(())
+/// # }
+/// ```
+#[macro_export]
+macro_rules! duck_projection {
+    () => {
+        $crate::udf::__private::current_projection()
+    };
+}
+
+/// Returns a clone of the current table function's registration-time "extra
+/// info" (see [`Connection::register_table_function_with_extra_info`](crate::connection::Connection::register_table_function_with_extra_info)),
+/// from inside a `#[duckdb_table_function]` function body.
+///
+/// `Type` must be `Clone` — the macro always returns an independently owned
+/// value, never a reference into ambient context.
+///
+/// # Panics
+///
+/// Panics if called outside a table function callback registered with extra
+/// info, or if `Type` doesn't match what was actually registered — contained
+/// by this crate's callback machinery, so it always surfaces as a normal
+/// query error, never undefined behavior.
+#[macro_export]
+macro_rules! duck_extra_info {
+    ($ty:ty) => {
+        $crate::udf::__private::current_table_extra_info::<$ty>()
+    };
+}
+
+/// Returns a clone of the current scalar function's `State`, from inside a
+/// `#[duckdb_scalar(state = ...)]` function body.
+///
+/// `Type` must be `Clone` — the macro always returns an independently owned
+/// value, never a reference into ambient context.
+///
+/// # Panics
+///
+/// Panics if called outside a scalar function callback, or if `Type` doesn't
+/// match the function's declared state type — contained by this crate's
+/// callback machinery, so it always surfaces as a normal query error, never
+/// undefined behavior.
+#[macro_export]
+macro_rules! duck_state {
+    ($ty:ty) => {
+        $crate::udf::__private::current_scalar_state::<$ty>()
+    };
+}
+
 /// Items referenced by code generated by the `#[duckdb_scalar]`/
 /// `#[duckdb_table_function]` attribute macros.
 ///
@@ -169,10 +258,14 @@ pub mod __private {
     pub use crate::connection::Connection;
     pub use crate::error::Result;
     pub use crate::types::DuckLogicalType;
+    pub use crate::udf::context::{
+        current_projection, current_scalar_state, current_table_extra_info, ProjectionGuard,
+        ScalarStateGuard, TableExtraInfoGuard,
+    };
     pub use crate::udf::{
         run_table_func, BindInfo, DataChunkHandle, InitInfo, LogicalType, ScalarArg, ScalarRet,
         ScalarSignature, TableFunctionInfo, TableInitData, TableRow, UdfResult, VScalar, VTab,
-        VectorMut, VectorRef,
+        VTabLocalInit, VectorMut, VectorRef,
     };
     pub use std::boxed::Box;
     pub use std::result::Result as StdResult;

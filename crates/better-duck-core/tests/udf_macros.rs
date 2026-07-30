@@ -2,8 +2,8 @@
 #![cfg(feature = "udf")]
 
 use better_duck_core::connection::Connection;
-use better_duck_core::duckdb_scalar;
 use better_duck_core::types::value::DuckValue;
+use better_duck_core::{duck_state, duckdb_scalar};
 
 /// Repeats `s` `n` times.
 #[duckdb_scalar]
@@ -30,6 +30,12 @@ fn double_or_null(x: Option<i32>) -> Option<i32> {
 #[duckdb_scalar(volatile)]
 fn answer() -> i32 {
     42
+}
+
+/// Reads its shared `State` (set once at registration) via `duck_state!`.
+#[duckdb_scalar(state(i32, 10))]
+fn add_offset(x: i32) -> i32 {
+    x + duck_state!(i32)
 }
 
 #[test]
@@ -93,4 +99,22 @@ fn volatile_zero_arg_function_is_not_constant_folded_away() {
 fn original_function_is_still_directly_callable() {
     assert_eq!(repeat_str("x", 3), "xxx");
     assert_eq!(parse_int("7").unwrap(), 7);
+}
+
+#[test]
+fn state_option_shares_registration_time_value_across_calls() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    add_offset::register(&mut conn).unwrap();
+    conn.execute_batch("CREATE TABLE t (x INTEGER)").unwrap();
+    conn.execute_batch("INSERT INTO t VALUES (1), (2), (3)").unwrap();
+    let result = conn.execute("SELECT add_offset(x) AS r FROM t ORDER BY x").unwrap();
+    let rows: Vec<_> = result.collect::<better_duck_core::error::Result<_>>().unwrap();
+    let got: Vec<i32> = rows
+        .iter()
+        .map(|r| match r.get("r").unwrap() {
+            DuckValue::Int(n) => *n,
+            other => panic!("expected Int, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(got, vec![11, 12, 13]);
 }

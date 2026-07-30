@@ -113,6 +113,30 @@ pub(crate) fn expand(
     let param_fields: Vec<syn::Ident> =
         (0..params.len()).map(|i| format_ident!("p{}", i)).collect();
 
+    // Which declared parameters bind as SQL named (keyword) parameters instead
+    // of positional ones — validated against the fn's actual parameter names.
+    let named_param_names: Vec<String> = attrs
+        .named_params
+        .as_ref()
+        .map(|lits| lits.iter().map(syn::LitStr::value).collect())
+        .unwrap_or_default();
+    for declared in &named_param_names {
+        if !params.iter().any(|p| &p.ident.to_string() == declared) {
+            return Err(syn::Error::new_spanned(
+                attrs
+                    .named_params
+                    .as_ref()
+                    .and_then(|lits| lits.iter().find(|l| &l.value() == declared))
+                    .expect("value came from this list"),
+                format!(
+                    "`named_params` names `{declared}`, but no parameter with that name exists"
+                ),
+            ));
+        }
+    }
+    let is_named: Vec<bool> =
+        params.iter().map(|p| named_param_names.contains(&p.ident.to_string())).collect();
+
     let bind_field_decls: Vec<TokenStream> = params
         .iter()
         .zip(&param_fields)
@@ -121,22 +145,56 @@ pub(crate) fn expand(
             quote! { pub #field: #ty }
         })
         .collect();
-    let bind_reads: Vec<TokenStream> = params
-        .iter()
-        .zip(&param_fields)
-        .enumerate()
-        .map(|(i, (p, field))| {
-            let ty = &p.ty;
-            let span = ty.span();
-            quote_spanned! {span=> let #field: #ty = bind.get_parameter(#i as u64)?; }
-        })
-        .collect();
+    let bind_reads: Vec<TokenStream> = {
+        let mut positional_idx = 0u64;
+        params
+            .iter()
+            .zip(&param_fields)
+            .zip(&is_named)
+            .map(|((p, field), &named)| {
+                let ty = &p.ty;
+                let span = ty.span();
+                if named {
+                    let name_str = p.ident.to_string();
+                    if p.is_option {
+                        quote_spanned! {span=>
+                            let #field: #ty = bind.get_named_parameter::<#ty>(#name_str)?.flatten();
+                        }
+                    } else {
+                        quote_spanned! {span=>
+                            let #field: #ty = bind.get_named_parameter::<#ty>(#name_str)?
+                                .ok_or_else(|| ::std::format!(
+                                    "missing required named parameter `{}`", #name_str
+                                ))?;
+                        }
+                    }
+                } else {
+                    let i = positional_idx;
+                    positional_idx += 1;
+                    quote_spanned! {span=> let #field: #ty = bind.get_parameter(#i as u64)?; }
+                }
+            })
+            .collect()
+    };
     let param_logical_types: Vec<TokenStream> = params
         .iter()
-        .map(|p| {
+        .zip(&is_named)
+        .filter(|(_, &named)| !named)
+        .map(|(p, _)| {
             let ty = &p.ty;
             let span = ty.span();
             quote_spanned! {span=> __p::LogicalType::of::<#ty>()? }
+        })
+        .collect();
+    let named_param_decls: Vec<TokenStream> = params
+        .iter()
+        .zip(&is_named)
+        .filter(|(_, &named)| named)
+        .map(|(p, _)| {
+            let ty = &p.ty;
+            let span = ty.span();
+            let name_str = p.ident.to_string();
+            quote_spanned! {span=> (::std::string::String::from(#name_str), __p::LogicalType::of::<#ty>()?) }
         })
         .collect();
     // `init.bind_data()` returns `&BindData`, so each field must be cloned out
@@ -170,6 +228,67 @@ pub(crate) fn expand(
             let __iter: __p::Box<dyn Iterator<Item = #row_ty> + Send> = __p::Box::new(__iter);
         }
     };
+    let projection_pushdown = attrs.projection_pushdown;
+    // Wrapping the call in a `ProjectionGuard` makes `duck_projection!()` work
+    // inside the user's fn body — a no-op (empty projection) when the flag
+    // isn't set, since nothing ever enters the guard in that case.
+    let projection_guard = if projection_pushdown {
+        quote! {
+            let __proj = init.column_indices();
+            // SAFETY: `__proj` outlives the guard — both are local to this
+            // call, and the guard is dropped explicitly (see
+            // `projection_guard_drop` below) before `__proj` is moved into
+            // `TableInitData::with_projection`.
+            let __proj_guard = unsafe { __p::ProjectionGuard::enter(&__proj) };
+        }
+    } else {
+        quote! {}
+    };
+    // Ends `__proj`'s borrow (held by `__proj_guard`, entered above) right
+    // after the user's fn body has run — the only place `duck_projection!()`
+    // is valid — and before `__proj` itself is moved into `with_projection`
+    // a few lines down.
+    let projection_guard_drop = if projection_pushdown {
+        quote! { drop(__proj_guard); }
+    } else {
+        quote! {}
+    };
+    let init_data_expr = if projection_pushdown {
+        quote! { __p::TableInitData::new(__iter).with_projection(__proj) }
+    } else {
+        quote! { __p::TableInitData::new(__iter) }
+    };
+    // Wrapping the call in a `TableExtraInfoGuard` makes `duck_extra_info!()`
+    // work inside the user's fn body — a no-op when `extra_info` wasn't
+    // declared, since nothing ever enters the guard in that case (and
+    // `duck_extra_info!()` would then correctly panic if called).
+    let extra_info_guard = if let Some((ty, _)) = &attrs.extra_info {
+        quote! {
+            let __extra_info_ptr = init.extra_info::<#ty>().expect(
+                "extra info was declared via `extra_info(...)` but is unexpectedly absent"
+            ) as *const #ty as *const ();
+            // SAFETY: `init.extra_info::<#ty>()` returns a reference kept
+            // alive by DuckDB until the catalog entry is dropped, which
+            // outlives this call; the guard is dropped (implicitly, at the
+            // end of this function) well before that.
+            let __extra_info_guard = unsafe {
+                __p::TableExtraInfoGuard::enter(__extra_info_ptr.cast())
+            };
+        }
+    } else {
+        quote! {}
+    };
+    let register_call = match &attrs.extra_info {
+        // `E` on `register_table_function_with_extra_info` is a free generic
+        // (unlike scalar's `state: S::State`, tied to an associated type) —
+        // leaving it as `_` let `#init_expr`'s own default integer-literal
+        // type (`i32`) win instead of the declared `Type`, silently storing
+        // fewer bytes than `duck_extra_info!(Type)` later reads back.
+        Some((ty, init_expr)) => quote! {
+            conn.register_table_function_with_extra_info::<Udf, #ty>(#sql_name, #init_expr)
+        },
+        None => quote! { conn.register_table_function::<Udf>(#sql_name) },
+    };
 
     let expanded = quote! {
         #item
@@ -193,6 +312,14 @@ pub(crate) fn expand(
                     Ok(__p::Vec::from([#(#param_logical_types),*]))
                 }
 
+                fn named_parameters() -> __p::Result<__p::Vec<(::std::string::String, __p::LogicalType)>> {
+                    Ok(__p::Vec::from([#(#named_param_decls),*]))
+                }
+
+                fn supports_projection_pushdown() -> bool {
+                    #projection_pushdown
+                }
+
                 fn bind(bind: &__p::BindInfo) -> __p::UdfResult<Self::BindData> {
                     #(#bind_reads)*
                     #(#bind_columns)*
@@ -201,9 +328,12 @@ pub(crate) fn expand(
 
                 fn init(init: &__p::InitInfo<Self>) -> __p::UdfResult<Self::InitData> {
                     let bd = init.bind_data();
+                    #projection_guard
+                    #extra_info_guard
                     #get_iter
                     #boxed_iter
-                    Ok(__p::TableInitData::new(__iter))
+                    #projection_guard_drop
+                    Ok(#init_data_expr)
                 }
 
                 fn func(
@@ -221,7 +351,7 @@ pub(crate) fn expand(
             /// Returns an error if registration fails — see
             /// `Connection::register_table_function`.
             pub fn register(conn: &mut __p::Connection) -> __p::Result<()> {
-                conn.register_table_function::<Udf>(#sql_name)
+                #register_call
             }
         }
     };

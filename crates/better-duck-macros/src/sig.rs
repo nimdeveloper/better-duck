@@ -5,9 +5,9 @@ use syn::{FnArg, GenericArgument, ItemFn, Pat, PathArguments, Type};
 
 /// One parameter of a user-annotated function.
 pub(crate) struct Param {
-    /// Unused by `#[duckdb_scalar]` (parameters are matched positionally), kept
-    /// for `#[duckdb_table_function]`'s bind-time diagnostics.
-    #[allow(dead_code)]
+    /// Unused by `#[duckdb_scalar]` (parameters are matched positionally);
+    /// used by `#[duckdb_table_function]` to match `named_params(...)` entries
+    /// against actual parameter names.
     pub(crate) ident: syn::Ident,
     /// The parameter's full declared type, `Option<T>` wrapper included if
     /// present — both `better_duck_core`'s `ScalarArg` and `DuckLogicalType`

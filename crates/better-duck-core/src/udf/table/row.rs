@@ -32,13 +32,22 @@ pub trait TableRow: Sized {
 
     /// Writes each element into the matching column vector at `row`.
     ///
+    /// `projection`, when `Some`, lists which logical column each entry of
+    /// `cols` corresponds to (DuckDB only allocates vectors for the columns a
+    /// pushdown-enabled query actually requested, in that order — `cols` may
+    /// then be shorter than [`COLUMNS`](Self::COLUMNS), and `cols[i]` is
+    /// logical column `projection[i]`, not column `i`). `None` means every
+    /// column is wanted, in order (`cols.len() == COLUMNS`).
+    ///
     /// # Errors
     ///
-    /// Returns an error if a value cannot be converted to a DuckDB value.
+    /// Returns an error if a value cannot be converted to a DuckDB value, or
+    /// if `projection` names a column index outside `0..COLUMNS`.
     fn write_row(
         self,
         cols: &mut [VectorMut<'_>],
         row: usize,
+        projection: Option<&[usize]>,
     ) -> UdfResult<()>;
 }
 
@@ -51,8 +60,28 @@ macro_rules! impl_table_row {
                 Ok(std::vec![$(LogicalType::of::<$T>()?),+])
             }
 
-            fn write_row(self, cols: &mut [VectorMut<'_>], row: usize) -> UdfResult<()> {
-                $( self.$idx.write(&mut cols[$idx], row)?; )+
+            #[allow(non_snake_case)] // `$T` (e.g. `A`, `B`) doubles as the per-field binding name.
+            fn write_row(self, cols: &mut [VectorMut<'_>], row: usize, projection: Option<&[usize]>) -> UdfResult<()> {
+                let ($($T,)+) = self;
+                $( let mut $T = Some($T); )+
+                match projection {
+                    None => {
+                        $( $T.take().unwrap().write(&mut cols[$idx], row)?; )+
+                    }
+                    Some(wanted) => {
+                        for (out_idx, &logical_idx) in wanted.iter().enumerate() {
+                            match logical_idx {
+                                $( $idx => { $T.take()
+                                    .ok_or("projection named the same column index more than once")?
+                                    .write(&mut cols[out_idx], row)?; } )+
+                                _ => return Err(format!(
+                                    "projection column index {logical_idx} out of range for a {} column row",
+                                    $n
+                                ).into()),
+                            }
+                        }
+                    }
+                }
                 Ok(())
             }
         }
@@ -73,12 +102,28 @@ impl_table_row!(8; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7);
 /// it can be shared across the worker threads DuckDB may execute the scan on.
 pub struct TableInitData<Row: TableRow> {
     iter: Mutex<Box<dyn Iterator<Item = Row> + Send>>,
+    /// The active column projection, if the function declared
+    /// `projection_pushdown` — see [`TableRow::write_row`].
+    projection: Option<Vec<usize>>,
 }
 
 impl<Row: TableRow> TableInitData<Row> {
     /// Wraps `iter` as init data for a table function scan.
     pub fn new(iter: Box<dyn Iterator<Item = Row> + Send>) -> Self {
-        Self { iter: Mutex::new(iter) }
+        Self { iter: Mutex::new(iter), projection: None }
+    }
+
+    /// Records the column projection DuckDB selected for this scan (from
+    /// [`InitInfo::column_indices`](super::InitInfo::column_indices)), so
+    /// [`run_table_func`] writes each row into the correct, possibly-narrowed
+    /// set of output columns.
+    #[must_use]
+    pub fn with_projection(
+        mut self,
+        projection: Vec<usize>,
+    ) -> Self {
+        self.projection = Some(projection);
+        self
     }
 }
 
@@ -106,9 +151,10 @@ pub fn run_table_func<Row: TableRow>(
         // down normally instead of poisoning every subsequent chunk pull too.
         let mut iter = init_data.iter.lock().unwrap_or_else(|e| e.into_inner());
         let mut cols = output.vectors_mut()?;
+        let projection = init_data.projection.as_deref();
         while written < cap {
             let Some(item) = iter.next() else { break };
-            item.write_row(&mut cols, written)?;
+            item.write_row(&mut cols, written, projection)?;
             written += 1;
         }
     }

@@ -95,6 +95,15 @@ impl Database {
     pub fn connect(&self) -> Result<Connection> {
         RawConnection::new(Arc::clone(&self.inner)).map(Connection::from_raw)
     }
+
+    /// Returns the raw `duckdb_database` handle for internal FFI use (e.g. the
+    /// `udf` module's replacement-scan registration, which needs the handle
+    /// directly — DuckDB scopes replacement scans per-database, not
+    /// per-connection).
+    #[cfg(feature = "udf")]
+    pub(crate) fn raw_db(&self) -> crate::ffi::duckdb_database {
+        self.inner.0
+    }
 }
 
 impl std::fmt::Debug for Database {

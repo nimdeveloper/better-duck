@@ -65,6 +65,33 @@ pub(crate) fn expand(
         quote! { let __r = #call; }
     };
 
+    let state_ty: syn::Type = match &attrs.state {
+        Some((ty, _)) => ty.clone(),
+        None => syn::parse_quote!(()),
+    };
+    // Entering the guard makes `duck_state!()` work inside the user's fn body
+    // for the whole row loop — a no-op when no `state` option was declared,
+    // since nothing ever enters the guard in that case (and `duck_state!()`
+    // would then correctly panic if called, matching the doc'd contract).
+    let state_guard = if attrs.state.is_some() {
+        quote! {
+            // SAFETY: `state` outlives the guard — both are scoped to this
+            // call, and the guard is dropped (implicitly, at the end of this
+            // function) before `state`'s borrow ends.
+            let __state_guard = unsafe {
+                __p::ScalarStateGuard::enter((state as *const #state_ty).cast())
+            };
+        }
+    } else {
+        quote! {}
+    };
+    let register_call = match &attrs.state {
+        Some((_, init_expr)) => quote! {
+            conn.register_scalar_function_with_state::<Udf>(#sql_name, #init_expr)
+        },
+        None => quote! { conn.register_scalar_function::<Udf>(#sql_name) },
+    };
+
     // Non-`Option` parameters are exempt from special_handling and are not
     // guaranteed to hold a meaningful value on a NULL row (a VARCHAR/BLOB
     // slot's string_t may not even be a valid pointer): skip the call entirely
@@ -91,7 +118,7 @@ pub(crate) fn expand(
             pub struct Udf;
 
             impl __p::VScalar for Udf {
-                type State = ();
+                type State = #state_ty;
 
                 fn signatures() -> __p::Result<__p::Vec<__p::ScalarSignature>> {
                     Ok(__p::Vec::from([__p::ScalarSignature::exact(
@@ -109,10 +136,12 @@ pub(crate) fn expand(
                 }
 
                 fn invoke(
-                    _state: &(),
+                    state: &#state_ty,
                     input: &__p::DataChunkHandle,
                     output: &mut __p::VectorMut<'_>,
                 ) -> __p::UdfResult<()> {
+                    let _ = state;
+                    #state_guard
                     #(#col_lets)*
                     let __n_rows = input.len();
                     for row in 0..__n_rows {
@@ -132,7 +161,7 @@ pub(crate) fn expand(
             /// Returns an error if registration fails — see
             /// `Connection::register_scalar_function`.
             pub fn register(conn: &mut __p::Connection) -> __p::Result<()> {
-                conn.register_scalar_function::<Udf>(#sql_name)
+                #register_call
             }
         }
     };
