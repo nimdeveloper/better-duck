@@ -11,7 +11,7 @@
 
 [package]
 name       = "bench-comparison"
-version    = "0.1.0-beta.3"
+version    = "0.1.0-beta.4"
 edition    = "2021"
 publish    = false
 

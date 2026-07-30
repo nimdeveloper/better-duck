@@ -39,17 +39,17 @@ Most Rust DuckDB bindings depend on Arrow or require a system-installed DuckDB l
 ```toml
 [dependencies]
 # Core only
-better-duck-core = "0.1.0-beta.3"
+better-duck-core = "0.1.0-beta.4"
 
 # Or: Core + Diesel ORM backend
-better-duck-core   = "0.1.0-beta.3"
-better-duck-diesel = "0.1.0-beta.3"
+better-duck-core   = "0.1.0-beta.4"
+better-duck-diesel = "0.1.0-beta.4"
 ```
 
 > [!NOTE]
 > Cargo's default version requirement (e.g. `"0.1"`) excludes pre-release versions like
-> `-beta.3` — pin the exact pre-release version as shown above, or run
-> `cargo add better-duck-core --version 0.1.0-beta.3`.
+> `-beta.4` — pin the exact pre-release version as shown above, or run
+> `cargo add better-duck-core --version 0.1.0-beta.4`.
 
 ---
 
@@ -272,6 +272,67 @@ conn.execute("SELECT sum(n) FROM series(1, 101)")?;  // 5050
 `Option<T>` parameters/returns propagate `NULL` explicitly; a `Result<T, E>`
 return fails the query with `E`'s message. See the [`udf` module docs](https://docs.rs/better-duck-core)
 for the full attribute reference and the panic-containment/`panic = "abort"` caveat.
+
+Table functions can also declare named parameters, honor projection pushdown,
+and reach that context from inside the function body via ergonomic macros —
+no manual `BindInfo`/`InitInfo` plumbing:
+
+```rust
+use better_duck_core::{connection::Connection, duck_projection, duckdb_table_function};
+
+/// `start` is positional; `step` is a required SQL named (keyword) parameter.
+/// `projection_pushdown` lets the function see which columns the query wants.
+#[duckdb_table_function(columns("n"), named_params("step"), projection_pushdown)]
+fn stepped(start: i64, step: i64) -> impl Iterator<Item = i64> + Send {
+    let _wanted_columns = duck_projection!(); // Vec<usize>, indices into ["n"]
+    (0..5).map(move |i| start + i * step)
+}
+
+let mut conn = Connection::open_in_memory()?;
+stepped::register(&mut conn)?;
+conn.execute("SELECT n FROM stepped(10, step := 2)")?; // 10, 12, 14, 16, 18
+```
+
+Scalar functions can declare shared state, set once at registration and
+readable via `duck_state!`:
+
+```rust
+use better_duck_core::{connection::Connection, duck_state, duckdb_scalar};
+
+#[duckdb_scalar(state(i32, 10))]
+fn add_offset(x: i32) -> i32 {
+    x + duck_state!(i32)
+}
+
+let mut conn = Connection::open_in_memory()?;
+add_offset::register(&mut conn)?;
+conn.execute("SELECT add_offset(5)")?; // 15
+```
+
+**Replacement scans** _(experimental)_ rewrite an unresolved table reference
+into a table function call — e.g. routing `SELECT * FROM 'data.csv'` to a
+CSV-reading table function by extension — without SQL execution inside the
+callback (see the [`replacement` module docs](https://docs.rs/better-duck-core)
+for the exact scope restriction and why):
+
+```rust
+use better_duck_core::{database::Database, udf::{ReplacementScan, ReplacementScanInfo}};
+
+struct RangeByExtension;
+impl ReplacementScan for RangeByExtension {
+    fn replace(table_name: &str, info: &ReplacementScanInfo) -> better_duck_core::udf::UdfResult<()> {
+        let Some(stem) = table_name.strip_suffix(".range") else { return Ok(()) };
+        info.set_function_name("range")?;
+        info.add_parameter(&stem.parse::<i64>()?)?;
+        Ok(())
+    }
+}
+
+let db = Database::open_in_memory()?;
+db.register_replacement_scan::<RangeByExtension>();
+let mut conn = db.connect()?;
+conn.execute("SELECT * FROM '5.range'")?; // routed to range(5)
+```
 
 ---
 
@@ -544,8 +605,19 @@ The library is usable today for most workloads. Here's an honest list of what's 
   register a plain Rust function as a DuckDB scalar or table function, with parameter/return types
   inferred from the Rust signature via `DuckLogicalType`. Backed by a new `better-duck-macros`
   proc-macro crate. Panics are caught and reported as query errors under `panic = "unwind"`; see the
-  `udf` module docs for the `panic = "abort"` caveat. Named parameters, projection pushdown,
-  `max_threads`, and `varargs` are not yet supported.
+  `udf` module docs for the `panic = "abort"` caveat.
+- **Table function extras** — named (keyword) parameters (`named_params(...)`), projection pushdown
+  (`projection_pushdown`), and per-worker-thread ("local") init data (`VTabLocalInit`, manual `VTab`
+  implementations only — not yet exposed as an attribute option) are all supported now.
+  `duck_projection!`/`duck_extra_info!`/`duck_state!` macros read this context (and shared scalar
+  `State`, via `#[duckdb_scalar(state(Type, init_expr))]`) from inside a function body — no manual
+  `BindInfo`/`InitInfo` handle needed, matching `duck_bail!`'s existing style. `varargs` and a full
+  scalar bind phase (argument inspection/constant folding, unlike duckdb-rs, has no established
+  need) remain unsupported.
+- **Replacement scans** _(experimental, feature `udf`)_ — `Database::register_replacement_scan`
+  rewrites an unresolved table reference into a table function call. No comparable safe-Rust design
+  exists elsewhere to model this on, so v1 deliberately can't run SQL from inside the callback (risk
+  of deadlocking the connection mid-bind) — only literal-parameter table function rewrites.
 - **Query-path performance fixes** — `Decimal` binds no longer allocate a `String` per row;
   `u128`/UHUGEINT has a direct typed append/bind path (previously fell back to a slower generic
   one); every query execution no longer heap-allocates a throwaway `duckdb_result` box; and

@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.0-beta.4] — 2026-07-30
+
+### `better-duck-core`
+
+#### Added
+
+**User-defined functions**
+- **Table function extras** — `VTab::named_parameters()`/`supports_projection_pushdown()` (both
+  defaulted, so existing simple functions are unaffected); a new opt-in `VTabLocalInit` trait for
+  per-worker-thread init data, registered via `Connection::register_table_function_ext`; `extra_info`
+  accessors on `BindInfo`/`InitInfo`/`TableFunctionInfo`, settable via the new
+  `Connection::register_table_function_with_extra_info`. `#[duckdb_table_function]` gained
+  `named_params("a", "b")` (binds fn parameters as SQL keyword parameters instead of positional —
+  required if the field type is bare, optional if `Option<T>`), `projection_pushdown` (bare flag —
+  DuckDB then narrows the output chunk to only the requested columns, and `write_row` correctly maps
+  each written value to the right physical output slot), and `extra_info(Type, init_expr)` (wires the
+  function to `Connection::register_table_function_with_extra_info` instead of the plain path)
+  attribute options. `#[duckdb_scalar]` gained `state(Type, init_expr)`, wiring the function to
+  `Connection::register_scalar_function_with_state` instead of the plain, stateless path.
+- **`duck_projection!`/`duck_extra_info!`/`duck_state!` macros** — read the ambient
+  `InitInfo`/extra-info/scalar-`State` context from inside a `#[duckdb_table_function]`/
+  `#[duckdb_scalar]` function body, in the same style as the existing `duck_bail!` — no manual
+  `BindInfo`/`InitInfo` handle needed. Always return an owned, cloned value (never a reference into
+  the ambient thread-local context, which would be unsound to hand back to the caller); `Type` must
+  be `Clone`. Panics (contained, surfaces as a query error) if called outside the matching callback.
+- **Replacement scans** _(experimental)_ — `ReplacementScan` trait + `Database::register_replacement_scan`
+  rewrite an unresolved table reference into a table function call, scoped per-database (matching
+  `duckdb_add_replacement_scan`'s C signature) rather than per-connection. No comparable safe-Rust
+  design exists in the reference `duckdb` crate — deliberately restricted in v1 to literal-parameter
+  table function rewrites only; there is no way to run SQL from inside the callback (risk of
+  deadlocking the connection that's mid-bind for the query triggering the scan).
+
+`udf`'s "Not yet supported" list is now just: `varargs`, LIST/STRUCT columns, a full scalar bind
+phase (`duckdb_scalar_function_bind_*` — the reference `duckdb` crate has no usage of this to model a
+safe design on, and the ergonomic gap is covered by `state`/`duck_state!` above), and
+`duckdb_table_function_get_client_context` (no established need; `duckdb` crate omits it too).
+
+#### Changed
+
+- **Migrated off the external `libduckdb-sys` crate to a new in-house `better-duck-sys`** — vendors
+  DuckDB's C++ source directly (a unity-build tree, `vendor/duckdb.tar.gz`, compiled via the `cc`
+  crate at build time) with pregenerated FFI bindings checked in, so consumers never need
+  `bindgen`/LLVM. No git submodule, no runtime download — see the new `xtask` crate below for how the
+  vendored archive is (re)produced. The **`bundled` and `buildtime_bindgen` features are removed
+  entirely** — compiling DuckDB from source is unconditional now, there's no more "no DuckDB linked"
+  build mode. `json`/`parquet` still gate the equivalent extension's translation units, now via
+  `better-duck-sys/json`/`better-duck-sys/parquet`.
+
+#### Fixed
+
+- **`duckdb_hugeint` import** — corrected in `types/value.rs`.
+
+### Infrastructure
+
+#### Added
+
+- **`better-duck-sys`** — new crate vendoring DuckDB's C++ source and FFI bindings, replacing the
+  external `libduckdb-sys` dependency end to end.
+- **`xtask`** — maintainer-only regeneration tool: `cargo run -p xtask -- upgrade-duckdb --tag
+  vX.Y.Z` shallow-clones upstream `duckdb/duckdb`, calls its own `scripts/package_build.py` for the
+  amalgamated source/include list (`core_functions` — DuckDB's own build config marks it "essential,
+  loaded by default" — is always linked in; `json`/`parquet` are packaged but default-off, controlled
+  by `better-duck-sys`'s own Cargo features via `-D` defines at compile time), packages the archive,
+  and regenerates bindings via `bindgen`. Never runs on a consumer's machine; the ephemeral clone is
+  deleted afterward.
+- `bench-comparison` split into four independent crates (`lib`, `core-bench`, `reference-bench`,
+  `run-all`) — `better-duck-core` (via `better-duck-sys`) and the reference `duckdb` crate (via
+  `libduckdb-sys`) both set `links = "duckdb"`, so they can no longer be linked into one binary, even
+  as two `[[bin]]`s of the same package. Each side now runs as its own process, writing raw JSON that
+  `run-all` merges into `docs/benchmarks/{results.json,REPORT.md,*.svg}`.
+- `.vscode/settings.json`: `rust-analyzer.cargo.features` pinned to a consistent feature set across
+  the workspace. Without it, rust-analyzer's single unified feature-resolution pass turns on
+  `better-duck-core`'s default `chrono` feature while leaving `better-duck-diesel`'s own, separately
+  toggled `chrono` feature off, producing a false-positive "unresolved import" on
+  `better-duck-diesel`'s non-chrono `date_native` module.
+
+#### Fixed
+
+- **`publish_crate.yml`** — grants the `actions: read` permission needed by the SLSA provenance step;
+  the topological publish order now includes `better-duck-sys` first (`better-duck-sys` →
+  `better-duck-macros` → `better-duck-core` → `better-duck-diesel`).
+- **`ci.yml` feature matrix** — removed dead references to the now-removed `bundled` feature.
+- **`ci.yml`'s iOS cross-build steps** were unscoped (`cargo build --target ... --verbose`, no `-p`),
+  which on this virtual workspace implicitly builds every member together — unifying
+  `better-duck-core`'s default `chrono` feature to "on" against `better-duck-diesel`'s expectation of
+  it being off (same mechanism as the rust-analyzer fix above), breaking the non-chrono build. Scoped
+  to `-p better-duck-core`, matching how the Linux/Windows test steps were already scoped.
+
+### Still open
+
+See the [roadmap](README.md#roadmap).
+
+---
+
 ## [0.1.0-beta.3] — 2026-07-29
 
 ### `better-duck-core`
@@ -254,5 +348,6 @@ upgrading.
 
 ---
 
+[0.1.0-beta.4]: https://github.com/nimdeveloper/better-duck/releases/tag/v0.1.0-beta.4
 [0.1.0-beta.3]: https://github.com/nimdeveloper/better-duck/releases/tag/v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/nimdeveloper/better-duck/releases/tag/v0.1.0-beta.2
