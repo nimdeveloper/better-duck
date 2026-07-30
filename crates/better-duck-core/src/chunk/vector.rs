@@ -10,13 +10,19 @@
 use std::{ffi::c_char, marker::PhantomData, ptr, slice, str};
 
 use crate::{
-    error::{Error, Result},
+    error::{DuckDBConversionError, Error, Result},
     ffi::{
         duckdb_destroy_logical_type, duckdb_get_type_id, duckdb_string_t, duckdb_string_t_data,
         duckdb_string_t_length, duckdb_validity_row_is_valid, duckdb_validity_set_row_invalid,
-        duckdb_vector, duckdb_vector_assign_string_element_len,
-        duckdb_vector_ensure_validity_writable, duckdb_vector_get_column_type,
-        duckdb_vector_get_data, duckdb_vector_get_validity,
+        duckdb_validity_set_row_valid, duckdb_validity_set_row_validity, duckdb_vector,
+        duckdb_vector_assign_string_element_len, duckdb_vector_ensure_validity_writable,
+        duckdb_vector_get_column_type, duckdb_vector_get_data, duckdb_vector_get_validity,
+        DUCKDB_TYPE, DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN,
+        DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_FLOAT,
+        DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_TINYINT, DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER, DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT,
     },
     types::{
         numeric::{hugeint_from_i128, i128_from_hugeint, u128_from_uhugeint, uhugeint_from_u128},
@@ -25,6 +31,52 @@ use crate::{
 };
 
 use super::UdfResult;
+
+mod private {
+    /// Prevents [`super::FixedWidth`] from being implemented outside this crate.
+    pub trait Sealed {}
+}
+
+/// A Rust type with a fixed-width DuckDB physical representation, safe to
+/// reinterpret as a packed slice via [`VectorRef::as_slice`].
+///
+/// Sealed, and deliberately narrower than [`ScalarArg`]/[`ScalarRet`]:
+/// `String`/`&str` are variable-length (no fixed stride to slice over), and
+/// `i128`/`u128` are excluded even though they're fixed-width, because
+/// DuckDB's physical HUGEINT/UHUGEINT storage is a `duckdb_hugeint`/
+/// `duckdb_uhugeint` two-field struct — see the comment on the `i128`/`u128`
+/// [`ScalarArg`] impls below for why this crate never assumes that memcpys
+/// to a native `i128`/`u128`, even though the bytes happen to match on a
+/// little-endian target.
+pub trait FixedWidth: private::Sealed + Copy {
+    /// The `DUCKDB_TYPE` this Rust type corresponds to.
+    const DUCKDB_TYPE_ID: DUCKDB_TYPE;
+}
+
+macro_rules! impl_fixed_width {
+    ($($rust_type:ty => $tag:expr),+ $(,)?) => {
+        $(
+            impl private::Sealed for $rust_type {}
+            impl FixedWidth for $rust_type {
+                const DUCKDB_TYPE_ID: DUCKDB_TYPE = $tag;
+            }
+        )+
+    };
+}
+
+impl_fixed_width!(
+    bool => DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN,
+    i8 => DUCKDB_TYPE_DUCKDB_TYPE_TINYINT,
+    i16 => DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT,
+    i32 => DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
+    i64 => DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
+    u8 => DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT,
+    u16 => DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT,
+    u32 => DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER,
+    u64 => DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT,
+    f32 => DUCKDB_TYPE_DUCKDB_TYPE_FLOAT,
+    f64 => DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE,
+);
 
 /// A read-only view of one column of a data chunk.
 ///
@@ -70,6 +122,73 @@ impl<'a> VectorRef<'a> {
         row: usize,
     ) -> UdfResult<T> {
         T::read(self, row)
+    }
+
+    /// Reinterprets the first `len` rows of this column as a packed
+    /// `&[T]` slice — a zero-conversion read, unlike
+    /// [`get`](Self::get)/[`as_duck_value`](Self::as_duck_value), which decode
+    /// one value at a time. `len` is typically the enclosing chunk's
+    /// [`len`](super::DataChunkHandle::len).
+    ///
+    /// NULL rows are *not* filtered or masked here — a NULL row's slot holds
+    /// whatever bytes DuckDB left there, which callers must treat as
+    /// meaningless unless they've separately checked [`validity`](Self::validity).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this column's DuckDB type does not match `T`.
+    pub fn as_slice<T: FixedWidth>(
+        &self,
+        len: usize,
+    ) -> Result<&'a [T]> {
+        // SAFETY: `self.ptr` is a valid vector; `duckdb_vector_get_column_type`
+        // always succeeds for a non-null vector and returns an owned logical type.
+        let mut lt = unsafe { duckdb_vector_get_column_type(self.ptr) };
+        // SAFETY: `lt` was just obtained above and is a valid logical type.
+        let found = unsafe { duckdb_get_type_id(lt) };
+        // SAFETY: `lt` was allocated above; destroy exactly once.
+        unsafe { duckdb_destroy_logical_type(&mut lt) };
+        if found != T::DUCKDB_TYPE_ID {
+            return Err(Error::ConversionError(DuckDBConversionError::TypeMismatch {
+                expected: T::DUCKDB_TYPE_ID,
+                found,
+            }));
+        }
+        // SAFETY: `self.ptr` is a valid vector for lifetime `'a`, holding at
+        // least `len` rows (caller-guaranteed, per this type's own doc
+        // contract) of physical type `T` (just confirmed above). The pointer
+        // is not tied to `&self`'s borrow: it is valid for `'a`, matching
+        // `ScalarArg::read`'s existing `&'v str`/`String` convention.
+        let data = unsafe { duckdb_vector_get_data(self.ptr) as *const T };
+        // SAFETY: `data` is non-null (a valid vector's data pointer is never
+        // null) and points to a packed array of at least `len` `T`s for
+        // lifetime `'a`, per the same reasoning as above.
+        Ok(unsafe { slice::from_raw_parts(data, len) })
+    }
+
+    /// Returns the raw validity bitmap for the first `len` rows — one bit per
+    /// row (1 = valid, 0 = NULL), packed into `u64` words, row `r` at bit
+    /// `r % 64` of word `r / 64`. `None` means no NULLs are present in this
+    /// vector at all (DuckDB's own "no validity mask allocated" shortcut —
+    /// every row is implicitly valid).
+    ///
+    /// For checking one row, prefer [`is_null`](Self::is_null); this is for
+    /// callers doing their own bulk NULL handling alongside
+    /// [`as_slice`](Self::as_slice).
+    pub fn validity(
+        &self,
+        len: usize,
+    ) -> Option<&'a [u64]> {
+        // SAFETY: `self.ptr` is a valid vector for lifetime `'a`.
+        let validity = unsafe { duckdb_vector_get_validity(self.ptr) };
+        if validity.is_null() {
+            return None;
+        }
+        let word_count = len.div_ceil(64);
+        // SAFETY: `validity` is non-null (checked above) and, per the C API,
+        // points to at least `ceil(row_count / 64)` `u64` words for lifetime
+        // `'a`; `len` is caller-guaranteed to be within the chunk's row count.
+        Some(unsafe { slice::from_raw_parts(validity, word_count) })
     }
 
     /// Reads the value at `row` as a dynamically-typed [`DuckValue`], reusing
@@ -132,6 +251,41 @@ impl<'a> VectorMut<'a> {
         // SAFETY: `validity` is non-null (guaranteed above); `row` is
         // caller-guaranteed to be within the chunk's row count.
         unsafe { duckdb_validity_set_row_invalid(validity, row as u64) };
+    }
+
+    /// Marks the value at `row` as valid (not `NULL`) — the inverse of
+    /// [`set_null`](Self::set_null), for un-marking a row on a reused chunk
+    /// (see [`DataChunkHandle::reset`](super::DataChunkHandle::reset)) whose
+    /// validity mask may still carry a previous batch's NULL marks.
+    pub fn set_row_valid(
+        &mut self,
+        row: usize,
+    ) {
+        // SAFETY: `self.ptr` is a valid, exclusively-held vector.
+        unsafe { duckdb_vector_ensure_validity_writable(self.ptr) };
+        // SAFETY: the call above guarantees this now returns a valid,
+        // writable, non-null validity mask.
+        let validity = unsafe { duckdb_vector_get_validity(self.ptr) };
+        // SAFETY: `validity` is non-null (guaranteed above); `row` is
+        // caller-guaranteed to be within the chunk's row count.
+        unsafe { duckdb_validity_set_row_valid(validity, row as u64) };
+    }
+
+    /// Marks the value at `row` as valid or `NULL`, per `valid` — the general
+    /// form of [`set_null`](Self::set_null)/[`set_row_valid`](Self::set_row_valid).
+    pub fn set_row_validity(
+        &mut self,
+        row: usize,
+        valid: bool,
+    ) {
+        // SAFETY: `self.ptr` is a valid, exclusively-held vector.
+        unsafe { duckdb_vector_ensure_validity_writable(self.ptr) };
+        // SAFETY: the call above guarantees this now returns a valid,
+        // writable, non-null validity mask.
+        let validity = unsafe { duckdb_vector_get_validity(self.ptr) };
+        // SAFETY: `validity` is non-null (guaranteed above); `row` is
+        // caller-guaranteed to be within the chunk's row count.
+        unsafe { duckdb_validity_set_row_validity(validity, row as u64, valid) };
     }
 
     /// Writes `value` at `row`.
@@ -374,8 +528,8 @@ impl<T: ScalarRet> ScalarRet for Option<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::udf::data_chunk::DataChunkHandle;
-    use crate::udf::logical_type::LogicalType;
+    use crate::chunk::data_chunk::DataChunkHandle;
+    use crate::chunk::logical_type::LogicalType;
 
     #[test]
     fn i32_round_trips() {
@@ -459,5 +613,104 @@ mod tests {
         assert!(!vec.is_null(0));
         let got: Option<i32> = vec.get(0).unwrap();
         assert_eq!(got, Some(7));
+    }
+
+    #[test]
+    fn as_slice_reads_every_fixed_width_type() {
+        macro_rules! check {
+            ($ty:ty, $val:expr) => {{
+                let types = [LogicalType::of::<$ty>().unwrap()];
+                let mut chunk = DataChunkHandle::new(&types).unwrap();
+                {
+                    let mut vec = chunk.vector_mut(0).unwrap();
+                    vec.set(0, $val).unwrap();
+                    vec.set(1, $val).unwrap();
+                }
+                let vec = chunk.vector(0).unwrap();
+                let slice: &[$ty] = vec.as_slice(2).unwrap();
+                assert_eq!(slice, &[$val, $val]);
+            }};
+        }
+        check!(bool, true);
+        check!(i8, -12i8);
+        check!(i16, -1234i16);
+        check!(i32, -123_456i32);
+        check!(i64, -123_456_789i64);
+        check!(u8, 200u8);
+        check!(u16, 40_000u16);
+        check!(u32, 3_000_000_000u32);
+        check!(u64, 10_000_000_000u64);
+        check!(f32, 1.5f32);
+        check!(f64, 2.5f64);
+    }
+
+    #[test]
+    fn as_slice_on_type_mismatch_errors() {
+        let types = [LogicalType::of::<i32>().unwrap()];
+        let chunk = DataChunkHandle::new(&types).unwrap();
+        let vec = chunk.vector(0).unwrap();
+        assert!(vec.as_slice::<i64>(1).is_err());
+    }
+
+    #[test]
+    fn validity_is_none_when_no_nulls_present() {
+        let types = [LogicalType::of::<i32>().unwrap()];
+        let mut chunk = DataChunkHandle::new(&types).unwrap();
+        {
+            let mut vec = chunk.vector_mut(0).unwrap();
+            vec.set(0, 1i32).unwrap();
+        }
+        let vec = chunk.vector(0).unwrap();
+        assert!(vec.validity(1).is_none());
+    }
+
+    #[test]
+    fn validity_reflects_null_rows_once_any_row_is_marked_null() {
+        let types = [LogicalType::of::<i32>().unwrap()];
+        let mut chunk = DataChunkHandle::new(&types).unwrap();
+        {
+            let mut vec = chunk.vector_mut(0).unwrap();
+            vec.set(0, 1i32).unwrap();
+            vec.set_null(1);
+            vec.set(2, 3i32).unwrap();
+        }
+        let vec = chunk.vector(0).unwrap();
+        let mask = vec.validity(3).expect("a NULL row was set, so a mask must exist");
+        let is_valid = |row: usize| (mask[row / 64] >> (row % 64)) & 1 == 1;
+        assert!(is_valid(0));
+        assert!(!is_valid(1));
+        assert!(is_valid(2));
+    }
+
+    #[test]
+    fn set_row_valid_un_marks_a_previously_null_row() {
+        let types = [LogicalType::of::<i32>().unwrap()];
+        let mut chunk = DataChunkHandle::new(&types).unwrap();
+        {
+            let mut vec = chunk.vector_mut(0).unwrap();
+            vec.set_null(0);
+        }
+        assert!(chunk.vector(0).unwrap().is_null(0));
+        {
+            let mut vec = chunk.vector_mut(0).unwrap();
+            vec.set_row_valid(0);
+        }
+        assert!(!chunk.vector(0).unwrap().is_null(0));
+    }
+
+    #[test]
+    fn set_row_validity_toggles_both_directions() {
+        let types = [LogicalType::of::<i32>().unwrap()];
+        let mut chunk = DataChunkHandle::new(&types).unwrap();
+        {
+            let mut vec = chunk.vector_mut(0).unwrap();
+            vec.set_row_validity(0, false);
+        }
+        assert!(chunk.vector(0).unwrap().is_null(0));
+        {
+            let mut vec = chunk.vector_mut(0).unwrap();
+            vec.set_row_validity(0, true);
+        }
+        assert!(!chunk.vector(0).unwrap().is_null(0));
     }
 }

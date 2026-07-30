@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 //! Benchmarks for `better-duck-core` core operations.
 
+use better_duck_core::chunk::{DataChunkHandle, LogicalType};
 use better_duck_core::ffi::{
     duckdb_append_int32, duckdb_appender, duckdb_bind_int32, duckdb_prepared_statement,
 };
@@ -93,5 +94,71 @@ fn bench_appender_10k_rows(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_query_1000_rows, bench_execute_with_param, bench_appender_10k_rows);
+/// Columnar counterpart to `bench_query_1000_rows`: reads the same 1 000
+/// rows via `fetch_chunk` + `VectorRef::as_slice` instead of per-row
+/// `DuckRow` materialization.
+fn bench_query_1000_rows_chunk(c: &mut Criterion) {
+    let mut conn = Connection::open_in_memory().expect("in-memory db");
+    conn.execute_batch("CREATE TABLE t (v INTEGER)").expect("create table");
+    for i in 0..1000 {
+        conn.execute_batch(format!("INSERT INTO t VALUES ({i})")).expect("insert");
+    }
+    c.bench_function("query_1000_rows_chunk", |b| {
+        b.iter(|| {
+            let mut result = conn.execute("SELECT v FROM t").expect("select");
+            let mut count = 0usize;
+            while let Some(chunk) = result.fetch_chunk() {
+                let chunk = chunk.expect("fetch chunk");
+                let len = chunk.len();
+                let col = chunk.vector(0).expect("column 0");
+                let slice: &[i32] = col.as_slice(len).expect("as_slice");
+                count += black_box(slice).len();
+            }
+            black_box(count);
+        });
+    });
+}
+
+/// Columnar counterpart to `bench_appender_10k_rows`: bulk-inserts the same
+/// 10 000 rows via one `Appender::append_chunk` call instead of 10 000
+/// individual `Appender::append` calls.
+fn bench_appender_10k_rows_chunk(c: &mut Criterion) {
+    let types = [LogicalType::of::<i32>().unwrap(), LogicalType::of::<i32>().unwrap()];
+    c.bench_function("appender_10k_rows_chunk", |b| {
+        b.iter(|| {
+            let mut conn = Connection::open_in_memory().expect("in-memory db");
+            conn.execute_batch("CREATE TABLE t (a INTEGER, b INTEGER)").expect("create table");
+            let mut appender = conn.appender("t", "main").expect("appender");
+            let mut chunk = DataChunkHandle::new(&types).expect("new chunk");
+            let capacity = chunk.capacity();
+            let mut written = 0i32;
+            while written < 10_000 {
+                chunk.reset();
+                let batch = (10_000 - written).min(capacity as i32);
+                {
+                    let mut cols = chunk.vectors_mut().expect("vectors_mut");
+                    for row in 0..batch as usize {
+                        let i = written + row as i32;
+                        cols[0].set(row, i).expect("set a");
+                        cols[1].set(row, i * 2).expect("set b");
+                    }
+                }
+                chunk.set_len(batch as usize).expect("set_len");
+                appender.append_chunk(&mut chunk).expect("append_chunk");
+                written += batch;
+            }
+            appender.save().expect("flush appender");
+            black_box(conn);
+        });
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_query_1000_rows,
+    bench_query_1000_rows_chunk,
+    bench_execute_with_param,
+    bench_appender_10k_rows,
+    bench_appender_10k_rows_chunk,
+);
 criterion_main!(benches);

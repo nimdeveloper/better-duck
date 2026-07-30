@@ -105,8 +105,6 @@
 
 pub(crate) mod callback;
 mod context;
-mod data_chunk;
-mod logical_type;
 /// DuckDB replacement scans: rewrite an unresolved table reference into a
 /// table function call. **Experimental** — see the module docs.
 pub mod replacement;
@@ -116,12 +114,16 @@ pub mod scalar;
 /// DuckDB table functions: functions used in a `FROM` clause that produce rows
 /// and columns.
 pub mod table;
-mod vector;
 
-/// An owned-or-borrowed DuckDB data chunk.
-pub use data_chunk::DataChunkHandle;
-/// An owned DuckDB logical type handle.
-pub use logical_type::LogicalType;
+/// An owned-or-borrowed DuckDB data chunk. Re-exported from the ungated
+/// [`crate::chunk`] — kept here too since existing code and generated macro
+/// output reference it as `udf::DataChunkHandle`.
+pub use crate::chunk::DataChunkHandle;
+/// An owned DuckDB logical type handle. See [`crate::chunk::LogicalType`].
+pub use crate::chunk::LogicalType;
+/// Read and write views over a single column of a [`DataChunkHandle`], plus the
+/// [`ScalarArg`]/[`ScalarRet`] marshalling traits. See [`crate::chunk`].
+pub use crate::chunk::{ScalarArg, ScalarRet, VectorMut, VectorRef};
 /// The trait behind DuckDB replacement scans, and its callback-info type.
 /// **Experimental** — see the [`replacement`] module docs.
 pub use replacement::{ReplacementScan, ReplacementScanInfo};
@@ -134,14 +136,12 @@ pub use table::VTabLocalInit;
 pub use table::{run_table_func, TableInitData, TableRow};
 /// The trait behind DuckDB table functions, and its callback-info types.
 pub use table::{BindInfo, InitInfo, TableFunctionInfo, VTab};
-/// Read and write views over a single column of a [`DataChunkHandle`], plus the
-/// [`ScalarArg`]/[`ScalarRet`] marshalling traits.
-pub use vector::{ScalarArg, ScalarRet, VectorMut, VectorRef};
 
-/// The error type returned by user-defined-function callbacks.
+/// The error type returned by user-defined-function callbacks. See
+/// [`crate::chunk::UdfResult`], which this is a re-export of.
 ///
 /// `+ Send + Sync` because callbacks may run on DuckDB worker threads.
-pub type UdfResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync + 'static>>;
+pub use crate::chunk::UdfResult;
 
 /// Returns early from a fallible user-defined-function body with a formatted
 /// error message.

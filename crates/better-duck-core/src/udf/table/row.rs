@@ -6,9 +6,7 @@ use std::sync::Mutex;
 
 use crate::error::Result;
 
-use super::super::{
-    logical_type::LogicalType, vector::ScalarRet, DataChunkHandle, UdfResult, VectorMut,
-};
+use super::super::{DataChunkHandle, LogicalType, ScalarRet, UdfResult, VectorMut};
 
 /// One output row of a table function: a tuple of values, one per column, in
 /// column order.

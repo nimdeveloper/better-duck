@@ -13,6 +13,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Added
 
+**Columnar bulk read/write**
+- **`crate::chunk`** — a new, ungated module (works without the `udf` feature) exposing
+  `DataChunkHandle`/`LogicalType`/`VectorRef`/`VectorMut` for direct, chunk-at-a-time access to
+  DuckDB's native columnar batches — previously only reachable from inside a `#[duckdb_scalar]`/
+  `#[duckdb_table_function]` callback. `udf::{DataChunkHandle, LogicalType, VectorMut, VectorRef,
+  ScalarArg, ScalarRet, UdfResult}` are unchanged re-exports of the same items, so no existing UDF
+  code needs updating.
+- **`DuckResult::fetch_chunk()`** — pulls the next chunk directly, bypassing per-row `DuckRow`
+  materialization. Combine with the new **`VectorRef::as_slice::<T>()`** for a zero-conversion
+  `&[T]` read of a fixed-width column (`bool`, integers, `f32`/`f64` — sealed via a new
+  `FixedWidth` trait; `String`/`i128`/`u128` are deliberately excluded, the latter two because
+  DuckDB's physical HUGEINT/UHUGEINT storage isn't a native `i128`/`u128` bit layout). Row-by-row
+  iteration (`Iterator::next`, `exists`, `materialize`) and chunk-at-a-time reading cannot be mixed
+  on one `DuckResult` — doing so returns the new `Error::MixedIterationMode` instead of silently
+  dropping a partially-consumed chunk. Also added: `VectorRef::validity()` (the raw bitmap, for
+  bulk NULL handling alongside `as_slice`), `VectorMut::set_row_valid()`/`set_row_validity()` (the
+  previously-missing inverse of `set_null` — needed to reuse a chunk across batches),
+  `DataChunkHandle::reset()` (clears a chunk back to zero rows without a fresh allocation), and
+  `DuckResult::column_logical_type()`/`DataChunkHandle::column_type_id()`.
+- **`Appender::append_chunk()`** — appends a whole `DataChunkHandle` in one call via
+  `duckdb_append_data_chunk`. Validates the chunk's column count and per-column types against the
+  appender's target columns entirely on the Rust side before touching DuckDB — stricter than the
+  C API's own implicit-cast-on-mismatch behavior, but means a rejected chunk never leaves the
+  appender itself in a broken state. Also added: `Appender::append_default_row()`/
+  `Appender::set_chunk_default()` for a column's SQL `DEFAULT` rather than an explicit value.
+
 **User-defined functions**
 - **Table function extras** — `VTab::named_parameters()`/`supports_projection_pushdown()` (both
   defaulted, so existing simple functions are unaffected); a new opt-in `VTabLocalInit` trait for

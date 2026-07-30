@@ -4,8 +4,9 @@ use crate::{
     error::{Error, Result},
     ffi::{
         duckdb_create_data_chunk, duckdb_data_chunk, duckdb_data_chunk_get_column_count,
-        duckdb_data_chunk_get_size, duckdb_data_chunk_get_vector, duckdb_data_chunk_set_size,
-        duckdb_destroy_data_chunk, duckdb_vector_size,
+        duckdb_data_chunk_get_size, duckdb_data_chunk_get_vector, duckdb_data_chunk_reset,
+        duckdb_data_chunk_set_size, duckdb_destroy_data_chunk, duckdb_destroy_logical_type,
+        duckdb_get_type_id, duckdb_vector_get_column_type, duckdb_vector_size, DUCKDB_TYPE,
     },
 };
 
@@ -26,6 +27,7 @@ use super::{
 /// `raw::data_chunk::DataChunk` — that type's `Drop` unconditionally destroys
 /// the chunk and its `next_row` destroys-and-nulls on exhaustion, both of which
 /// would double-free a chunk DuckDB owns.
+#[derive(Debug)]
 pub struct DataChunkHandle {
     ptr: duckdb_data_chunk,
     owned: bool,
@@ -64,6 +66,40 @@ impl DataChunkHandle {
     /// handle and any vectors derived from it.
     pub(crate) unsafe fn borrowed(ptr: duckdb_data_chunk) -> Self {
         Self { ptr, owned: false }
+    }
+
+    /// Takes ownership of a `duckdb_data_chunk` this handle did not itself
+    /// allocate (e.g. one returned by `duckdb_fetch_chunk`) — it is destroyed
+    /// on drop, same as a chunk built via [`DataChunkHandle::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `ptr` is null.
+    pub(crate) fn from_owned(ptr: duckdb_data_chunk) -> Result<Self> {
+        if ptr.is_null() {
+            return Err(Error::ConversionError(
+                crate::error::DuckDBConversionError::ConversionError(
+                    "duckdb_fetch_chunk returned null".to_owned(),
+                ),
+            ));
+        }
+        Ok(Self { ptr, owned: true })
+    }
+
+    /// Clears every column's contents and resets the chunk to zero rows,
+    /// while keeping its allocation — reuse one chunk across many batches
+    /// instead of allocating a fresh one via [`DataChunkHandle::new`] each
+    /// time.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this handle is borrowed (from a DuckDB callback frame) rather
+    /// than owned — resetting a chunk DuckDB still owns would corrupt its
+    /// state out from under it.
+    pub fn reset(&mut self) {
+        assert!(self.owned, "cannot reset a data chunk borrowed from a DuckDB callback frame");
+        // SAFETY: `self.ptr` is a valid, owned data chunk (checked above).
+        unsafe { duckdb_data_chunk_reset(self.ptr) };
     }
 
     /// Returns a read-only view of column `idx`.
@@ -142,6 +178,30 @@ impl DataChunkHandle {
         unsafe { duckdb_data_chunk_get_column_count(self.ptr) as usize }
     }
 
+    /// Returns the bare `DUCKDB_TYPE` tag of column `idx` — cheaper than
+    /// [`vector`](Self::vector)`(idx)?.`[`as_duck_value`](super::VectorRef::as_duck_value)
+    /// when only the type, not a value, is needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `idx` is out of range.
+    pub fn column_type_id(
+        &self,
+        idx: usize,
+    ) -> Result<DUCKDB_TYPE> {
+        self.check_col(idx)?;
+        // SAFETY: `self.ptr` is valid; `idx` was checked above.
+        let vec_ptr = unsafe { duckdb_data_chunk_get_vector(self.ptr, idx as u64) };
+        // SAFETY: `vec_ptr` is valid for this call; `duckdb_vector_get_column_type`
+        // always succeeds for a non-null vector and returns an owned logical type.
+        let mut lt = unsafe { duckdb_vector_get_column_type(vec_ptr) };
+        // SAFETY: `lt` was just obtained above and is a valid logical type.
+        let type_id = unsafe { duckdb_get_type_id(lt) };
+        // SAFETY: `lt` was allocated above; destroy exactly once.
+        unsafe { duckdb_destroy_logical_type(&mut lt) };
+        Ok(type_id)
+    }
+
     /// Sets the number of valid rows in this chunk.
     ///
     /// # Errors
@@ -182,6 +242,12 @@ impl DataChunkHandle {
             return Err(Error::InvalidColumnIndex(idx));
         }
         Ok(())
+    }
+
+    /// The underlying raw handle, still owned by `self`. For use by
+    /// [`Appender`](crate::raw::appender::Appender)'s columnar write path.
+    pub(crate) fn as_raw(&self) -> duckdb_data_chunk {
+        self.ptr
     }
 }
 
@@ -238,5 +304,38 @@ mod tests {
         let mut chunk = DataChunkHandle::new(&types).unwrap();
         let views = chunk.vectors_mut().unwrap();
         assert_eq!(views.len(), 2);
+    }
+
+    #[test]
+    fn from_owned_rejects_a_null_pointer() {
+        assert!(DataChunkHandle::from_owned(std::ptr::null_mut()).is_err());
+    }
+
+    #[test]
+    fn reset_clears_row_count_and_chunk_stays_usable_afterward() {
+        let types = [LogicalType::of::<i32>().unwrap()];
+        let mut chunk = DataChunkHandle::new(&types).unwrap();
+        chunk.set_len(3).unwrap();
+        assert_eq!(chunk.len(), 3);
+
+        chunk.reset();
+        assert_eq!(chunk.len(), 0);
+
+        // The chunk is still usable after reset — reuse for a second batch.
+        chunk.vector_mut(0).unwrap().set(0, 99i32).unwrap();
+        chunk.set_len(1).unwrap();
+        assert_eq!(chunk.len(), 1);
+        let got: i32 = chunk.vector(0).unwrap().get(0).unwrap();
+        assert_eq!(got, 99);
+    }
+
+    #[test]
+    #[should_panic(expected = "borrowed")]
+    fn reset_on_a_borrowed_chunk_panics() {
+        let types = [LogicalType::of::<i32>().unwrap()];
+        let owned = DataChunkHandle::new(&types).unwrap();
+        // SAFETY: `owned` stays alive for the duration of this test.
+        let mut borrowed = unsafe { DataChunkHandle::borrowed(owned.ptr) };
+        borrowed.reset();
     }
 }

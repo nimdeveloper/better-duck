@@ -1,10 +1,14 @@
 use std::ffi::{c_char, CString};
 use std::ptr;
 
-use crate::error::Result;
+use crate::chunk::DataChunkHandle;
+use crate::error::{DuckDBConversionError, Error, Result};
 use crate::ffi::{
-    duckdb_appender, duckdb_appender_begin_row, duckdb_appender_close, duckdb_appender_create,
-    duckdb_appender_destroy, duckdb_appender_end_row, duckdb_appender_flush,
+    duckdb_append_data_chunk, duckdb_append_default, duckdb_append_default_to_chunk,
+    duckdb_appender, duckdb_appender_begin_row, duckdb_appender_close,
+    duckdb_appender_column_count, duckdb_appender_column_type, duckdb_appender_create,
+    duckdb_appender_destroy, duckdb_appender_end_row, duckdb_appender_error, duckdb_appender_flush,
+    duckdb_destroy_logical_type, duckdb_get_type_id, DuckDBSuccess,
 };
 use crate::helpers::duck_result::result_from_duckdb_appender;
 use crate::raw::connection::RawConnection;
@@ -70,6 +74,149 @@ impl Appender {
         // SAFETY: `self.inn` is a valid duckdb_appender; `begin_row` was called above.
         let rc = unsafe { duckdb_appender_end_row(self.inn) };
         result_from_duckdb_appender(rc, &mut self.inn)
+    }
+
+    /// Appends every row of `chunk` in one call — the columnar counterpart to
+    /// calling [`append`](Self::append) once per row, backed by
+    /// `duckdb_append_data_chunk`.
+    ///
+    /// Requires an **exact** column-count and column-type match against this
+    /// appender's target columns — checked up front, entirely on the Rust
+    /// side, before any DuckDB call. This is deliberately stricter than the
+    /// underlying C API (which attempts an implicit cast on a type mismatch):
+    /// a caller who wants DuckDB's cast behavior should convert `chunk`
+    /// itself first. Because the mismatch is caught before the appender is
+    /// touched, the appender is unaffected by this error and stays usable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `chunk`'s column count or any column's type
+    /// doesn't match this appender's target columns, or if the underlying
+    /// append fails (e.g. a constraint violation).
+    #[must_use = "append_chunk result should be checked"]
+    pub fn append_chunk(
+        &mut self,
+        chunk: &mut DataChunkHandle,
+    ) -> Result<()> {
+        self.check_chunk_shape(chunk)?;
+        // SAFETY: `self.inn` is a valid duckdb_appender; `chunk.as_raw()` is a
+        // valid data chunk whose shape was just checked above.
+        let rc = unsafe { duckdb_append_data_chunk(self.inn, chunk.as_raw()) };
+        result_from_duckdb_appender(rc, &mut self.inn)
+    }
+
+    /// Compares `chunk`'s column count and per-column types against this
+    /// appender's target columns, entirely via `duckdb_appender_*`
+    /// introspection — no append is attempted.
+    fn check_chunk_shape(
+        &self,
+        chunk: &DataChunkHandle,
+    ) -> Result<()> {
+        // SAFETY: `self.inn` is a valid duckdb_appender.
+        let expected_cols = unsafe { duckdb_appender_column_count(self.inn) } as usize;
+        let got_cols = chunk.num_columns();
+        if expected_cols != got_cols {
+            return Err(Error::ConversionError(DuckDBConversionError::ConversionError(format!(
+                "append_chunk: appender expects {expected_cols} columns, chunk has {got_cols}"
+            ))));
+        }
+        for i in 0..expected_cols {
+            // SAFETY: `self.inn` is valid; `i` is within `expected_cols`, just
+            // confirmed to match the appender's own column count above. The
+            // returned logical type is a fresh, caller-owned handle.
+            let mut lt = unsafe { duckdb_appender_column_type(self.inn, i as u64) };
+            // SAFETY: `lt` was just obtained above and is a valid logical type.
+            let expected_type = unsafe { duckdb_get_type_id(lt) };
+            // SAFETY: `lt` was allocated above; destroy exactly once.
+            unsafe { duckdb_destroy_logical_type(&mut lt) };
+            let got_type = chunk.column_type_id(i)?;
+            if expected_type != got_type {
+                return Err(Error::ConversionError(DuckDBConversionError::TypeMismatch {
+                    expected: expected_type,
+                    found: got_type,
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    /// Appends one row of column `DEFAULT`s (`NULL` for a column with no
+    /// `DEFAULT`) — the only way to get a column's declared default rather
+    /// than an explicit value.
+    ///
+    /// `duckdb_append_default` itself appends only *one* column's default
+    /// within the current row (mirroring `duckdb_append_int32` and friends);
+    /// this wraps it in the same `begin_row`/one-call-per-column/`end_row`
+    /// framing [`append`](Self::append) uses, once per
+    /// `duckdb_appender_column_count` column.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the append fails.
+    #[must_use = "append_default_row result should be checked"]
+    pub fn append_default_row(&mut self) -> Result<()> {
+        // SAFETY: `self.inn` is a valid duckdb_appender.
+        let _ = unsafe { duckdb_appender_begin_row(self.inn) };
+        // SAFETY: `self.inn` is a valid duckdb_appender.
+        let col_count = unsafe { duckdb_appender_column_count(self.inn) };
+        for _ in 0..col_count {
+            // SAFETY: `self.inn` is a valid duckdb_appender; `begin_row` was
+            // called above and this call consumes exactly one column's slot,
+            // matching `col_count` calls to fill the whole row.
+            let rc = unsafe { duckdb_append_default(self.inn) };
+            if rc != DuckDBSuccess {
+                return result_from_duckdb_appender(rc, &mut self.inn);
+            }
+        }
+        // SAFETY: `self.inn` is a valid duckdb_appender; every column's slot
+        // was filled by the loop above.
+        let rc = unsafe { duckdb_appender_end_row(self.inn) };
+        result_from_duckdb_appender(rc, &mut self.inn)
+    }
+
+    /// Writes column `col`'s `DEFAULT` (`NULL` if it has none) into `chunk` at
+    /// `row`, via `duckdb_append_default_to_chunk` — the chunk-based
+    /// counterpart to [`append_default_row`](Self::append_default_row), for
+    /// filling in one column of an otherwise explicitly-populated
+    /// [`DataChunkHandle`] before [`append_chunk`](Self::append_chunk).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `col`/`row` are out of range for `chunk`, or the
+    /// underlying call fails.
+    #[must_use = "set_chunk_default result should be checked"]
+    pub fn set_chunk_default(
+        &self,
+        chunk: &mut DataChunkHandle,
+        col: usize,
+        row: usize,
+    ) -> Result<()> {
+        if col >= chunk.num_columns() {
+            return Err(Error::InvalidColumnIndex(col));
+        }
+        // SAFETY: `self.inn` is a valid duckdb_appender; `chunk.as_raw()` is a
+        // valid data chunk; `col` was just bounds-checked. DuckDB itself
+        // bounds-checks `row` against the chunk's capacity.
+        let rc = unsafe {
+            duckdb_append_default_to_chunk(self.inn, chunk.as_raw(), col as u64, row as u64)
+        };
+        if rc == DuckDBSuccess {
+            return Ok(());
+        }
+        // Deliberately not `result_from_duckdb_appender`: unlike a real
+        // append, a failure here doesn't leave the appender's own row-buffer
+        // state ambiguous (nothing was flushed or begun), so destroying the
+        // whole appender over it would be needlessly destructive.
+        // SAFETY: `self.inn` is a valid duckdb_appender.
+        let message = unsafe {
+            let c_err = duckdb_appender_error(self.inn);
+            if c_err.is_null() {
+                None
+            } else {
+                Some(std::ffi::CStr::from_ptr(c_err).to_string_lossy().into_owned())
+            }
+        };
+        Err(Error::DuckDBFailure(crate::ffi::Error::new(rc), message))
     }
 
     /// Flushes all buffered rows to the database.

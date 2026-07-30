@@ -109,6 +109,13 @@ pub enum Error {
 
     /// A connection pool operation failed (checkout timeout, manager error).
     Pool(String),
+
+    /// [`DuckResult::fetch_chunk`](crate::DuckResult::fetch_chunk) was called
+    /// on a result that had already started row-by-row iteration (or vice
+    /// versa) — the two iteration modes cannot be mixed on one `DuckResult`,
+    /// since pulling a chunk mid-row-iteration would silently drop the
+    /// partially-consumed chunk. Pick one mode per result.
+    MixedIterationMode,
 }
 
 /// A typedef of the result returned by many methods.
@@ -242,6 +249,9 @@ impl fmt::Display for Error {
             Error::UNKNOWN(e) => write!(f, "Unknown error: {e}"),
             Error::BackgroundTaskFailed(ref msg) => write!(f, "Background task failed: {msg}"),
             Error::Pool(ref msg) => write!(f, "Connection pool error: {msg}"),
+            Error::MixedIterationMode => {
+                write!(f, "cannot mix row-by-row and chunk-based iteration on the same DuckResult")
+            },
         }
     }
 }
@@ -271,7 +281,7 @@ impl error::Error for Error {
             // Error::FromSqlConversionFailure(_, _, ref err)
             Error::ToSqlConversionFailure(ref err) => Some(&**err),
             Error::UNKNOWN(e) => Some(e.as_ref()),
-            Error::BackgroundTaskFailed(_) | Error::Pool(_) => None,
+            Error::BackgroundTaskFailed(_) | Error::Pool(_) | Error::MixedIterationMode => None,
         }
     }
 }

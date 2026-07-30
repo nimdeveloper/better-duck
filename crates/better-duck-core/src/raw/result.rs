@@ -5,9 +5,13 @@ use std::{
     sync::Arc,
 };
 
-use crate::ffi::{duckdb_column_count, duckdb_column_name, duckdb_destroy_result, DUCKDB_TYPE};
+use crate::ffi::{
+    duckdb_column_count, duckdb_column_logical_type, duckdb_column_name, duckdb_destroy_result,
+    duckdb_fetch_chunk, DUCKDB_TYPE,
+};
 
 use crate::{
+    chunk::{DataChunkHandle, LogicalType},
     error::{DuckDBConversionError, Error, Result},
     ffi,
     raw::row::DuckRow,
@@ -15,6 +19,18 @@ use crate::{
 };
 
 use super::data_chunk::DataChunk;
+
+/// Which of the two mutually exclusive ways of consuming a [`DuckResult`] is
+/// active — row-by-row (via [`Iterator`]/[`DuckResult::exists`]) or
+/// chunk-at-a-time (via [`DuckResult::fetch_chunk`]). Set on first use and
+/// enforced thereafter; see [`Error::MixedIterationMode`].
+#[derive(Debug, Default, PartialEq, Eq)]
+enum IterMode {
+    #[default]
+    Unset,
+    Row,
+    Chunk,
+}
 
 /// Represents the result of a DuckDB query, providing row-by-row iteration over
 /// the returned data.
@@ -51,6 +67,8 @@ pub struct DuckResult {
     /// A single-row lookahead buffer for [`exists`](DuckResult::exists), independent
     /// of `cache` — peeking a row must work whether or not rewind support is enabled.
     peeked: Option<DuckRow>,
+    /// Row-by-row vs. chunk-at-a-time — see [`IterMode`].
+    mode: IterMode,
 }
 
 impl DuckResult {
@@ -73,6 +91,7 @@ impl DuckResult {
             exhausted: false,
             rewind_enabled: false,
             peeked: None,
+            mode: IterMode::Unset,
         };
         res.resolve_columns_name().expect("failed to resolve column names");
         res.resolve_columns_types().expect("failed to resolve column types");
@@ -187,6 +206,23 @@ impl DuckResult {
             None
         }
     }
+
+    /// Marks this result as row-iterating, or confirms it already is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MixedIterationMode`] if [`fetch_chunk`](DuckResult::fetch_chunk)
+    /// already put this result in chunk mode.
+    fn enter_row_mode(&mut self) -> Result<()> {
+        match self.mode {
+            IterMode::Unset => {
+                self.mode = IterMode::Row;
+                Ok(())
+            },
+            IterMode::Row => Ok(()),
+            IterMode::Chunk => Err(Error::MixedIterationMode),
+        }
+    }
 }
 
 // Exposed API
@@ -235,6 +271,26 @@ impl DuckResult {
             return Err(Error::InvalidColumnIndex(col_index));
         }
         Ok(self.column_types[col_index])
+    }
+
+    /// Returns the full logical type of the column at `col_index` — unlike
+    /// [`column_type`](Self::column_type)'s bare [`DUCKDB_TYPE`] tag, this
+    /// carries DECIMAL width/scale, LIST/STRUCT/MAP child types, and so on.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidColumnIndex`] if `col_index` is out of range.
+    pub fn column_logical_type(
+        &mut self,
+        col_index: usize,
+    ) -> Result<LogicalType> {
+        if col_index >= self.col_count as usize {
+            return Err(Error::InvalidColumnIndex(col_index));
+        }
+        // SAFETY: `self.res` is a valid duckdb_result; `col_index` was checked
+        // above. The returned logical type is a fresh, caller-owned handle.
+        let raw = unsafe { duckdb_column_logical_type(&mut self.res, col_index as u64) };
+        LogicalType::from_raw(raw)
     }
 
     /// Returns the name of the column at `col_index`.
@@ -291,6 +347,7 @@ impl DuckResult {
     ///
     /// Returns an error if pulling the first row fails.
     pub fn exists(&mut self) -> Result<bool> {
+        self.enter_row_mode()?;
         if self.rewind_enabled && self.cursor < self.cache.len() {
             return Ok(true);
         }
@@ -324,6 +381,57 @@ impl DuckResult {
         self.cursor = 0;
     }
 
+    /// Pulls the next chunk of rows directly, bypassing per-row [`DuckRow`]
+    /// materialization — the columnar counterpart to [`Iterator::next`].
+    /// Combine with [`VectorRef::as_slice`](crate::chunk::VectorRef::as_slice)
+    /// for a zero-conversion read of a fixed-width column.
+    ///
+    /// Returns `None` once the result is exhausted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MixedIterationMode`] if row-by-row iteration
+    /// ([`next`](Iterator::next), [`exists`](Self::exists), or
+    /// [`materialize`](Self::materialize)) has already been used on this
+    /// result — the two iteration modes cannot be mixed on one `DuckResult`,
+    /// since pulling a chunk mid-row-iteration would silently drop a
+    /// partially-consumed chunk. Pick one mode and use it for this result's
+    /// entire lifetime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use better_duck_core::connection::Connection;
+    ///
+    /// # fn main() -> better_duck_core::error::Result<()> {
+    /// let mut conn = Connection::open_in_memory()?;
+    /// let mut result = conn.execute("SELECT * FROM range(10000) t(v)")?;
+    /// let mut total = 0usize;
+    /// while let Some(chunk) = result.fetch_chunk() {
+    ///     total += chunk?.len();
+    /// }
+    /// assert_eq!(total, 10000);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn fetch_chunk(&mut self) -> Option<Result<DataChunkHandle>> {
+        match self.mode {
+            IterMode::Unset => self.mode = IterMode::Chunk,
+            IterMode::Chunk => {},
+            IterMode::Row => return Some(Err(Error::MixedIterationMode)),
+        }
+        // SAFETY: `self.res` is a valid duckdb_result; `duckdb_result` is a
+        // small `Copy` value type (internally just holds pointers DuckDB
+        // owns), so passing a copy of it is the documented calling
+        // convention. The returned chunk, if non-null, is newly allocated and
+        // owned by the caller.
+        let ptr = unsafe { duckdb_fetch_chunk(self.res) };
+        if ptr.is_null() {
+            return None;
+        }
+        Some(DataChunkHandle::from_owned(ptr))
+    }
+
     /// Consumes this result, materializing every row into an owned [`ResultSet`].
     ///
     /// Unlike `DuckResult`, the returned `ResultSet` holds no FFI handles and is
@@ -348,6 +456,9 @@ impl Iterator for DuckResult {
     type Item = Result<DuckRow>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if let Err(e) = self.enter_row_mode() {
+            return Some(Err(e));
+        }
         if self.rewind_enabled && self.cursor < self.cache.len() {
             let row = self.cache[self.cursor].clone();
             self.cursor += 1;
@@ -394,6 +505,9 @@ impl Iterator for DuckResult {
     where
         Self: Sized,
     {
+        self.enter_row_mode().expect(
+            "cannot mix row-by-row and chunk-based iteration on the same DuckResult (count)",
+        );
         let mut n = 0usize;
         if self.rewind_enabled && self.cursor < self.cache.len() {
             n += self.cache.len() - self.cursor;

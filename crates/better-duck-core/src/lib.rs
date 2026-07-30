@@ -15,6 +15,10 @@ pub use better_duck_sys as ffi;
 /// Async facade over [`connection::Connection`], gated by the `async` feature.
 #[cfg(feature = "async")]
 pub mod asynchronous;
+/// DuckDB data chunks and typed column views — DuckDB's native columnar batch
+/// representation. Ungated: backs both [`udf`] and the columnar bulk
+/// read/write APIs on [`DuckResult`]/[`Appender`].
+pub mod chunk;
 /// DuckDB database configuration.
 pub mod config;
 /// High-level DuckDB connection type.
