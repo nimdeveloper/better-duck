@@ -1,0 +1,22 @@
+# Deliberately its own standalone crate (own `[workspace]` below, not shared
+# with `core-bench`/`reference-bench`/`run-all` or the root `better-duck`
+# workspace): those two benchmark crates each vendor a *different* copy of
+# DuckDB under the same `links = "duckdb"` key, so their `Cargo.lock`s must
+# never be unified into one shared workspace lock (Cargo rejects two
+# same-`links` packages in one resolved graph). This library has no
+# dependency on either database crate — it's purely the measurement/reporting
+# code all three siblings share via a `path` dependency, each resolving it
+# independently.
+[workspace]
+
+[package]
+name       = "bench-comparison"
+version    = "0.1.0-beta.3"
+edition    = "2021"
+publish    = false
+
+[dependencies]
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo    = "0.39.3"
+plotters   = { version = "0.3", default-features = false, features = ["svg_backend", "all_series", "all_elements", "full_palette"] }

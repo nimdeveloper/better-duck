@@ -1,0 +1,15 @@
+# Its own standalone crate (own `[workspace]` below). No database dependency
+# at all — just merges `core-bench`'s and `reference-bench`'s JSON output —
+# so it could in principle share a workspace with either of them, but stays
+# separate for consistency with its siblings; see
+# `bench-comparison/lib/Cargo.toml`.
+[workspace]
+
+[package]
+name       = "run-all"
+version    = "0.1.0-beta.3"
+edition    = "2021"
+publish    = false
+
+[dependencies]
+bench-comparison = { path = "../lib" }

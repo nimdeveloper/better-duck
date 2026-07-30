@@ -138,9 +138,17 @@ jobs:
           rustup target add aarch64-apple-ios
           rustup target add x86_64-apple-ios
       - name: Cross-build for iOS (aarch64)
-        run: cargo build --target aarch64-apple-ios --verbose
+        # Scoped to -p better-duck-core — see the comment on the Linux job for
+        # why an unscoped build (which on this virtual workspace defaults to
+        # building every member together) unifies better-duck-core's chrono
+        # feature to "on" even though better-duck-diesel wants it off,
+        # breaking diesel's `#[cfg(not(feature = "chrono"))] date_native`
+        # module (it still compiles, since *diesel's own* chrono feature is
+        # unaffected, but the `better_duck_core::types::date_native` module it
+        # imports has been compiled out).
+        run: cargo build -p better-duck-core --target aarch64-apple-ios --verbose
       - name: Cross-build for iOS Simulator (x86_64)
-        run: cargo build --target x86_64-apple-ios --verbose
+        run: cargo build -p better-duck-core --target x86_64-apple-ios --verbose
 
   # Feature matrix
   features:

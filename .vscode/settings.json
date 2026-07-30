@@ -54,6 +54,24 @@
   // "rust-analyzer.check.command": "clippy",
   // "rust-analyzer.check.extraArgs": ["-- -D warnings"],
   "rust-analyzer.checkOnSave": true,
+  // rust-analyzer resolves the whole workspace with ONE unified feature set
+  // per crate (it has no `-p`-style per-package scoping the way a manual
+  // `cargo test -p X` invocation does). `better-duck-core`'s `chrono` is a
+  // default feature, but `better-duck-diesel` depends on it with
+  // `default-features = false` and only forwards `chrono` when diesel's own
+  // (separately-named, same-spelled) `chrono` feature is requested. Left
+  // unspecified, rust-analyzer's unified pass turns core's chrono "on"
+  // (default) while leaving diesel's own chrono flag off, so diesel's
+  // `#[cfg(not(feature = "chrono"))] mod date_native;` still compiles but the
+  // `better_duck_core::types::date_native` module it imports has been
+  // compiled out — a false-positive "unresolved import"/type-mismatch error
+  // that has nothing to do with real code correctness (see CI's `ci.yml`
+  // Linux job comment for the same mechanism). Explicitly listing "chrono"
+  // here turns it on for every workspace member that declares a
+  // same-named feature — core *and* diesel together — keeping them
+  // consistent. Matches the exact feature set CI's "Doctests" job already
+  // proves safe (`cargo test --workspace --doc --features "chrono,decimal,async,pool,udf"`).
+  "rust-analyzer.cargo.features": ["chrono", "decimal", "async", "pool", "udf"],
 
   "todo-tree.general.tags": [
     "BUG",

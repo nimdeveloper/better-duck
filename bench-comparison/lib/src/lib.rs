@@ -5,9 +5,14 @@
 //! (`better-duck-sys`) and the `duckdb` crate links a separately-vendored
 //! DuckDB (`libduckdb-sys`) — both export the same `extern "C"` symbol names
 //! (`duckdb_open`, `duckdb_query`, …), so they cannot be linked into the same
-//! binary. `bin/core_bench.rs` and `bin/reference_bench.rs` each link exactly
-//! one side, run in separate processes, and write their raw measurements
-//! here; `bin/run_all.rs` merges the two JSON files into the combined report.
+//! binary — so they can't even be two `[[bin]]`s of one crate, since a
+//! package's dependencies (and so its `links` conflicts) apply to the whole
+//! package. `core-bench` and `reference-bench` are separate standalone
+//! crates that each link exactly one side, depend on this crate by `path`,
+//! run in separate processes, and write their raw measurements via
+//! [`write_raw`]; `run-all` (also standalone, no database dependency) reads
+//! both JSON files back via [`read_raw`] and [`merge`]s them into the
+//! combined report.
 
 #![allow(missing_docs)]
 
@@ -34,14 +39,16 @@ pub const ALLTYPE_ROWS: usize = 1_000;
 /// Kept in sync with the `duckdb` version pinned in `Cargo.toml`.
 pub const DUCKDB_RS_VERSION: &str = "1.10505.0";
 
-/// Workspace root resolved at compile time. `bench-comparison` and its
-/// `src/bin/*.rs` binaries all share this one `CARGO_MANIFEST_DIR` (the
-/// `bench-comparison` crate root), one level below the workspace root.
+/// Repository root resolved at compile time. `env!("CARGO_MANIFEST_DIR")`
+/// here always resolves to *this* crate's own directory
+/// (`bench-comparison/lib/`, regardless of which sibling binary calls this
+/// function — `env!` bakes in the value from where it's expanded, not the
+/// caller), two levels below the repository root.
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
-        .nth(1)
-        .expect("workspace root exists one level above crate dir")
+        .nth(2)
+        .expect("repository root exists two levels above bench-comparison/lib/")
         .to_path_buf()
 }
 

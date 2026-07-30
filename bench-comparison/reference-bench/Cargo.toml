@@ -1,0 +1,17 @@
+# Its own standalone crate (own `[workspace]` below) — see
+# `bench-comparison/lib/Cargo.toml` for why this can't share a workspace (and
+# so a `Cargo.lock`) with `core-bench`.
+[workspace]
+
+[package]
+name       = "reference-bench"
+version    = "0.1.0-beta.3"
+edition    = "2021"
+publish    = false
+
+[dependencies]
+bench-comparison = { path = "../lib" }
+duckdb       = { version = "1.10505.0", features = ["bundled", "chrono", "uuid", "rust_decimal"] }
+chrono       = "0.4.45"
+rust_decimal = { version = "1.42.1", default-features = false }
+uuid         = "1.24.0"
