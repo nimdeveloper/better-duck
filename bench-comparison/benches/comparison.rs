@@ -62,12 +62,15 @@ const ALLTYPE_ROWS: usize = 1_000;
 /// Kept in sync with the `duckdb` version pinned in `Cargo.toml`'s dev-dependencies.
 const DUCKDB_RS_VERSION: &str = "1.10505.0";
 
-/// Workspace root resolved at compile time (two parents above crate root).
+/// Workspace root resolved at compile time (one parent above crate root —
+/// this crate is deliberately excluded from the main workspace, see
+/// `bench-comparison/Cargo.toml`, but still lives as a direct sibling of
+/// `crates/` so `docs/benchmarks/` output lands in the same place).
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
-        .nth(2)
-        .expect("workspace root exists two levels above crate dir")
+        .nth(1)
+        .expect("workspace root exists one level above crate dir")
         .to_path_buf()
 }
 

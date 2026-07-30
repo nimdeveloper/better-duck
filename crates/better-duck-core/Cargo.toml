@@ -43,19 +43,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dev-dependencies]
 tempfile   = "3.27.0"
 criterion  = { version = "0.8.2", features = ["html_reports"] }
-sysinfo    = "0.39.3"
-plotters   = { version = "0.3", default-features = false, features = ["svg_backend", "all_series", "all_elements", "full_palette"] }
-serde_json = "1"
-serde      = { version = "1", features = ["derive"] }
 tokio      = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
-duckdb     = { version = "1.10505.0", features = ["bundled", "chrono", "uuid", "rust_decimal"] }
 uuid = "1.24.0"
 trybuild = "1.0"
 
 [[bench]]
 name    = "my_benchmark"
-harness = false
-
-[[bench]]
-name    = "comparison"
 harness = false
