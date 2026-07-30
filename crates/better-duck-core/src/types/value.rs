@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
+use crate::ffi::duckdb_hugeint;
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use libduckdb_sys::duckdb_hugeint;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::hash::{Hash, Hasher};
