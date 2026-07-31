@@ -247,6 +247,31 @@ impl Connection {
     pub(crate) fn raw_con(&self) -> crate::ffi::duckdb_connection {
         self.0.con
     }
+
+    /// Returns a cheap, cloneable handle that can interrupt a query running
+    /// on this connection, or read its progress, from a different thread —
+    /// the connection itself is blocked for the duration of a query, so
+    /// cancelling or polling it can only happen from elsewhere. See
+    /// [`InterruptHandle`](crate::interrupt::InterruptHandle) — in
+    /// particular, interrupting leaves this connection unable to run further
+    /// queries; see that type's docs for why.
+    #[inline]
+    pub fn interrupt_handle(&self) -> crate::interrupt::InterruptHandle {
+        self.0.interrupt_handle()
+    }
+
+    /// Returns the progress of the query currently running on this
+    /// connection, if any — the same-thread convenience form of
+    /// [`InterruptHandle::progress`](crate::interrupt::InterruptHandle::progress),
+    /// for a caller that already holds `&self` and doesn't need a
+    /// cross-thread handle.
+    #[inline]
+    pub fn query_progress(&self) -> crate::interrupt::QueryProgress {
+        // SAFETY: `self.0.con` is a valid, open duckdb_connection for the
+        // lifetime of `&self`.
+        let raw = unsafe { crate::ffi::duckdb_query_progress(self.0.con) };
+        crate::interrupt::QueryProgress::from_raw(raw)
+    }
 }
 
 // SAFETY: DuckDB connections are safe to move between threads (they do not hold

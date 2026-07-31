@@ -147,6 +147,14 @@ pub struct RawConnection {
     pub db: Arc<RawDatabase>,
     /// The raw DuckDB connection handle.
     pub con: duckdb_connection,
+    /// `true` while `self.con` is open. [`close`](RawConnection::close) (and
+    /// so `Drop`) hold this lock for the *entire* `duckdb_disconnect` call —
+    /// shared with every [`InterruptHandle`](crate::interrupt::InterruptHandle)
+    /// derived from this connection, so a concurrent
+    /// `InterruptHandle::interrupt`/`progress` call either completes safely
+    /// before disconnect starts, or observes `false` and becomes a no-op,
+    /// never a use-after-free on `self.con`.
+    pub(crate) alive: Arc<parking_lot::Mutex<bool>>,
 }
 
 impl RawConnection {
@@ -182,7 +190,7 @@ impl RawConnection {
             unsafe { duckdb_disconnect(&mut con) };
             return Err(Error::DuckDBFailure(FFIError::new(r), Some("connect error".to_owned())));
         }
-        Ok(RawConnection { db, con })
+        Ok(RawConnection { db, con, alive: Arc::new(parking_lot::Mutex::new(true)) })
     }
 
     /// Opens a new connection to the database at the given path with the specified config.
@@ -211,12 +219,18 @@ impl RawConnection {
         if self.con.is_null() {
             return Ok(());
         }
+        // Held for the whole disconnect call below — see the `alive` field's
+        // doc comment for why: this is what makes a concurrent
+        // `InterruptHandle::interrupt`/`progress` call race-free against
+        // this disconnect, rather than merely "usually fine".
+        let mut alive = self.alive.lock();
         // SAFETY: `self.con` is a valid open duckdb_connection. After disconnect it is
         // set to null so this code path cannot run twice.
         unsafe {
             duckdb_disconnect(&mut self.con);
             self.con = ptr::null_mut();
         }
+        *alive = false;
         Ok(())
     }
 
@@ -230,6 +244,14 @@ impl RawConnection {
     pub fn try_clone(&self) -> Result<Self> {
         // SAFETY: `self.db` is a valid Arc<RawDatabase> with a live database handle.
         RawConnection::new(self.db.clone())
+    }
+
+    /// Returns a cheap, cloneable handle that can interrupt the query
+    /// currently running on *this* connection, or read its progress, from a
+    /// different thread — unlike [`try_clone`](Self::try_clone), which opens
+    /// an unrelated new connection to the same database.
+    pub(crate) fn interrupt_handle(&self) -> crate::interrupt::InterruptHandle {
+        crate::interrupt::InterruptHandle::new(self.con, self.alive.clone())
     }
 
     /// Executes a SQL statement and returns the result.

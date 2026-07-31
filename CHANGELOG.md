@@ -39,6 +39,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   appender itself in a broken state. Also added: `Appender::append_default_row()`/
   `Appender::set_chunk_default()` for a column's SQL `DEFAULT` rather than an explicit value.
 
+**Cancellation, progress & typed errors**
+- **`Connection::interrupt_handle()`** — a cheap, cloneable, `Send + Sync` `InterruptHandle` that
+  cancels the query currently running on that connection, or reads its progress
+  (`Connection::query_progress()`/`InterruptHandle::progress()` → `QueryProgress`), from a
+  different thread. `AsyncConnection::interrupt_handle()` takes the underlying mutex once, up
+  front, so it can cancel a query while `execute().await` is holding that mutex for the duration
+  of the call — going through `with_connection` to cancel would just deadlock behind the query
+  being cancelled. Note: DuckDB's own `duckdb_interrupt` leaves a connection permanently unable to
+  run further queries once it successfully interrupts an in-flight query (documented prominently
+  on `InterruptHandle`); interrupting an idle connection is a true no-op.
+- **Typed errors** — `Error::error_type() -> Option<DuckDbErrorType>` classifies a DuckDB failure
+  (constraint violation, parser error, catalog error, …) without string-matching the message.
+  Populated from `duckdb_result_error_type` at every site that builds a `DuckDBFailure` from a
+  result. `Error` stays `#[non_exhaustive]` and `DuckDBFailure`'s shape is unchanged, so this is
+  non-breaking.
+- **`ErrorData`** — an owned, self-describing DuckDB error (`duckdb_error_data`) independent of any
+  query result, via `duckdb_create_error_data`/`duckdb_destroy_error_data`.
+- **`DuckResult::statement_type()`/`return_type()`** — the kind of statement that produced a result
+  (`StatementType`: `Select`/`Insert`/… ) and what it returns (`ResultType`:
+  `QueryResult`/`ChangedRows`/`Nothing`/…), available without decoding any rows.
+- Fixed a latent null-pointer dereference in `result_from_duckdb_result`: `duckdb_result_error` can
+  return null for an error with no message (observed for an interrupted query) — the existing code
+  unconditionally passed that pointer to `CStr::from_ptr`, which is undefined behavior. Found via a
+  real crash while testing the interrupt path above, not a hypothetical.
+
 **User-defined functions**
 - **Table function extras** — `VTab::named_parameters()`/`supports_projection_pushdown()` (both
   defaulted, so existing simple functions are unaffected); a new opt-in `VTabLocalInit` trait for

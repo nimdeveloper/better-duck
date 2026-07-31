@@ -27,7 +27,11 @@ pub mod connection;
 pub mod database;
 /// Error types returned by this crate.
 pub mod error;
+/// An owned, self-describing DuckDB error (`duckdb_error_data`).
+pub mod error_data;
 mod helpers;
+/// Query cancellation and progress reporting.
+pub mod interrupt;
 /// An `r2d2` connection pool backed by a shared [`Database`](database::Database).
 #[cfg(feature = "pool")]
 pub mod pool;
@@ -60,10 +64,21 @@ pub use better_duck_macros::duckdb_table_function;
 pub use config::{AccessMode, Config, DefaultNullOrder, DefaultOrder};
 /// A shared, cloneable handle to an open DuckDB database.
 pub use database::Database;
+/// An owned, self-describing DuckDB error, independent of any result.
+pub use error_data::ErrorData;
+/// A cheap, cloneable handle that can interrupt an in-flight query, or read
+/// its progress, from a different thread.
+pub use interrupt::InterruptHandle;
+/// A snapshot of an in-flight query's execution progress.
+pub use interrupt::QueryProgress;
 /// A DuckDB appender for bulk-inserting rows into a table.
 pub use raw::appender::Appender;
 /// A fully iterable DuckDB query result.
 pub use raw::result::DuckResult;
+/// What kind of result a [`DuckResult`] carries.
+pub use raw::result::ResultType;
+/// The kind of SQL statement that produced a [`DuckResult`].
+pub use raw::result::StatementType;
 /// A single row from a DuckDB query result.
 pub use raw::row::DuckRow;
 /// A prepared statement suitable for caching and re-execution.

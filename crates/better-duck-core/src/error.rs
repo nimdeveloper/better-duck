@@ -4,6 +4,154 @@
 use crate::ffi::{duckdb_type, Error as FFIError};
 use std::{error, fmt, path::PathBuf, result, str};
 
+/// A DuckDB error's broad category (`duckdb_error_type`) — lets callers match
+/// on *why* a query failed (e.g. a constraint violation vs. a syntax error)
+/// without string-matching the error message. Read via
+/// [`Error::error_type`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DuckDbErrorType {
+    /// Generic/unspecified error.
+    Invalid,
+    /// A value fell outside the range its type or column can represent.
+    OutOfRange,
+    /// A value could not be converted between types.
+    Conversion,
+    /// An unrecognized type was encountered.
+    UnknownType,
+    /// A DECIMAL-specific error (e.g. width/scale overflow).
+    Decimal,
+    /// Two values or expressions had incompatible types.
+    MismatchType,
+    /// A division (or modulo) by zero was attempted.
+    DivideByZero,
+    /// A value or object exceeded a size limit.
+    ObjectSize,
+    /// A type was used in a context it doesn't support.
+    InvalidType,
+    /// Serialization or deserialization of internal state failed.
+    Serialization,
+    /// A transaction could not be started, committed, or continued.
+    Transaction,
+    /// The requested feature or operation isn't implemented.
+    NotImplemented,
+    /// A SQL expression was malformed or invalid.
+    Expression,
+    /// A catalog lookup failed (unknown table, schema, column, function, …).
+    Catalog,
+    /// SQL parsing failed.
+    Parser,
+    /// Query planning failed.
+    Planner,
+    /// Task scheduling failed.
+    Scheduler,
+    /// Query execution failed at runtime.
+    Executor,
+    /// A constraint (e.g. `NOT NULL`, `UNIQUE`, `CHECK`) was violated.
+    Constraint,
+    /// An index operation failed.
+    Index,
+    /// Statistics collection or use failed.
+    Stat,
+    /// The connection is in an invalid state for the attempted operation.
+    Connection,
+    /// The SQL had a syntax error.
+    Syntax,
+    /// A configuration/settings value was invalid.
+    Settings,
+    /// Query binding (name/type resolution) failed.
+    Binder,
+    /// A network operation failed.
+    Network,
+    /// Query optimization failed.
+    Optimizer,
+    /// An unexpected null pointer was encountered internally.
+    NullPointer,
+    /// An I/O operation failed.
+    Io,
+    /// The operation was interrupted (see [`crate::interrupt::InterruptHandle`]).
+    Interrupt,
+    /// An unrecoverable internal error occurred.
+    Fatal,
+    /// An internal invariant was violated — likely a DuckDB bug.
+    Internal,
+    /// A caller-supplied input was invalid.
+    InvalidInput,
+    /// Memory allocation failed.
+    OutOfMemory,
+    /// The operation was not permitted.
+    Permission,
+    /// A query parameter could not be resolved to a value.
+    ParameterNotResolved,
+    /// A query parameter was used somewhere it isn't allowed.
+    ParameterNotAllowed,
+    /// A dependency (e.g. an extension) required by the operation is missing.
+    Dependency,
+    /// An HTTP request failed.
+    Http,
+    /// A required extension is not loaded.
+    MissingExtension,
+    /// Automatic extension loading failed.
+    Autoload,
+    /// A sequence operation (e.g. `nextval`) failed.
+    Sequence,
+}
+
+impl DuckDbErrorType {
+    /// Converts a raw `duckdb_error_type` value, or `None` if it doesn't
+    /// match any variant known to this build (e.g. a newer DuckDB version's
+    /// error type this crate hasn't been updated for).
+    pub(crate) fn from_raw(raw: crate::ffi::duckdb_error_type) -> Option<Self> {
+        use crate::ffi::*;
+        #[allow(non_upper_case_globals)]
+        Some(match raw {
+            duckdb_error_type_DUCKDB_ERROR_INVALID => Self::Invalid,
+            duckdb_error_type_DUCKDB_ERROR_OUT_OF_RANGE => Self::OutOfRange,
+            duckdb_error_type_DUCKDB_ERROR_CONVERSION => Self::Conversion,
+            duckdb_error_type_DUCKDB_ERROR_UNKNOWN_TYPE => Self::UnknownType,
+            duckdb_error_type_DUCKDB_ERROR_DECIMAL => Self::Decimal,
+            duckdb_error_type_DUCKDB_ERROR_MISMATCH_TYPE => Self::MismatchType,
+            duckdb_error_type_DUCKDB_ERROR_DIVIDE_BY_ZERO => Self::DivideByZero,
+            duckdb_error_type_DUCKDB_ERROR_OBJECT_SIZE => Self::ObjectSize,
+            duckdb_error_type_DUCKDB_ERROR_INVALID_TYPE => Self::InvalidType,
+            duckdb_error_type_DUCKDB_ERROR_SERIALIZATION => Self::Serialization,
+            duckdb_error_type_DUCKDB_ERROR_TRANSACTION => Self::Transaction,
+            duckdb_error_type_DUCKDB_ERROR_NOT_IMPLEMENTED => Self::NotImplemented,
+            duckdb_error_type_DUCKDB_ERROR_EXPRESSION => Self::Expression,
+            duckdb_error_type_DUCKDB_ERROR_CATALOG => Self::Catalog,
+            duckdb_error_type_DUCKDB_ERROR_PARSER => Self::Parser,
+            duckdb_error_type_DUCKDB_ERROR_PLANNER => Self::Planner,
+            duckdb_error_type_DUCKDB_ERROR_SCHEDULER => Self::Scheduler,
+            duckdb_error_type_DUCKDB_ERROR_EXECUTOR => Self::Executor,
+            duckdb_error_type_DUCKDB_ERROR_CONSTRAINT => Self::Constraint,
+            duckdb_error_type_DUCKDB_ERROR_INDEX => Self::Index,
+            duckdb_error_type_DUCKDB_ERROR_STAT => Self::Stat,
+            duckdb_error_type_DUCKDB_ERROR_CONNECTION => Self::Connection,
+            duckdb_error_type_DUCKDB_ERROR_SYNTAX => Self::Syntax,
+            duckdb_error_type_DUCKDB_ERROR_SETTINGS => Self::Settings,
+            duckdb_error_type_DUCKDB_ERROR_BINDER => Self::Binder,
+            duckdb_error_type_DUCKDB_ERROR_NETWORK => Self::Network,
+            duckdb_error_type_DUCKDB_ERROR_OPTIMIZER => Self::Optimizer,
+            duckdb_error_type_DUCKDB_ERROR_NULL_POINTER => Self::NullPointer,
+            duckdb_error_type_DUCKDB_ERROR_IO => Self::Io,
+            duckdb_error_type_DUCKDB_ERROR_INTERRUPT => Self::Interrupt,
+            duckdb_error_type_DUCKDB_ERROR_FATAL => Self::Fatal,
+            duckdb_error_type_DUCKDB_ERROR_INTERNAL => Self::Internal,
+            duckdb_error_type_DUCKDB_ERROR_INVALID_INPUT => Self::InvalidInput,
+            duckdb_error_type_DUCKDB_ERROR_OUT_OF_MEMORY => Self::OutOfMemory,
+            duckdb_error_type_DUCKDB_ERROR_PERMISSION => Self::Permission,
+            duckdb_error_type_DUCKDB_ERROR_PARAMETER_NOT_RESOLVED => Self::ParameterNotResolved,
+            duckdb_error_type_DUCKDB_ERROR_PARAMETER_NOT_ALLOWED => Self::ParameterNotAllowed,
+            duckdb_error_type_DUCKDB_ERROR_DEPENDENCY => Self::Dependency,
+            duckdb_error_type_DUCKDB_ERROR_HTTP => Self::Http,
+            duckdb_error_type_DUCKDB_ERROR_MISSING_EXTENSION => Self::MissingExtension,
+            duckdb_error_type_DUCKDB_ERROR_AUTOLOAD => Self::Autoload,
+            duckdb_error_type_DUCKDB_ERROR_SEQUENCE => Self::Sequence,
+            _ => return None,
+        })
+    }
+}
+
 /// Describes why a value conversion from or to DuckDB failed.
 #[derive(Debug)]
 pub enum DuckDBConversionError {
@@ -120,6 +268,26 @@ pub enum Error {
 
 /// A typedef of the result returned by many methods.
 pub type Result<T, E = Error> = result::Result<T, E>;
+
+impl Error {
+    /// Returns this error's DuckDB error category, if it's a
+    /// [`Error::DuckDBFailure`] that came from a call site with one
+    /// available (e.g. a query result, via `duckdb_result_error_type`) and
+    /// the raw value matches a variant this crate knows about.
+    ///
+    /// `None` for every other `Error` variant, and for a `DuckDBFailure` from
+    /// a call site with no `duckdb_result` to ask (e.g. `duckdb_open_ext`
+    /// failing before any query ever ran).
+    #[must_use]
+    pub fn error_type(&self) -> Option<DuckDbErrorType> {
+        match self {
+            Error::DuckDBFailure(ffi_err, _) => {
+                ffi_err.error_type.and_then(DuckDbErrorType::from_raw)
+            },
+            _ => None,
+        }
+    }
+}
 
 impl PartialEq for Error {
     fn eq(

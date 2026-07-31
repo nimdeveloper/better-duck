@@ -7,7 +7,7 @@ use std::{
 
 use crate::ffi::{
     duckdb_column_count, duckdb_column_logical_type, duckdb_column_name, duckdb_destroy_result,
-    duckdb_fetch_chunk, DUCKDB_TYPE,
+    duckdb_fetch_chunk, duckdb_result_return_type, duckdb_result_statement_type, DUCKDB_TYPE,
 };
 
 use crate::{
@@ -30,6 +30,145 @@ enum IterMode {
     Unset,
     Row,
     Chunk,
+}
+
+/// The kind of SQL statement that produced a [`DuckResult`] (`duckdb_statement_type`).
+/// Read via [`DuckResult::statement_type`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum StatementType {
+    /// No statement type could be determined.
+    Invalid,
+    /// `SELECT`.
+    Select,
+    /// `INSERT`.
+    Insert,
+    /// `UPDATE`.
+    Update,
+    /// `EXPLAIN`.
+    Explain,
+    /// `DELETE`.
+    Delete,
+    /// `PREPARE`.
+    Prepare,
+    /// `CREATE`.
+    Create,
+    /// `EXECUTE`.
+    Execute,
+    /// `ALTER`.
+    Alter,
+    /// `BEGIN`/`COMMIT`/`ROLLBACK`.
+    Transaction,
+    /// `COPY ... TO/FROM`.
+    Copy,
+    /// `ANALYZE`.
+    Analyze,
+    /// `SET`/`RESET` of a session variable.
+    VariableSet,
+    /// `CREATE FUNCTION`.
+    CreateFunc,
+    /// `DROP`.
+    Drop,
+    /// `EXPORT DATABASE`.
+    Export,
+    /// `PRAGMA`.
+    Pragma,
+    /// `VACUUM`.
+    Vacuum,
+    /// `CALL`.
+    Call,
+    /// `SET` (configuration option).
+    Set,
+    /// `LOAD`/`INSTALL` extension.
+    Load,
+    /// A relation-API-produced statement.
+    Relation,
+    /// An extension-defined statement.
+    Extension,
+    /// A pre-built logical plan.
+    LogicalPlan,
+    /// `ATTACH`.
+    Attach,
+    /// `DETACH`.
+    Detach,
+    /// Multiple statements combined.
+    Multi,
+    /// `COPY DATABASE`.
+    CopyDatabase,
+    /// `UPDATE EXTENSIONS`.
+    UpdateExtensions,
+    /// `MERGE INTO`.
+    MergeInto,
+}
+
+impl StatementType {
+    fn from_raw(raw: crate::ffi::duckdb_statement_type) -> Self {
+        use crate::ffi::*;
+        #[allow(non_upper_case_globals)]
+        match raw {
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_INVALID => Self::Invalid,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_SELECT => Self::Select,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_INSERT => Self::Insert,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_UPDATE => Self::Update,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXPLAIN => Self::Explain,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_DELETE => Self::Delete,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_PREPARE => Self::Prepare,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_CREATE => Self::Create,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXECUTE => Self::Execute,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_ALTER => Self::Alter,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_TRANSACTION => Self::Transaction,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_COPY => Self::Copy,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_ANALYZE => Self::Analyze,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_VARIABLE_SET => Self::VariableSet,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_CREATE_FUNC => Self::CreateFunc,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_DROP => Self::Drop,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXPORT => Self::Export,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_PRAGMA => Self::Pragma,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_VACUUM => Self::Vacuum,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_CALL => Self::Call,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_SET => Self::Set,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_LOAD => Self::Load,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_RELATION => Self::Relation,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXTENSION => Self::Extension,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_LOGICAL_PLAN => Self::LogicalPlan,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_ATTACH => Self::Attach,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_DETACH => Self::Detach,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_MULTI => Self::Multi,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_COPY_DATABASE => Self::CopyDatabase,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_UPDATE_EXTENSIONS => Self::UpdateExtensions,
+            duckdb_statement_type_DUCKDB_STATEMENT_TYPE_MERGE_INTO => Self::MergeInto,
+            _ => Self::Invalid,
+        }
+    }
+}
+
+/// What kind of result a [`DuckResult`] carries (`duckdb_result_type`). Read
+/// via [`DuckResult::return_type`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ResultType {
+    /// No result type could be determined.
+    Invalid,
+    /// The statement reports a changed-row count (INSERT/UPDATE/DELETE).
+    ChangedRows,
+    /// The statement produces no result at all (most DDL).
+    Nothing,
+    /// The statement produces a row set (SELECT and similar).
+    QueryResult,
+}
+
+impl ResultType {
+    fn from_raw(raw: crate::ffi::duckdb_result_type) -> Self {
+        use crate::ffi::*;
+        #[allow(non_upper_case_globals)]
+        match raw {
+            duckdb_result_type_DUCKDB_RESULT_TYPE_INVALID => Self::Invalid,
+            duckdb_result_type_DUCKDB_RESULT_TYPE_CHANGED_ROWS => Self::ChangedRows,
+            duckdb_result_type_DUCKDB_RESULT_TYPE_NOTHING => Self::Nothing,
+            duckdb_result_type_DUCKDB_RESULT_TYPE_QUERY_RESULT => Self::QueryResult,
+            _ => Self::Invalid,
+        }
+    }
 }
 
 /// Represents the result of a DuckDB query, providing row-by-row iteration over
@@ -430,6 +569,25 @@ impl DuckResult {
             return None;
         }
         Some(DataChunkHandle::from_owned(ptr))
+    }
+
+    /// Returns the kind of SQL statement that produced this result — lets a
+    /// caller explain *why* a result was refused (e.g. `execute()` rejecting
+    /// a `SELECT`) instead of a bare error.
+    #[inline]
+    pub fn statement_type(&mut self) -> StatementType {
+        // SAFETY: `self.res` is a valid duckdb_result; `duckdb_result` is a
+        // small `Copy` value, so passing a copy is the documented calling
+        // convention (see `fetch_chunk`).
+        StatementType::from_raw(unsafe { duckdb_result_statement_type(self.res) })
+    }
+
+    /// Returns what kind of result this is — whether it carries a row set, a
+    /// changed-row count, or nothing at all.
+    #[inline]
+    pub fn return_type(&mut self) -> ResultType {
+        // SAFETY: see `statement_type`.
+        ResultType::from_raw(unsafe { duckdb_result_return_type(self.res) })
     }
 
     /// Consumes this result, materializing every row into an owned [`ResultSet`].

@@ -148,6 +148,27 @@ impl AsyncConnection {
         .await
     }
 
+    /// Returns a cheap, cloneable handle that can interrupt whatever query is
+    /// currently running on this connection, or read its progress, from
+    /// outside the async task that holds it.
+    ///
+    /// An in-flight `execute().await` holds this handle's internal mutex for
+    /// its whole duration, so going through `with_connection` to cancel it
+    /// would simply deadlock behind the query it's trying to cancel. This
+    /// method takes the lock just once, up front, to read the underlying
+    /// `duckdb_connection` and its liveness flag, then hands back an
+    /// independent [`InterruptHandle`](crate::interrupt::InterruptHandle)
+    /// that talks to DuckDB directly and needs no further lock.
+    ///
+    /// Interrupting leaves the underlying connection unable to run further
+    /// queries — every subsequent `execute`/`execute_batch`/... on this
+    /// `AsyncConnection` (and its clones, which share one connection) then
+    /// fails. See [`InterruptHandle`](crate::interrupt::InterruptHandle)'s
+    /// docs for why; open a new `AsyncConnection` afterward.
+    pub fn interrupt_handle(&self) -> crate::interrupt::InterruptHandle {
+        self.inner.lock().interrupt_handle()
+    }
+
     /// Runs a closure against a bulk-insert [`Appender`] for `table`/`schema` on a
     /// blocking thread.
     ///

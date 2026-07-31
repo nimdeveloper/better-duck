@@ -6,7 +6,7 @@ use crate::ffi::{
     duckdb_appender, duckdb_appender_destroy, duckdb_appender_error, duckdb_arrow,
     duckdb_destroy_arrow, duckdb_destroy_prepare, duckdb_destroy_result, duckdb_prepare_error,
     duckdb_prepared_statement, duckdb_query_arrow_error, duckdb_result, duckdb_result_error,
-    duckdb_state, DuckDBSuccess, Error as FFIError,
+    duckdb_result_error_type, duckdb_state, DuckDBSuccess, Error as FFIError,
 };
 
 use crate::error::{Error, Result};
@@ -214,15 +214,24 @@ pub fn result_from_duckdb_result(
     }
     // SAFETY: `out` is a `*mut duckdb_result` that was passed to `duckdb_query` or
     // `duckdb_execute_prepared`. On error DuckDB writes error info into `*out`, and
-    // `duckdb_result_error` returns a pointer into that memory. We copy the error string
-    // and then destroy the result.
+    // `duckdb_result_error`/`duckdb_result_error_type` return values backed by that
+    // memory — both read before `duckdb_destroy_result` invalidates it.
     unsafe {
+        let error_type = duckdb_result_error_type(out);
         let message = {
             let c_err = duckdb_result_error(out);
-            let message = Some(CStr::from_ptr(c_err).to_string_lossy().to_string());
+            // `duckdb_result_error` can return null even when `code != DuckDBSuccess` —
+            // observed for an interrupted query, which carries no message. Dereferencing
+            // a null `*const c_char` via `CStr::from_ptr` is undefined behavior, so this
+            // check is load-bearing, not defensive fluff.
+            let message = if c_err.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(c_err).to_string_lossy().to_string())
+            };
             duckdb_destroy_result(out);
             message
         };
-        error_from_duckdb_code(code, message)
+        Err(Error::DuckDBFailure(FFIError::with_type(code, error_type), message))
     }
 }
