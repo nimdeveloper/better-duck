@@ -125,7 +125,10 @@ fn error_c_string(error: &str) -> CString {
     CString::new(error.replace('\0', "\\0")).expect("NUL replacement must produce a valid C string")
 }
 
-fn drop_or_report<T>(
+/// Drops `value`, containing (and stderr-logging) any panic from its
+/// destructor rather than letting it unwind further. `context` names the
+/// value's type, for the log line.
+pub(crate) fn drop_or_report<T>(
     context: &str,
     value: T,
 ) {

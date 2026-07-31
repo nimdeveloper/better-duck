@@ -64,6 +64,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unconditionally passed that pointer to `CStr::from_ptr`, which is undefined behavior. Found via a
   real crash while testing the interrupt path above, not a hypothetical.
 
+**Aggregate function UDFs**
+- **`VAggregate`** — a new trait for custom SQL aggregates, registered via
+  `Connection::register_aggregate_function`: `SELECT my_agg(x) FROM t GROUP BY k`. Mirrors
+  `VScalar`'s architecture (a signature list, a callback-containment discipline, per-overload
+  registration into a `duckdb_aggregate_function_set`).
+- Per-group `State` is heap-boxed and reached through one level of indirection through the raw
+  memory DuckDB allocates per group (`state_size` always reports `size_of::<*mut State>()`) — this
+  sidesteps DuckDB's C allocator giving no alignment guarantee for an arbitrary Rust type. The
+  boxed state is freed by a dedicated destructor trampoline, registered unconditionally.
+- **Design correction made during implementation**: the originally planned `update` signature —
+  `fn update(states: &mut [&mut State], input: &DataChunkHandle)`, mirroring `VScalar::invoke`'s
+  whole-chunk access — turned out to be unsound. DuckDB's grouped aggregation hands `update` one
+  state pointer *per row*, and rows in the same group share a pointer; building a `&mut [&mut
+  State]` from that array aliases two mutable references whenever two rows of a chunk share a
+  group, which is the ordinary case for any real `GROUP BY`. `update`/`finalize` are row-at-a-time
+  instead (`fn update(state: &mut State, input: &DataChunkHandle, row: usize)`), so at most one
+  `&mut State` for a given group ever exists at once, even though the same group's state is
+  (soundly) re-borrowed across successive calls.
+- **Verified DuckDB behavior that differs from scalar functions**: unlike `VScalar::invoke`,
+  `VAggregate::update` is invoked for *every* row, `NULL` parameters included — DuckDB does not
+  pre-filter `NULL`-argument rows out of an aggregate's input the way it does for scalars.
+  `special_handling()` instead affects the query planner's null-propagation assumption for the
+  aggregate, not which rows `update` sees; a `NULL`-aware aggregate checks
+  `VectorRef::is_null` itself.
+- Hand-written trait only in this release — a `#[duckdb_aggregate]` attribute macro (mirroring
+  `#[duckdb_scalar]`/`#[duckdb_table_function]`) is deferred to a follow-up.
+
 **User-defined functions**
 - **Table function extras** — `VTab::named_parameters()`/`supports_projection_pushdown()` (both
   defaulted, so existing simple functions are unaffected); a new opt-in `VTabLocalInit` trait for

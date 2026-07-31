@@ -103,6 +103,10 @@
 //! over panicking; the ordinary error path never depends on unwinding.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+/// DuckDB aggregate functions: custom SQL aggregates evaluated per group,
+/// used in a `SELECT` list with `GROUP BY`, e.g. `SELECT my_agg(x) FROM t
+/// GROUP BY k`.
+pub mod aggregate;
 pub(crate) mod callback;
 mod context;
 /// DuckDB replacement scans: rewrite an unresolved table reference into a
@@ -124,6 +128,8 @@ pub use crate::chunk::LogicalType;
 /// Read and write views over a single column of a [`DataChunkHandle`], plus the
 /// [`ScalarArg`]/[`ScalarRet`] marshalling traits. See [`crate::chunk`].
 pub use crate::chunk::{ScalarArg, ScalarRet, VectorMut, VectorRef};
+/// The trait behind DuckDB aggregate functions, and its signature type.
+pub use aggregate::{AggregateSignature, VAggregate};
 /// The trait behind DuckDB replacement scans, and its callback-info type.
 /// **Experimental** — see the [`replacement`] module docs.
 pub use replacement::{ReplacementScan, ReplacementScanInfo};
