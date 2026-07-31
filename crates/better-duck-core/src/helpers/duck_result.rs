@@ -76,7 +76,16 @@ pub fn result_from_duckdb_appender(
             Some("appender is null".to_string())
         } else {
             let c_err = duckdb_appender_error(*appender);
-            let message = Some(CStr::from_ptr(c_err).to_string_lossy().to_string());
+            // `duckdb_appender_error` can return null even when `code != DuckDBSuccess`
+            // (no message available) — dereferencing a null `*const c_char` via
+            // `CStr::from_ptr` is undefined behavior, so this check is load-bearing,
+            // not defensive fluff. See `result_from_duckdb_result`, which was fixed
+            // after this exact pattern crashed on a real interrupted query.
+            let message = if c_err.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(c_err).to_string_lossy().to_string())
+            };
             duckdb_appender_destroy(appender);
             message
         };
@@ -124,7 +133,17 @@ pub fn result_from_duckdb_prepare(
             Some("prepare is null".to_string())
         } else {
             let c_err = duckdb_prepare_error(prepare);
-            let message = Some(CStr::from_ptr(c_err).to_string_lossy().to_string());
+            // `duckdb_prepare_error`'s docs explicitly say it "returns nullptr
+            // instead" when there's no message — dereferencing a null
+            // `*const c_char` via `CStr::from_ptr` is undefined behavior, so this
+            // check is load-bearing, not defensive fluff. See
+            // `result_from_duckdb_result`, which was fixed after this exact
+            // pattern crashed on a real interrupted query.
+            let message = if c_err.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(c_err).to_string_lossy().to_string())
+            };
             duckdb_destroy_prepare(&mut prepare);
             message
         };
@@ -172,7 +191,17 @@ pub fn result_from_duckdb_arrow(
             Some("out arrow is null".to_string())
         } else {
             let c_err = duckdb_query_arrow_error(out);
-            let message = Some(CStr::from_ptr(c_err).to_string_lossy().to_string());
+            // `duckdb_query_arrow_error` can return null even when
+            // `code != DuckDBSuccess` (no message available) — dereferencing a
+            // null `*const c_char` via `CStr::from_ptr` is undefined behavior, so
+            // this check is load-bearing, not defensive fluff. See
+            // `result_from_duckdb_result`, which was fixed after this exact
+            // pattern crashed on a real interrupted query.
+            let message = if c_err.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(c_err).to_string_lossy().to_string())
+            };
             duckdb_destroy_arrow(&mut out);
             message
         };
