@@ -1,16 +1,26 @@
-use std::{ffi::CString, mem, ptr};
+use std::{
+    ffi::{c_void, CStr, CString},
+    mem, ptr,
+};
 
 use crate::ffi::{
-    duckdb_clear_bindings, duckdb_destroy_prepare, duckdb_execute_prepared, duckdb_nparams,
-    duckdb_prepare, duckdb_result, DuckDBSuccess,
+    duckdb_bind_parameter_index, duckdb_clear_bindings, duckdb_destroy_prepare,
+    duckdb_execute_prepared, duckdb_free, duckdb_nparams, duckdb_parameter_name, duckdb_prepare,
+    duckdb_prepared_statement_column_count, duckdb_prepared_statement_column_logical_type,
+    duckdb_prepared_statement_column_name, duckdb_prepared_statement_column_type,
+    duckdb_prepared_statement_type, duckdb_result, DuckDBSuccess, DUCKDB_TYPE,
 };
 
 use crate::{
+    chunk::LogicalType,
     error::{Error, Result},
     ffi,
     ffi::duckdb_prepared_statement,
     helpers::duck_result::{result_from_duckdb_prepare, result_from_duckdb_result},
-    raw::{connection::RawConnection, result::DuckResult},
+    raw::{
+        connection::RawConnection,
+        result::{DuckResult, StatementType},
+    },
     types::appendable::AppendAble,
 };
 
@@ -248,6 +258,167 @@ impl CachedStatement {
         value: &mut T,
     ) -> Result<()> {
         value.stmt_append(idx, self.stmt)
+    }
+
+    /// Binds `value` to the named parameter `name` (a SQL `$name`-style
+    /// parameter, as opposed to a positional `$1`/`?`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidParameterName`] if this statement has no
+    /// parameter named `name`, or an error if the underlying DuckDB bind
+    /// call fails.
+    pub fn bind_named<T: AppendAble + ?Sized>(
+        &mut self,
+        name: &str,
+        value: &mut T,
+    ) -> Result<()> {
+        let idx = self.parameter_index(name)?;
+        self.bind(idx, value)
+    }
+
+    /// Resolves `name` to its 1-based parameter index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidParameterName`] if no parameter is named `name`.
+    fn parameter_index(
+        &self,
+        name: &str,
+    ) -> Result<u64> {
+        let c_name = CString::new(name)?;
+        let mut idx: u64 = 0;
+        // SAFETY: `self.stmt` is a valid prepared statement; `c_name` is a
+        // valid NUL-terminated C string for the duration of this call;
+        // `&mut idx` is a valid output pointer.
+        let r = unsafe {
+            duckdb_bind_parameter_index(self.stmt, &mut idx as *mut u64, c_name.as_ptr())
+        };
+        if r == DuckDBSuccess {
+            Ok(idx)
+        } else {
+            Err(Error::InvalidParameterName(name.to_owned()))
+        }
+    }
+
+    /// Returns the number of parameters this statement accepts.
+    #[inline]
+    pub fn parameter_count(&self) -> usize {
+        // SAFETY: `self.stmt` is a valid prepared statement.
+        unsafe { duckdb_nparams(self.stmt) as usize }
+    }
+
+    /// Returns the name of the parameter at the given **1-based** index, or
+    /// `None` if the parameter is positional (unnamed) or `idx` is out of
+    /// range.
+    pub fn parameter_name(
+        &self,
+        idx: u64,
+    ) -> Option<String> {
+        // SAFETY: `self.stmt` is a valid prepared statement; `idx` need not
+        // be pre-validated — DuckDB returns null for an out-of-range index.
+        let raw = unsafe { duckdb_parameter_name(self.stmt, idx) };
+        if raw.is_null() {
+            return None;
+        }
+        // SAFETY: DuckDB guarantees a null-terminated, valid-UTF-8 string,
+        // caller-owned — freed via `duckdb_free` exactly once, below.
+        let name = unsafe { CStr::from_ptr(raw) }.to_string_lossy().into_owned();
+        // SAFETY: `raw` was allocated by DuckDB and must be freed with
+        // `duckdb_free`, per `duckdb_parameter_name`'s documented contract.
+        unsafe { duckdb_free(raw.cast_mut().cast::<c_void>()) };
+        Some(name)
+    }
+
+    /// Returns the DuckDB type of the parameter at the given **1-based** index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidColumnIndex`] if `idx` is out of range.
+    pub fn parameter_type(
+        &self,
+        idx: u64,
+    ) -> Result<DUCKDB_TYPE> {
+        // SAFETY: `self.stmt` is a valid prepared statement.
+        let ty = unsafe { ffi::duckdb_param_type(self.stmt, idx) };
+        if ty == crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INVALID {
+            return Err(Error::InvalidColumnIndex(idx as usize));
+        }
+        Ok(ty)
+    }
+
+    /// Returns the kind of SQL statement this is (`SELECT`, `INSERT`, …),
+    /// without executing it.
+    #[inline]
+    pub fn statement_type(&self) -> StatementType {
+        // SAFETY: `self.stmt` is a valid prepared statement.
+        StatementType::from_raw(unsafe { duckdb_prepared_statement_type(self.stmt) })
+    }
+
+    /// Returns the number of columns this statement's result will have,
+    /// without executing it.
+    #[inline]
+    pub fn column_count(&self) -> usize {
+        // SAFETY: `self.stmt` is a valid prepared statement.
+        unsafe { duckdb_prepared_statement_column_count(self.stmt) as usize }
+    }
+
+    /// Returns the name of the result column at `idx`, without executing
+    /// this statement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidColumnIndex`] if `idx` is out of range.
+    pub fn column_name(
+        &self,
+        idx: usize,
+    ) -> Result<String> {
+        // SAFETY: `self.stmt` is a valid prepared statement; `idx` need not
+        // be pre-validated — DuckDB returns null for an out-of-range index.
+        let raw = unsafe { duckdb_prepared_statement_column_name(self.stmt, idx as u64) };
+        if raw.is_null() {
+            return Err(Error::InvalidColumnIndex(idx));
+        }
+        // SAFETY: DuckDB guarantees a null-terminated, valid-UTF-8 string,
+        // caller-owned — freed via `duckdb_free` exactly once, below.
+        let name = unsafe { CStr::from_ptr(raw) }.to_string_lossy().into_owned();
+        // SAFETY: `raw` was allocated by DuckDB and must be freed with
+        // `duckdb_free`, per this function's documented contract.
+        unsafe { duckdb_free(raw.cast_mut().cast::<c_void>()) };
+        Ok(name)
+    }
+
+    /// Returns the DuckDB type of the result column at `idx`, without
+    /// executing this statement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidColumnIndex`] if `idx` is out of range.
+    pub fn column_type(
+        &self,
+        idx: usize,
+    ) -> Result<DUCKDB_TYPE> {
+        // SAFETY: `self.stmt` is a valid prepared statement.
+        let ty = unsafe { duckdb_prepared_statement_column_type(self.stmt, idx as u64) };
+        if ty == crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INVALID {
+            return Err(Error::InvalidColumnIndex(idx));
+        }
+        Ok(ty)
+    }
+
+    /// Returns the full logical type of the result column at `idx`, without
+    /// executing this statement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidColumnIndex`] if `idx` is out of range.
+    pub fn column_logical_type(
+        &self,
+        idx: usize,
+    ) -> Result<LogicalType> {
+        // SAFETY: `self.stmt` is a valid prepared statement.
+        let raw = unsafe { duckdb_prepared_statement_column_logical_type(self.stmt, idx as u64) };
+        LogicalType::from_raw(raw).map_err(|_| Error::InvalidColumnIndex(idx))
     }
 
     /// Executes the prepared statement and returns the result.

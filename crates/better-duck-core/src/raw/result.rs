@@ -102,7 +102,7 @@ pub enum StatementType {
 }
 
 impl StatementType {
-    fn from_raw(raw: crate::ffi::duckdb_statement_type) -> Self {
+    pub(crate) fn from_raw(raw: crate::ffi::duckdb_statement_type) -> Self {
         use crate::ffi::*;
         #[allow(non_upper_case_globals)]
         match raw {

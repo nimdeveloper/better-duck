@@ -64,6 +64,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unconditionally passed that pointer to `CStr::from_ptr`, which is undefined behavior. Found via a
   real crash while testing the interrupt path above, not a hypothetical.
 
+**Introspection & metadata**
+- **Named parameters** — `Connection::execute_with_named()`/`CachedStatement::bind_named()` bind
+  SQL `$name`-style parameters instead of positional `$1`/`?`, resolved via
+  `duckdb_bind_parameter_index`. Binding an unknown name returns `Error::InvalidParameterName`
+  rather than silently doing nothing.
+- **Statement introspection**, available on `CachedStatement` *before* execution:
+  `parameter_count()`/`parameter_name()`/`parameter_type()`, `statement_type()`, and result-column
+  metadata (`column_count()`/`column_name()`/`column_type()`/`column_logical_type()`) — lets tooling
+  inspect a query without running it.
+- **`TableDescription`** (`Connection::table_description()`) — column names, types, count, and
+  `column_has_default()` for a table, without issuing a query. A lookup on a nonexistent table
+  always names the table in the error, even when DuckDB's own message doesn't.
+- **`LogicalType` introspection and constructors** — `decimal_width()`/`decimal_scale()`,
+  `enum_internal_type()`, `list_child_type()`, `struct_child_count()`/`struct_child_name()`/
+  `struct_child_type()`, `alias()`/`set_alias()`; plus `LogicalType::decimal(width, scale)`,
+  `LogicalType::enum_of(&[&str])`, `LogicalType::list_of()`, `LogicalType::struct_of()` for building
+  nested types (e.g. `LIST<STRUCT<..>>`) directly, without a SQL round-trip.
+- **`Decimal`'s prepared-statement bind** now calls `duckdb_bind_decimal` directly instead of going
+  through the generic `duckdb_value` path (`to_duck` + `duckdb_bind_value` + `duckdb_destroy_value`)
+  — removes an allocate/destroy pair per bound row, the same class of fix as beta.4's `u128` bind.
+  `Appender`'s append path is unchanged (`duckdb_append_decimal` doesn't exist in the C API).
+- Scoped down from the original plan: `DuckValue` self-description
+  (`duckdb_get_value_type`/`duckdb_is_null_value`), `MAP`/`LIST`/`STRUCT` *value* accessors (as
+  opposed to the type accessors above), and `duckdb_register_logical_type` custom-type registration
+  are deferred — the delivered surface covers the two headline goals (named parameters, schema
+  introspection for tooling) with full test coverage rather than a thin pass over all ~40 candidate
+  functions.
+
 **Aggregate function UDFs**
 - **`VAggregate`** — a new trait for custom SQL aggregates, registered via
   `Connection::register_aggregate_function`: `SELECT my_agg(x) FROM t GROUP BY k`. Mirrors

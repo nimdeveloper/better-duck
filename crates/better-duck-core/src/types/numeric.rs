@@ -34,7 +34,8 @@ use crate::ffi::{
 };
 #[cfg(feature = "decimal")]
 use crate::ffi::{
-    duckdb_create_decimal, duckdb_decimal, duckdb_get_decimal, DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
+    duckdb_bind_decimal, duckdb_create_decimal, duckdb_decimal, duckdb_get_decimal,
+    DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
 };
 #[cfg(feature = "decimal")]
 use rust_decimal::Decimal;
@@ -281,31 +282,43 @@ impl DuckDialect for Decimal {
     }
 
     fn to_duck(&self) -> Result<duckdb_value, super::DuckDBConversionError> {
-        let scale = self.scale();
-        if scale > u8::MAX as u32 {
-            return Err(super::DuckDBConversionError::PrecisionLoss(
-                "Decimal scale exceeds maximum value of u8".to_string(),
-            ));
-        }
-        let scale = scale as u8;
-        let value = self.mantissa();
-
-        // Digit count of `value` including a leading `-` for negatives, matching
-        // `format!("{value}").len()` but without allocating a `String` on every call
-        // (this runs once per appended/bound row).
-        let digits = value.unsigned_abs().checked_ilog10().map_or(1, |d| d as usize + 1);
-        let mut num_width = if value < 0 { digits + 1 } else { digits };
-        if scale as usize >= num_width {
-            num_width += scale as usize - num_width + 1;
-        }
-        if value < 0 {
-            num_width -= 1;
-        }
-
-        let val = duckdb_decimal { scale, width: num_width as u8, value: hugeint_from_i128(value) };
+        let val = to_duckdb_decimal(self)?;
         // SAFETY: `val` is a fully initialized `duckdb_decimal` with valid scale/width.
         Ok(unsafe { duckdb_create_decimal(val) })
     }
+}
+
+/// Converts a `rust_decimal::Decimal` into a raw `duckdb_decimal` struct —
+/// shared by both the generic `duckdb_value` path
+/// ([`DuckDialect::to_duck`]) and the direct typed bind
+/// ([`AppendAble::stmt_append`] via `duckdb_bind_decimal`, which skips the
+/// `duckdb_value` allocate/destroy pair the generic path costs per row).
+#[cfg(feature = "decimal")]
+fn to_duckdb_decimal(
+    value: &Decimal
+) -> std::result::Result<duckdb_decimal, DuckDBConversionError> {
+    let scale = value.scale();
+    if scale > u8::MAX as u32 {
+        return Err(DuckDBConversionError::PrecisionLoss(
+            "Decimal scale exceeds maximum value of u8".to_string(),
+        ));
+    }
+    let scale = scale as u8;
+    let mantissa = value.mantissa();
+
+    // Digit count of `mantissa` including a leading `-` for negatives, matching
+    // `format!("{mantissa}").len()` but without allocating a `String` on every call
+    // (this runs once per appended/bound row).
+    let digits = mantissa.unsigned_abs().checked_ilog10().map_or(1, |d| d as usize + 1);
+    let mut num_width = if mantissa < 0 { digits + 1 } else { digits };
+    if scale as usize >= num_width {
+        num_width += scale as usize - num_width + 1;
+    }
+    if mantissa < 0 {
+        num_width -= 1;
+    }
+
+    Ok(duckdb_decimal { scale, width: num_width as u8, value: hugeint_from_i128(mantissa) })
 }
 
 #[cfg(feature = "decimal")]
@@ -328,12 +341,12 @@ impl AppendAble for Decimal {
         idx: u64,
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
-        use crate::types::DuckDialect as _;
-        let mut dv = self.to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `stmt` is valid; `dv` was just created by `to_duck()`.
-        unsafe { crate::ffi::duckdb_bind_value(stmt, idx, dv) };
-        // SAFETY: `dv` was created above; destroy exactly once.
-        unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
+        // Direct typed bind — unlike the generic `duckdb_value` path
+        // (`to_duck` + `duckdb_bind_value` + `duckdb_destroy_value`), this
+        // skips an allocate/destroy pair per bound row.
+        let val = to_duckdb_decimal(self).map_err(Error::ConversionError)?;
+        // SAFETY: `stmt` is valid; `val` is a fully initialized `duckdb_decimal`.
+        unsafe { duckdb_bind_decimal(stmt, idx, val) };
         Ok(())
     }
 }

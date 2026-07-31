@@ -170,6 +170,23 @@ impl Connection {
         self.0.execute(sql, binds)
     }
 
+    /// Prepares and executes a SQL statement with named (`$name`-style)
+    /// parameters, returning the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::Error::InvalidParameterName`] if any name in
+    /// `binds` isn't a parameter of `sql`, or an error if preparation,
+    /// binding, or execution otherwise fails.
+    #[must_use = "the DuckResult carries both affected-row count (.changes()) and a row iterator — consume it"]
+    pub fn execute_with_named(
+        &mut self,
+        sql: impl AsRef<str>,
+        binds: &mut [(&str, &mut dyn AppendAble)],
+    ) -> Result<DuckResult> {
+        self.0.execute_with_named(sql, binds)
+    }
+
     /// Creates an appender for bulk-inserting rows into the given table and schema.
     ///
     /// # Errors
@@ -271,6 +288,21 @@ impl Connection {
         // lifetime of `&self`.
         let raw = unsafe { crate::ffi::duckdb_query_progress(self.0.con) };
         crate::interrupt::QueryProgress::from_raw(raw)
+    }
+
+    /// Describes `table`'s schema — column names, types, and which have a
+    /// `DEFAULT` — without running a query. Pass `schema: None` for the
+    /// default schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error naming the table if it does not exist.
+    pub fn table_description(
+        &self,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Result<crate::table_description::TableDescription> {
+        crate::table_description::TableDescription::create(self.0.con, schema, table)
     }
 }
 
