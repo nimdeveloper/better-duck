@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["replacement","scalar","table"],"struct":["DataChunkHandle","LogicalType","VectorMut","VectorRef"],"trait":["ScalarArg","ScalarRet"],"type":["UdfResult"]};

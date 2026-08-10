@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COLLECT_SOURCES_PY"],"enum":["Command_"],"fn":["clone_tag","collect_sources","generate_bindings","main","package_archive","tempfile_dir","upgrade_duckdb","workspace_root"],"struct":["Cli","Manifest","TempDirGuard"]};

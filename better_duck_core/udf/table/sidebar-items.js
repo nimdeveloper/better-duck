@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["run_table_func"],"struct":["BindInfo","InitInfo","TableFunctionInfo","TableInitData"],"trait":["TableRow","VTab","VTabLocalInit"]};

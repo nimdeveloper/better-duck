@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["DuckEnum","DuckHugeInt","DuckInterval","DuckList","DuckTimeNs","DuckTimeTz","DuckTimestamptz","DuckTinyInt","DuckUBigInt","DuckUHugeInt","DuckUInt","DuckUSmallInt","DuckUTinyInt"]};
+window.SIDEBAR_ITEMS = {"struct":["DuckArray","DuckBignum","DuckBit","DuckEnum","DuckHugeInt","DuckInterval","DuckList","DuckMap","DuckStruct","DuckTimeNs","DuckTimeTz","DuckTimestamptz","DuckTinyInt","DuckUBigInt","DuckUHugeInt","DuckUInt","DuckUSmallInt","DuckUTinyInt","DuckUnion","DuckUuid"]};

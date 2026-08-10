@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Type"],"mod":["appendable","array","blob","date_chrono","duck_struct","from_impls","map","numeric","union","value","value_ref","varchar"],"trait":["DuckDialect"]};
+window.SIDEBAR_ITEMS = {"enum":["Type"],"mod":["appendable","array","bignum","bit","blob","date_chrono","duck_struct","map","numeric","union","uuid","value","value_ref","varchar"],"trait":["DuckDialect","DuckLogicalType"]};

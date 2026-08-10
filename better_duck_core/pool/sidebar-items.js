@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["DuckDbConnectionManager","PoolBuilder","PoolError","PoolState"],"type":["Pool","PooledConnection"]};

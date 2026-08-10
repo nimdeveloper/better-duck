@@ -1,0 +1,84 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Embedded helper — kept as an external-process Python script (not reimplemented in Rust) so it can call DuckDB’s own `scripts/package_build.py` directly, exactly like `libduckdb-sys`’s own `update_sources.py` does. Only used by this xtask, at maintainer-upgrade time; never runs on a consumer’s machine."><title>COLLECT_SOURCES_PY in xtask - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-17e0aaed.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="xtask" data-themes="" data-resource-suffix="" data-rustdoc-version="1.97.1 (8bab26f4f 2026-07-14)" data-channel="1.97.1" data-search-js="search-fd9372ac.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../static.files/storage-41dd4d93.js"></script><script defer src="sidebar-items.js"></script><script defer src="../static.files/main-fcd733ba.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc constant"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">COLLECT_SOURCES_PY</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../xtask/index.html">xtask</a><span class="version">0.0.0</span></h2></div><div class="sidebar-elems"><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="index.html">xtask</a></div><h1>Constant <span class="constant">COLLECT_<wbr>SOURCES_<wbr>PY</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/xtask/main.rs.html#258-336">Source</a> </span></div><pre class="rust item-decl"><code>pub(crate) const COLLECT_SOURCES_PY: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.97.1/std/primitive.str.html">str</a> = r#&quot;
+import json
+import shutil
+import sys
+from pathlib import Path
+
+duckdb_checkout = Path(sys.argv[1]).resolve()
+staging = Path(sys.argv[2]).resolve()
+output_json = Path(sys.argv[3]).resolve()
+
+# `package_build.build_package(target_dir, ...)` (default `folder_name=&quot;duckdb&quot;`)
+# returns two different path shapes in its source list: ordinary (non-unity-
+# build) files come back as `&quot;duckdb/&lt;relative-to-checkout&gt;&quot;` — meant to be
+# resolved against `target_dir`&#39;s *parent* — while unity-build (`ub_*.cpp`)
+# files it generates itself come back as absolute paths directly under
+# `target_dir`. Passing `target_dir = staging/&quot;duckdb&quot;` makes both shapes
+# consistent once normalized below: everything ends up expressed relative to
+# `staging`, matching where the files were actually written on disk (which is
+# what gets tar&#39;d up as the vendored archive).
+target_dir = staging / &quot;duckdb&quot;
+staging_prefix = staging.as_posix() + &quot;/&quot;
+
+sys.path.append(str(duckdb_checkout / &quot;scripts&quot;))
+import package_build
+
+def normalize(path_str):
+    p = path_str.replace(&quot;\\&quot;, &quot;/&quot;)
+    if p.startswith(staging_prefix):
+        return p[len(staging_prefix):]
+    return p  # already &quot;duckdb/&lt;relative&gt;&quot; per folder_name
+
+# `core_functions` (basic scalar/aggregate functions like `sum`, `abs`, ...)
+# is unconditionally required — DuckDB&#39;s own `extension/extension_config.cmake`
+# calls it out by name as &quot;loaded by default on every build as [it is] an
+# essential part of DuckDB&quot;, unlike `json`/`parquet` which really are optional
+# file-format support. It&#39;s always in `default_linked_extensions` below so its
+# `DUCKDB_EXTENSION_CORE_FUNCTIONS_LINKED` fallback in the generated loader is
+# unconditionally 1 — no Cargo feature gates it.
+extensions = [&quot;core_functions&quot;, &quot;json&quot;, &quot;parquet&quot;]
+# `default_linked_extensions` matters: `build_package` bakes each extension&#39;s
+# &quot;is it linked&quot; flag into the *content* of the single shared
+# `generated_extension_loader_package_build.cpp` file as
+# `#ifndef DUCKDB_EXTENSION_X_LINKED / #define ... &lt;default&gt; / #endif`. For
+# `json`/`parquet` that fallback is 0 (off), and the `#ifndef` guard means our
+# own `-D DUCKDB_EXTENSION_X_LINKED` (added by `better-duck-sys/build.rs` only
+# when the matching Cargo feature is on) wins whenever it&#39;s present. This file
+# is compiled unconditionally as a &quot;base&quot; source, so json/parquet&#39;s behavior
+# must be controlled entirely by our own `-D` flags, not by whatever extension
+# set happened to be passed to `build_package` here.
+(source_list, include_list, _) = package_build.build_package(
+    str(target_dir), extensions, False, default_linked_extensions=[&quot;core_functions&quot;]
+)
+loader = duckdb_checkout / &quot;generated_extension_loader_package_build.cpp&quot;
+loader.unlink(missing_ok=True)
+
+sources = {normalize(s) for s in source_list}
+# `include_list` isn&#39;t run through the `folder_name` convention by
+# `build_package` itself (unlike `source_list`) even though the actual
+# header files live under `target_dir` just like the sources — prefix it
+# the same way by hand so `-I` dirs resolve consistently with `sources`.
+includes = {f&quot;duckdb/{i}&quot; for i in include_list}
+
+# A single `build_package` call (rather than one call per extension
+# combination) avoids each call clobbering the previous one&#39;s copy of the
+# shared loader file on disk. Split the one unified list back apart by each
+# extension&#39;s own source directory instead.
+json_sources = {s for s in sources if &quot;duckdb/extension/json/&quot; in s}
+parquet_sources = {s for s in sources if &quot;duckdb/extension/parquet/&quot; in s}
+base_sources = sources - json_sources - parquet_sources
+
+result = {
+    &quot;base_cpp_files&quot;: sorted(base_sources),
+    &quot;base_include_dirs&quot;: sorted(includes),
+    &quot;json_cpp_files&quot;: sorted(json_sources),
+    &quot;parquet_cpp_files&quot;: sorted(parquet_sources),
+}
+with output_json.open(&quot;w&quot;) as f:
+    json.dump(result, f, indent=2, sort_keys=True)
+&quot;#;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Embedded helper — kept as an external-process Python script (not
+reimplemented in Rust) so it can call DuckDB’s own
+<code>scripts/package_build.py</code> directly, exactly like <code>libduckdb-sys</code>’s own
+<code>update_sources.py</code> does. Only used by this xtask, at maintainer-upgrade
+time; never runs on a consumer’s machine.</p>
+</div></details></section></div></main></body></html>

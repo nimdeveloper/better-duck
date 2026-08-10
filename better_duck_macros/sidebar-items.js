@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"attr":["duckdb_scalar","duckdb_table_function"]};

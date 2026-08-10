@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["IsNull"],"mod":["binary","date_chrono","duckdb_types","list","numeric","serialize","varchar"],"struct":["Output"],"trait":["ToSql"]};
+window.SIDEBAR_ITEMS = {"enum":["IsNull"],"mod":["array","bignum","binary","bit","date_chrono","duck_struct","duckdb_types","list","map","numeric","serialize","union","uuid","varchar"],"struct":["Output"],"trait":["ToSql"]};
