@@ -9,6 +9,9 @@ on:
     # Run the security audit once a week even without a push.
     - cron: "0 6 * * 1"
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -245,6 +248,11 @@ jobs:
     runs-on: ubuntu-latest
     # Only block on push/PR — the weekly schedule run is advisory only.
     continue-on-error: ${{ github.event_name == 'schedule' }}
+    permissions:
+      contents: read
+      issues: write
+      checks: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
       - uses: rustsec/audit-check@v2

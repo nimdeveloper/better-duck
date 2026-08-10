@@ -5,14 +5,14 @@
 //! source is vendored directly in this crate (`vendor/duckdb.tar.gz`,
 //! compiled from source by `build.rs` on every build — there is no toggle for
 //! this, unlike upstream's `bundled` feature, since this crate exists
-//! specifically to own that source), and the FFI bindings
-//! ([`bindings`]) are pregenerated and checked in rather than produced by
+//! specifically to own that source), and the FFI `bindings`
+//! are pregenerated and checked in rather than produced by
 //! `bindgen` at consumer build time. See `xtask/src/main.rs` (workspace
 //! root) for the maintainer-only regeneration process.
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 #![allow(missing_docs, clippy::missing_safety_doc, clippy::undocumented_unsafe_blocks)]
-#[allow(rustdoc::private_intra_doc_links)]
-#[doc(hidden)]
+
+#[cfg(not(doc))]
 mod bindings;
 mod error;
 
