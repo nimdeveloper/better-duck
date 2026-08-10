@@ -2,11 +2,11 @@
 
 **A safe, embedded-first Rust client for [DuckDB](https://duckdb.org), with an optional [Diesel 2.3](https://diesel.rs) ORM backend.**
 
-[![CI](https://github.com/nimdeveloper/better-duck/actions/workflows/ci.yml/badge.svg)](https://github.com/nimdeveloper/better-duck/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/better-duck-core.svg)](https://crates.io/crates/better-duck-core)
-[![docs.rs](https://docs.rs/better-duck-core/badge.svg)](https://docs.rs/better-duck-core)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![MSRV: 1.96](https://img.shields.io/badge/rustc-1.96+-orange.svg)](#supported-platforms)
+[![CI](https://img.shields.io/github/actions/workflow/status/nimdeveloper/better-duck/ci.yml?branch=main&style=flat-square)](https://github.com/nimdeveloper/better-duck/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/better-duck-core.svg?style=flat-square)](https://crates.io/crates/better-duck-core)
+[![docs.rs](https://img.shields.io/docsrs/better-duck-core/latest?style=flat-square)](https://docs.rs/better-duck-core)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg?style=flat-square)](#license)
+[![MSRV: 1.96](https://img.shields.io/badge/rustc-1.96+-orange.svg?style=flat-square)](#supported-platforms)
 
 > [!WARNING]
 > **Beta** — the API is settling. Breaking changes before `1.0` are possible; check the [changelog](CHANGELOG.md) before upgrading.
@@ -27,10 +27,12 @@ Most Rust DuckDB bindings depend on Arrow or require a system-installed DuckDB l
 
 ## Crates
 
-| Crate | crates.io | Description |
-|---|---|---|
-| `better-duck-core` | [![crates.io](https://img.shields.io/crates/v/better-duck-core.svg)](https://crates.io/crates/better-duck-core) | Low-level DuckDB wrapper — connections, prepared statements, bulk appender, full type coverage |
-| `better-duck-diesel` | [![crates.io](https://img.shields.io/crates/v/better-duck-diesel.svg)](https://crates.io/crates/better-duck-diesel) | Diesel 2.3 backend — full query DSL, migrations, r2d2 connection pool |
+| Crate                | crates.io                                                                                                                               | Description                                                                                    |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `better-duck-core`   | [![crates.io](https://img.shields.io/crates/v/better-duck-core.svg?style=for-the-badge)](https://crates.io/crates/better-duck-core)     | Low-level DuckDB wrapper — connections, prepared statements, bulk appender, full type coverage |
+| `better-duck-diesel` | [![crates.io](https://img.shields.io/crates/v/better-duck-diesel.svg?style=for-the-badge)](https://crates.io/crates/better-duck-diesel) | Diesel 2.3 backend — full query DSL, migrations, r2d2 connection pool                          |
+| `better-duck-macros` | [![crates.io](https://img.shields.io/crates/v/better-duck-macros.svg?style=for-the-badge)](https://crates.io/crates/better-duck-macros) | Procedural macros for better-duck user-defined functions                                       |
+| `better-duck-sys`    | Internal                                                                                                                                | Vendored DuckDB C API bindings used by the workspace                                           |
 
 ---
 
@@ -211,33 +213,33 @@ match value {
 
 ### Supported DuckDB types
 
-| DuckDB type | Rust type |
-|---|---|
-| `BOOLEAN` | `bool` |
-| `TINYINT` / `UTINYINT` | `i8` / `u8` |
-| `SMALLINT` / `USMALLINT` | `i16` / `u16` |
-| `INTEGER` / `UINTEGER` | `i32` / `u32` |
-| `BIGINT` / `UBIGINT` | `i64` / `u64` |
-| `HUGEINT` / `UHUGEINT` | `i128` / `u128` |
-| `FLOAT` | `f32` |
-| `DOUBLE` | `f64` |
-| `DECIMAL` _(feature: decimal)_ | `rust_decimal::Decimal` |
-| `VARCHAR` / `TEXT` | `String` |
-| `BLOB` | `better_duck_core::types::blob::Blob` |
-| `DATE` | `chrono::NaiveDate` _(chrono)_ / `DuckDate` |
-| `TIME` | `chrono::NaiveTime` _(chrono)_ / `DuckTime` |
-| `TIMESTAMP` | `chrono::NaiveDateTime` _(chrono)_ |
-| `TIMESTAMPTZ` | `chrono::DateTime<Utc>` _(chrono)_ |
-| `TIME_TZ` | `date_chrono::TimeTz` _(chrono)_ / `DuckTimeTz` — UTC offset fully preserved |
-| `INTERVAL` | `chrono::Duration` _(chrono)_ / `std::time::Duration` |
-| `LIST` / `ARRAY` | `Vec<DuckValue>` / `Box<[DuckValue]>` |
-| `STRUCT` | `HashMap<String, DuckValue>` |
-| `MAP` | `HashMap<DuckValue, DuckValue>` |
-| `UNION` | `Box<DuckValue>` (active member; see roadmap for multi-arm write support) |
-| `ENUM` | `String` |
-| `UUID` | `better_duck_core::types::uuid::DuckUuid` |
-| `BIT` | `better_duck_core::types::bit::DuckBit` |
-| `BIGNUM` | `better_duck_core::types::bignum::DuckBignum` |
+| DuckDB type                    | Rust type                                                                    |
+| ------------------------------ | ---------------------------------------------------------------------------- |
+| `BOOLEAN`                      | `bool`                                                                       |
+| `TINYINT` / `UTINYINT`         | `i8` / `u8`                                                                  |
+| `SMALLINT` / `USMALLINT`       | `i16` / `u16`                                                                |
+| `INTEGER` / `UINTEGER`         | `i32` / `u32`                                                                |
+| `BIGINT` / `UBIGINT`           | `i64` / `u64`                                                                |
+| `HUGEINT` / `UHUGEINT`         | `i128` / `u128`                                                              |
+| `FLOAT`                        | `f32`                                                                        |
+| `DOUBLE`                       | `f64`                                                                        |
+| `DECIMAL` _(feature: decimal)_ | `rust_decimal::Decimal`                                                      |
+| `VARCHAR` / `TEXT`             | `String`                                                                     |
+| `BLOB`                         | `better_duck_core::types::blob::Blob`                                        |
+| `DATE`                         | `chrono::NaiveDate` _(chrono)_ / `DuckDate`                                  |
+| `TIME`                         | `chrono::NaiveTime` _(chrono)_ / `DuckTime`                                  |
+| `TIMESTAMP`                    | `chrono::NaiveDateTime` _(chrono)_                                           |
+| `TIMESTAMPTZ`                  | `chrono::DateTime<Utc>` _(chrono)_                                           |
+| `TIME_TZ`                      | `date_chrono::TimeTz` _(chrono)_ / `DuckTimeTz` — UTC offset fully preserved |
+| `INTERVAL`                     | `chrono::Duration` _(chrono)_ / `std::time::Duration`                        |
+| `LIST` / `ARRAY`               | `Vec<DuckValue>` / `Box<[DuckValue]>`                                        |
+| `STRUCT`                       | `HashMap<String, DuckValue>`                                                 |
+| `MAP`                          | `HashMap<DuckValue, DuckValue>`                                              |
+| `UNION`                        | `Box<DuckValue>` (active member; see roadmap for multi-arm write support)    |
+| `ENUM`                         | `String`                                                                     |
+| `UUID`                         | `better_duck_core::types::uuid::DuckUuid`                                    |
+| `BIT`                          | `better_duck_core::types::bit::DuckBit`                                      |
+| `BIGNUM`                       | `better_duck_core::types::bignum::DuckBignum`                                |
 
 ### User-defined functions _(feature: udf)_
 
@@ -439,45 +441,45 @@ diesel::table! {
 
 **Standard Diesel types** (work out of the box):
 
-| Diesel SQL type | DuckDB type | Rust type |
-|---|---|---|
-| `Bool` | `BOOLEAN` | `bool` |
-| `SmallInt` | `SMALLINT` | `i16` |
-| `Integer` | `INTEGER` | `i32` |
-| `BigInt` | `BIGINT` | `i64` |
-| `Float` | `FLOAT` | `f32` |
-| `Double` | `DOUBLE` | `f64` |
-| `Text` | `VARCHAR` | `String` |
-| `Binary` | `BLOB` | `Vec<u8>` |
-| `Date` | `DATE` | `chrono::NaiveDate` _(chrono)_ |
-| `Time` | `TIME` | `chrono::NaiveTime` _(chrono)_ |
-| `Timestamp` | `TIMESTAMP` | `chrono::NaiveDateTime` _(chrono)_ |
-| `Numeric` | `DECIMAL` | `rust_decimal::Decimal` _(decimal)_ |
+| Diesel SQL type | DuckDB type | Rust type                           |
+| --------------- | ----------- | ----------------------------------- |
+| `Bool`          | `BOOLEAN`   | `bool`                              |
+| `SmallInt`      | `SMALLINT`  | `i16`                               |
+| `Integer`       | `INTEGER`   | `i32`                               |
+| `BigInt`        | `BIGINT`    | `i64`                               |
+| `Float`         | `FLOAT`     | `f32`                               |
+| `Double`        | `DOUBLE`    | `f64`                               |
+| `Text`          | `VARCHAR`   | `String`                            |
+| `Binary`        | `BLOB`      | `Vec<u8>`                           |
+| `Date`          | `DATE`      | `chrono::NaiveDate` _(chrono)_      |
+| `Time`          | `TIME`      | `chrono::NaiveTime` _(chrono)_      |
+| `Timestamp`     | `TIMESTAMP` | `chrono::NaiveDateTime` _(chrono)_  |
+| `Numeric`       | `DECIMAL`   | `rust_decimal::Decimal` _(decimal)_ |
 
 **DuckDB-specific types** (import via `better_duck_diesel::sql_types::*`):
 
-| Diesel SQL type | DuckDB type | Rust type |
-|---|---|---|
-| `DuckTinyInt` | `TINYINT` | `i8` |
-| `DuckUTinyInt` | `UTINYINT` | `u8` |
-| `DuckUSmallInt` | `USMALLINT` | `u16` |
-| `DuckUInt` | `UINTEGER` | `u32` |
-| `DuckUBigInt` | `UBIGINT` | `u64` |
-| `DuckHugeInt` | `HUGEINT` | `i128` |
-| `DuckUHugeInt` | `UHUGEINT` | `u128` |
-| `DuckTimestamptz` | `TIMESTAMPTZ` | `chrono::DateTime<Utc>` _(chrono)_ |
-| `DuckInterval` | `INTERVAL` | `chrono::Duration` _(chrono)_ |
-| `DuckTimeTz` | `TIME WITH TIME ZONE` | `CoreTimeTz` _(chrono)_ |
-| `DuckTimeNs` | `TIME_NS` | `chrono::NaiveTime` _(chrono)_ |
-| `DuckEnum` | `ENUM` | `String` |
-| `DuckList` | `LIST` | `Vec<DuckValue>` |
-| `DuckArray` | `ARRAY` | `Vec<DuckValue>` |
-| `DuckStruct` | `STRUCT` | `HashMap<String, DuckValue>` |
-| `DuckMap` | `MAP` | `HashMap<DuckValue, DuckValue>` |
-| `DuckUnion` | `UNION` | `Box<DuckValue>` (active member) |
-| `DuckUuid` | `UUID` | `better_duck_core::types::uuid::DuckUuid` |
-| `DuckBit` | `BIT` | `better_duck_core::types::bit::DuckBit` |
-| `DuckBignum` | `BIGNUM` | `better_duck_core::types::bignum::DuckBignum` |
+| Diesel SQL type   | DuckDB type           | Rust type                                     |
+| ----------------- | --------------------- | --------------------------------------------- |
+| `DuckTinyInt`     | `TINYINT`             | `i8`                                          |
+| `DuckUTinyInt`    | `UTINYINT`            | `u8`                                          |
+| `DuckUSmallInt`   | `USMALLINT`           | `u16`                                         |
+| `DuckUInt`        | `UINTEGER`            | `u32`                                         |
+| `DuckUBigInt`     | `UBIGINT`             | `u64`                                         |
+| `DuckHugeInt`     | `HUGEINT`             | `i128`                                        |
+| `DuckUHugeInt`    | `UHUGEINT`            | `u128`                                        |
+| `DuckTimestamptz` | `TIMESTAMPTZ`         | `chrono::DateTime<Utc>` _(chrono)_            |
+| `DuckInterval`    | `INTERVAL`            | `chrono::Duration` _(chrono)_                 |
+| `DuckTimeTz`      | `TIME WITH TIME ZONE` | `CoreTimeTz` _(chrono)_                       |
+| `DuckTimeNs`      | `TIME_NS`             | `chrono::NaiveTime` _(chrono)_                |
+| `DuckEnum`        | `ENUM`                | `String`                                      |
+| `DuckList`        | `LIST`                | `Vec<DuckValue>`                              |
+| `DuckArray`       | `ARRAY`               | `Vec<DuckValue>`                              |
+| `DuckStruct`      | `STRUCT`              | `HashMap<String, DuckValue>`                  |
+| `DuckMap`         | `MAP`                 | `HashMap<DuckValue, DuckValue>`               |
+| `DuckUnion`       | `UNION`               | `Box<DuckValue>` (active member)              |
+| `DuckUuid`        | `UUID`                | `better_duck_core::types::uuid::DuckUuid`     |
+| `DuckBit`         | `BIT`                 | `better_duck_core::types::bit::DuckBit`       |
+| `DuckBignum`      | `BIGNUM`              | `better_duck_core::types::bignum::DuckBignum` |
 
 > [!NOTE]
 > Date/time types work either way: with the `chrono` feature they map to `chrono` types; without it, they map to `better_duck_core::types::date_native`'s plain structs and `std::time` types. Only one set is compiled at a time.
@@ -488,26 +490,26 @@ diesel::table! {
 
 ### `better-duck-core`
 
-| Feature | Default | Description |
-|---|---|---|
-| `bundled` | ✓ | Compile and embed the DuckDB C library (no system install needed) |
-| `chrono` | ✓ | `chrono` date/time conversions for DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL |
-| `decimal` | ✓ | `rust_decimal::Decimal` support for DECIMAL columns |
-| `json` | — | Enable DuckDB's JSON extension (requires `bundled`) |
-| `parquet` | — | Enable DuckDB's Parquet extension (requires `bundled`) |
-| `buildtime_bindgen` | — | Regenerate FFI bindings at build time (requires LLVM/clang) |
-| `async` | — | Tokio-based async facade (`AsyncConnection`, `AsyncDatabase`) over `spawn_blocking` |
-| `pool` | — | `r2d2` connection pool backed by a shared `Database` handle |
-| `udf` | — | `#[duckdb_scalar]` / `#[duckdb_table_function]` user-defined functions |
+| Feature             | Default | Description                                                                         |
+| ------------------- | ------- | ----------------------------------------------------------------------------------- |
+| `bundled`           | ✓       | Compile and embed the DuckDB C library (no system install needed)                   |
+| `chrono`            | ✓       | `chrono` date/time conversions for DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL     |
+| `decimal`           | ✓       | `rust_decimal::Decimal` support for DECIMAL columns                                 |
+| `json`              | —       | Enable DuckDB's JSON extension (requires `bundled`)                                 |
+| `parquet`           | —       | Enable DuckDB's Parquet extension (requires `bundled`)                              |
+| `buildtime_bindgen` | —       | Regenerate FFI bindings at build time (requires LLVM/clang)                         |
+| `async`             | —       | Tokio-based async facade (`AsyncConnection`, `AsyncDatabase`) over `spawn_blocking` |
+| `pool`              | —       | `r2d2` connection pool backed by a shared `Database` handle                         |
+| `udf`               | —       | `#[duckdb_scalar]` / `#[duckdb_table_function]` user-defined functions              |
 
 ### `better-duck-diesel`
 
-| Feature | Default | Description |
-|---|---|---|
-| `bundled` | ✓ | Forwards to `better-duck-core/bundled` |
-| `decimal` | ✓ | Diesel `Numeric` ↔ `rust_decimal::Decimal` |
-| `chrono` | — | Diesel date/time impls for DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL, TIME_TZ, TIME_NS |
-| `r2d2` | — | r2d2 connection pool support via `diesel::r2d2` |
+| Feature   | Default | Description                                                                               |
+| --------- | ------- | ----------------------------------------------------------------------------------------- |
+| `bundled` | ✓       | Forwards to `better-duck-core/bundled`                                                    |
+| `decimal` | ✓       | Diesel `Numeric` ↔ `rust_decimal::Decimal`                                                |
+| `chrono`  | —       | Diesel date/time impls for DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL, TIME_TZ, TIME_NS |
+| `r2d2`    | —       | r2d2 connection pool support via `diesel::r2d2`                                           |
 
 ---
 
@@ -531,13 +533,13 @@ Results are written to [`docs/benchmarks/`](docs/benchmarks/): `REPORT.md` (full
 **Sample results** (Operations group; see [`REPORT.md`](docs/benchmarks/REPORT.md) for the full
 primitive- and composite-type tables):
 
-| Workload | `better-duck-core` | `duckdb` crate |
-|---|---|---|
-| CRUD basics (4 ops) | 4.73 ms / 846 ops/s | 4.59 ms / 871 ops/s |
-| Bulk ingest — 10k rows (appender) | 31.94 ms / 313.1 k rows/s | 38.55 ms / 259.4 k rows/s |
-| Analytical GROUP BY — 100k rows | 4.19 ms / 23.9 M rows/s | 4.24 ms / 23.6 M rows/s |
-| Prepared reuse — 100 queries | 75.72 ms / 1.3 k queries/s | 68.16 ms / 1.5 k queries/s |
-| All-types scan — 1k rows, 11 cols | 32.91 ms / 30.4 k rows/s | 27.46 ms / 36.4 k rows/s |
+| Workload                          | `better-duck-core`         | `duckdb` crate             |
+| --------------------------------- | -------------------------- | -------------------------- |
+| CRUD basics (4 ops)               | 4.73 ms / 846 ops/s        | 4.59 ms / 871 ops/s        |
+| Bulk ingest — 10k rows (appender) | 31.94 ms / 313.1 k rows/s  | 38.55 ms / 259.4 k rows/s  |
+| Analytical GROUP BY — 100k rows   | 4.19 ms / 23.9 M rows/s    | 4.24 ms / 23.6 M rows/s    |
+| Prepared reuse — 100 queries      | 75.72 ms / 1.3 k queries/s | 68.16 ms / 1.5 k queries/s |
+| All-types scan — 1k rows, 11 cols | 32.91 ms / 30.4 k rows/s   | 27.46 ms / 36.4 k rows/s   |
 
 ![Operations — median latency](docs/benchmarks/comparison-operations-latency.svg)
 ![Operations — throughput](docs/benchmarks/comparison-operations-throughput.svg)
@@ -549,27 +551,27 @@ single run is what's meaningful, not absolute milliseconds across runs.
 
 ## Migrating from the community `duckdb` crate
 
-| Operation | `duckdb` crate | `better-duck-core` |
-|---|---|---|
-| Open in-memory | `Connection::open_in_memory()?` | `Connection::open_in_memory()?` |
-| Execute DDL | `conn.execute_batch(sql)?` | `conn.execute_batch(sql)?` |
-| Insert / DML | `conn.execute(sql, [])?` | `conn.execute(sql)?.changes()` |
-| SELECT rows | `conn.prepare(sql)?.query([])` | `conn.execute(sql)?` (is an `Iterator`) |
-| Parameterized | `conn.execute(sql, params![v])?` | `conn.execute_with(sql, &mut [&mut v])?` |
-| Bulk insert | `conn.appender(table)?` | `conn.appender(table, schema)?` |
+| Operation      | `duckdb` crate                   | `better-duck-core`                       |
+| -------------- | -------------------------------- | ---------------------------------------- |
+| Open in-memory | `Connection::open_in_memory()?`  | `Connection::open_in_memory()?`          |
+| Execute DDL    | `conn.execute_batch(sql)?`       | `conn.execute_batch(sql)?`               |
+| Insert / DML   | `conn.execute(sql, [])?`         | `conn.execute(sql)?.changes()`           |
+| SELECT rows    | `conn.prepare(sql)?.query([])`   | `conn.execute(sql)?` (is an `Iterator`)  |
+| Parameterized  | `conn.execute(sql, params![v])?` | `conn.execute_with(sql, &mut [&mut v])?` |
+| Bulk insert    | `conn.appender(table)?`          | `conn.appender(table, schema)?`          |
 
 ---
 
 ## Supported platforms
 
-| Platform | Status |
-|---|---|
-| Linux x86_64 | ✓ CI-tested |
-| macOS Apple Silicon (aarch64) | ✓ CI-tested |
-| macOS x86_64 | ✓ CI-tested |
-| Windows x86_64 | ✓ CI-tested |
-| iOS aarch64 | ✓ CI cross-build |
-| iOS Simulator x86_64 | ✓ CI cross-build |
+| Platform                      | Status           |
+| ----------------------------- | ---------------- |
+| Linux x86_64                  | ✓ CI-tested      |
+| macOS Apple Silicon (aarch64) | ✓ CI-tested      |
+| macOS x86_64                  | ✓ CI-tested      |
+| Windows x86_64                | ✓ CI-tested      |
+| iOS aarch64                   | ✓ CI cross-build |
+| iOS Simulator x86_64          | ✓ CI cross-build |
 
 ---
 

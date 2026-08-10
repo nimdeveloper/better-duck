@@ -1,7 +1,7 @@
 //! Function-signature validation and type introspection shared by
 //! `#[duckdb_scalar]` and `#[duckdb_table_function]`.
 
-use syn::{FnArg, GenericArgument, ItemFn, Pat, PathArguments, Type};
+use syn::{FnArg, GenericArgument, ItemFn, Pat, PathArguments, Safety, Type};
 
 /// One parameter of a user-annotated function.
 pub(crate) struct Param {
@@ -27,7 +27,7 @@ pub(crate) fn validate_shape(item: &ItemFn) -> syn::Result<()> {
     if let Some(asyncness) = &item.sig.asyncness {
         return Err(syn::Error::new_spanned(asyncness, "DuckDB UDFs cannot be `async`"));
     }
-    if let Some(unsafety) = &item.sig.unsafety {
+    if let Safety::Unsafe(unsafety) = &item.sig.safety {
         return Err(syn::Error::new_spanned(unsafety, "DuckDB UDFs must be a safe Rust `fn`"));
     }
     if let Some(abi) = &item.sig.abi {
