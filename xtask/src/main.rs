@@ -235,6 +235,11 @@ fn generate_bindings(
     dest: &Path,
 ) -> Result<()> {
     let bindings = bindgen::Builder::default()
+        .generate_comments(true)
+        .raw_line("#![allow(rustdoc::invalid_html_tags)]")
+        .raw_line("#![allow(rustdoc::broken_intra_doc_links)]")
+        .raw_line("#![allow(rustdoc::invalid_rust_codeblocks)]")
+        .raw_line("#![allow(rustdoc::bare_urls)]")
         .header(header.to_string_lossy().to_string())
         .allowlist_function("duckdb_.*")
         .allowlist_type("duckdb_.*")
