@@ -68,9 +68,14 @@ pub fn result_from_duckdb_appender(
     if code == DuckDBSuccess {
         return Ok(());
     }
-    // SAFETY: `appender` is a valid non-null `*mut duckdb_appender`; the appender
-    // may be null internally if creation failed, which we check via `(*appender).is_null()`.
-    // On failure we extract the error string and destroy the appender.
+
+    if appender.is_null() {
+        return error_from_duckdb_code(code, Some("appender pointer is null".to_string()));
+    }
+
+    // SAFETY: `appender` is non-null (checked above). The appender handle stored in
+    // `*appender` may still be null if creation failed, which we check before use.
+    // On failure with a non-null handle we extract the error string and destroy it.
     unsafe {
         let message = if (*appender).is_null() {
             Some("appender is null".to_string())
