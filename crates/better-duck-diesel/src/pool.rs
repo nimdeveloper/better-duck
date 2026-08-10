@@ -5,7 +5,7 @@
 //! Diesel's own generic `diesel::r2d2::ConnectionManager<DuckDbConnection>` opens
 //! a fresh `duckdb_open_ext` per pooled connection — for a `:memory:` pool, that
 //! means every connection gets its own independent, empty database. This manager
-//! instead shares one [`Database`], so an in-memory pool observes one consistent
+//! instead shares one [`better_duck_core::database::Database`], so an in-memory pool observes one consistent
 //! database. Both managers may be used side by side; neither is exclusive.
 
 use std::path::Path;
