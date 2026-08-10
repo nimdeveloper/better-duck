@@ -2,11 +2,12 @@
 
 **A safe, embedded-first Rust client for [DuckDB](https://duckdb.org), with an optional [Diesel 2.3](https://diesel.rs) ORM backend.**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/nimdeveloper/better-duck/ci.yml?branch=main&style=flat-square)](https://github.com/nimdeveloper/better-duck/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/nimdeveloper/better-duck/ci.yml?branch=main&style=flat-square&label=ci&logo=github)](https://github.com/nimdeveloper/better-duck/actions/workflows/ci.yml)
+[![codecov](https://img.shields.io/codecov/c/github/nimdeveloper/better-duck?logo=codecov&label=codecov&style=flat-square)](https://codecov.io/gh/nimdeveloper/better-duck)
 [![crates.io](https://img.shields.io/crates/v/better-duck-core.svg?style=flat-square)](https://crates.io/crates/better-duck-core)
-[![docs.rs](https://img.shields.io/docsrs/better-duck-core/latest?style=flat-square)](https://docs.rs/better-duck-core)
+[![docs.rs](https://img.shields.io/docsrs/better-duck-core/latest?style=flat-square&logo=docsdotrs)](https://docs.rs/better-duck-core)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg?style=flat-square)](#license)
-[![MSRV: 1.96](https://img.shields.io/badge/rustc-1.96+-orange.svg?style=flat-square)](#supported-platforms)
+[![MSRV: 1.96](https://img.shields.io/badge/rustc-1.96+-orange.svg?style=flat-square&logo=rust&label=MSRV)](#supported-platforms)
 
 > [!WARNING]
 > **Beta** — the API is settling. Breaking changes before `1.0` are possible; check the [changelog](CHANGELOG.md) before upgrading.

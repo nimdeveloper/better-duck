@@ -12,7 +12,6 @@
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 #![allow(missing_docs, clippy::missing_safety_doc, clippy::undocumented_unsafe_blocks)]
 #[allow(rustdoc::private_intra_doc_links)]
-
 #[doc(hidden)]
 mod bindings;
 mod error;
