@@ -92,11 +92,11 @@ cargo test -p better-duck-diesel --features chrono
 cargo test -p better-duck-macros --lib
 
 # Generate merged coverage for testable crates only; doctests are not invoked.
-cargo llvm-cov --no-report -p better-duck-core --tests --features "chrono,decimal,async,pool,udf"
-cargo llvm-cov --no-report -p better-duck-core --tests --no-default-features
-cargo llvm-cov --no-report -p better-duck-diesel --tests --all-features
-cargo llvm-cov --no-report -p better-duck-macros --lib
-cargo llvm-cov report --lcov --output-path lcov.info --exclude-from-report better-duck-sys --exclude-from-report xtask
+cargo llvm-cov --no-report -p better-duck-core --tests --features "chrono,decimal,async,pool,udf" --exclude-from-report better-duck-sys --exclude-from-report xtask
+cargo llvm-cov --no-report -p better-duck-core --tests --no-default-features --exclude-from-report better-duck-sys --exclude-from-report xtask
+cargo llvm-cov --no-report -p better-duck-diesel --tests --all-features --exclude-from-report better-duck-sys --exclude-from-report xtask
+cargo llvm-cov --no-report -p better-duck-macros --lib --exclude-from-report better-duck-sys --exclude-from-report xtask
+cargo llvm-cov report --lcov --output-path lcov.info
 
 # Build docs (doc warnings are errors in CI)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --features "chrono,decimal"
