@@ -1,0 +1,3 @@
+ignore:
+  - "xtask"
+  - "crates/better-duck-sys"

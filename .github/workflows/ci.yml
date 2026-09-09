@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# Avoid spending cache/storage and runner time on superseded branch/PR runs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -26,6 +31,11 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Formatting does not compile; restore registry/tool caches but do not
+          # upload a redundant target cache from this short-lived job.
+          cache-targets: false
+          save-if: false
       - name: Check formatting
         run: cargo fmt --check
 
@@ -39,6 +49,9 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-stable-full
+          cache-on-failure: true
       - name: Run Clippy
         # --workspace is required, and r2d2 (a better-duck-diesel-only feature) must
         # use pkg/feature syntax: cargo validates an unqualified --features list
@@ -54,6 +67,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-stable-full
+          cache-on-failure: true
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
@@ -67,6 +83,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-stable-full
+          cache-on-failure: true
       - name: Run tests
         # Scoped per-package, not `--workspace`: better-duck-core defaults to
         # chrono=on, better-duck-diesel defaults to chrono=off. A `--workspace`
@@ -92,6 +111,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-stable-full
+          cache-on-failure: true
       - name: Run tests with chrono feature
         run: cargo test -p better-duck-diesel --features chrono --verbose
 
@@ -103,6 +125,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-stable-full
+          cache-on-failure: true
       - name: Run doctests
         run: cargo test --workspace --doc --features "chrono,decimal,async,pool,udf"
 
@@ -114,6 +139,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-stable-tests
+          cache-on-failure: true
       - name: Run tests
         # Scoped per-package — see the comment on the Linux job for why. The udf
         # feature is exercised here specifically because MSVC's `duckdb_string_t`
@@ -131,6 +159,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-stable-tests-ios
+          cache-on-failure: true
       - name: Run tests on macOS
         # Scoped per-package — see the comment on the Linux job for why.
         run: |
@@ -225,7 +256,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          # All stable Linux matrix entries share the expensive vendored DuckDB build;
+          # the feature name remains a secondary key for exact-match preference.
+          shared-key: linux-stable-features
           key: ${{ matrix.name }}
+          cache-on-failure: true
       - name: Check / test ${{ matrix.name }}
         run: cargo ${{ matrix.cmd || 'test' }} -p ${{ matrix.package }} ${{ matrix.args }}
 
@@ -238,7 +273,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.96
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: linux-msrv-1.96
           key: msrv-1.96
+          cache-on-failure: true
       - name: Check workspace compiles on MSRV
         run: cargo check --workspace --features "chrono,decimal,async,pool,udf"
 
@@ -272,6 +309,12 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Instrumented objects are incompatible with ordinary test/clippy outputs.
+          shared-key: linux-stable-llvm-cov
+          cache-on-failure: true
+          cache-directories: |
+            ~/.cargo/bin
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
       - name: Generate coverage report
