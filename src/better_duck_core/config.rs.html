@@ -360,5 +360,20 @@
 <a href=#360 id=360 data-nosnippet>360</a>        </span><span class="kw">let </span>config = Config::default().enable_autoload_extension(<span class="bool-val">true</span>).unwrap();
 <a href=#361 id=361 data-nosnippet>361</a>        drop(config);
 <a href=#362 id=362 data-nosnippet>362</a>    }
-<a href=#363 id=363 data-nosnippet>363</a>}
+<a href=#363 id=363 data-nosnippet>363</a>
+<a href=#364 id=364 data-nosnippet>364</a>    <span class="attr">#[test]
+<a href=#365 id=365 data-nosnippet>365</a>    </span><span class="kw">fn </span>test_rejects_interior_nul_in_key_or_value() {
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="kw">let </span>key_error = Config::default().with(<span class="string">"bad\0key"</span>, <span class="string">"value"</span>).err().unwrap();
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(key_error, Error::NulError(<span class="kw">_</span>)));
+<a href=#368 id=368 data-nosnippet>368</a>
+<a href=#369 id=369 data-nosnippet>369</a>        <span class="kw">let </span>value_error = Config::default().with(<span class="string">"threads"</span>, <span class="string">"1\0extra"</span>).err().unwrap();
+<a href=#370 id=370 data-nosnippet>370</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(value_error, Error::NulError(<span class="kw">_</span>)));
+<a href=#371 id=371 data-nosnippet>371</a>    }
+<a href=#372 id=372 data-nosnippet>372</a>
+<a href=#373 id=373 data-nosnippet>373</a>    <span class="attr">#[test]
+<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="kw">fn </span>config_is_send() {
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">fn </span>assert_send&lt;T: Send&gt;() {}
+<a href=#376 id=376 data-nosnippet>376</a>        assert_send::&lt;Config&gt;();
+<a href=#377 id=377 data-nosnippet>377</a>    }
+<a href=#378 id=378 data-nosnippet>378</a>}
 </code></pre></div></section></main></body></html>

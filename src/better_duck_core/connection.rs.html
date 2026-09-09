@@ -284,5 +284,44 @@
 <a href=#284 id=284 data-nosnippet>284</a>        <span class="macro">assert!</span>(exec.is_ok(), <span class="string">"{}"</span>, exec.unwrap_err());
 <a href=#285 id=285 data-nosnippet>285</a>        conn.close().unwrap();
 <a href=#286 id=286 data-nosnippet>286</a>    }
-<a href=#287 id=287 data-nosnippet>287</a>}
+<a href=#287 id=287 data-nosnippet>287</a>
+<a href=#288 id=288 data-nosnippet>288</a>    <span class="attr">#[test]
+<a href=#289 id=289 data-nosnippet>289</a>    </span><span class="kw">fn </span>close_is_idempotent() {
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">let </span><span class="kw-2">mut </span>conn = Connection::open_in_memory().unwrap();
+<a href=#291 id=291 data-nosnippet>291</a>        conn.close().unwrap();
+<a href=#292 id=292 data-nosnippet>292</a>        conn.close().unwrap();
+<a href=#293 id=293 data-nosnippet>293</a>        <span class="macro">assert!</span>(!conn.is_open());
+<a href=#294 id=294 data-nosnippet>294</a>    }
+<a href=#295 id=295 data-nosnippet>295</a>
+<a href=#296 id=296 data-nosnippet>296</a>    <span class="attr">#[test]
+<a href=#297 id=297 data-nosnippet>297</a>    </span><span class="kw">fn </span>execute_with_binds_values_and_reports_changes() {
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">let </span><span class="kw-2">mut </span>conn = Connection::open_in_memory().unwrap();
+<a href=#299 id=299 data-nosnippet>299</a>        conn.execute_batch(<span class="string">"CREATE TABLE test (id INTEGER, name VARCHAR)"</span>).unwrap();
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span><span class="kw-2">mut </span>id = <span class="number">7_i32</span>;
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">let </span><span class="kw-2">mut </span>name = String::from(<span class="string">"bound"</span>);
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span><span class="kw-2">mut </span>result = conn
+<a href=#303 id=303 data-nosnippet>303</a>            .execute_with(<span class="string">"INSERT INTO test VALUES ($1, $2)"</span>, <span class="kw-2">&amp;mut </span>[<span class="kw-2">&amp;mut </span>id, <span class="kw-2">&amp;mut </span>name])
+<a href=#304 id=304 data-nosnippet>304</a>            .unwrap();
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="macro">assert_eq!</span>(result.changes(), <span class="number">1</span>);
+<a href=#306 id=306 data-nosnippet>306</a>
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span><span class="kw-2">mut </span>rows = conn.execute(<span class="string">"SELECT id, name FROM test"</span>).unwrap();
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">let </span>row = rows.next().unwrap().unwrap();
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="macro">assert_eq!</span>(row.get(<span class="string">"id"</span>).unwrap(), <span class="kw-2">&amp;</span><span class="kw">crate</span>::types::value::DuckValue::Int(<span class="number">7</span>));
+<a href=#310 id=310 data-nosnippet>310</a>        <span class="macro">assert_eq!</span>(
+<a href=#311 id=311 data-nosnippet>311</a>            row.get(<span class="string">"name"</span>).unwrap(),
+<a href=#312 id=312 data-nosnippet>312</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::types::value::DuckValue::Text(<span class="string">"bound"</span>.to_owned())
+<a href=#313 id=313 data-nosnippet>313</a>        );
+<a href=#314 id=314 data-nosnippet>314</a>    }
+<a href=#315 id=315 data-nosnippet>315</a>
+<a href=#316 id=316 data-nosnippet>316</a>    <span class="attr">#[test]
+<a href=#317 id=317 data-nosnippet>317</a>    </span><span class="kw">fn </span>nul_sql_and_missing_appender_table_return_errors() {
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">let </span><span class="kw-2">mut </span>conn = Connection::open_in_memory().unwrap();
+<a href=#319 id=319 data-nosnippet>319</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#320 id=320 data-nosnippet>320</a>            conn.execute_batch(<span class="string">"SELECT 1;\0SELECT 2"</span>),
+<a href=#321 id=321 data-nosnippet>321</a>            <span class="prelude-val">Err</span>(<span class="kw">crate</span>::error::Error::NulError(<span class="kw">_</span>))
+<a href=#322 id=322 data-nosnippet>322</a>        ));
+<a href=#323 id=323 data-nosnippet>323</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(conn.execute(<span class="string">"SELECT '\0'"</span>), <span class="prelude-val">Err</span>(<span class="kw">crate</span>::error::Error::NulError(<span class="kw">_</span>))));
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="macro">assert!</span>(conn.appender(<span class="string">"missing_table"</span>, <span class="string">"main"</span>).is_err());
+<a href=#325 id=325 data-nosnippet>325</a>    }
+<a href=#326 id=326 data-nosnippet>326</a>}
 </code></pre></div></section></main></body></html>

@@ -188,5 +188,23 @@
 <a href=#188 id=188 data-nosnippet>188</a>        <span class="comment">// SAFETY: `duck_value` was created by `to_duck` above.
 <a href=#189 id=189 data-nosnippet>189</a>        </span><span class="kw">unsafe </span>{ duckdb_destroy_value(<span class="kw-2">&amp;mut </span>duck_value) };
 <a href=#190 id=190 data-nosnippet>190</a>    }
-<a href=#191 id=191 data-nosnippet>191</a>}
+<a href=#191 id=191 data-nosnippet>191</a>
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="attr">#[test]
+<a href=#193 id=193 data-nosnippet>193</a>    </span><span class="kw">fn </span>constructor_and_duck_value_conversion_preserve_components() {
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">let </span>value = DuckBignum::new(<span class="macro">vec!</span>[<span class="number">0x34</span>, <span class="number">0x12</span>], <span class="bool-val">true</span>);
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="macro">assert_eq!</span>(value.magnitude, <span class="macro">vec!</span>[<span class="number">0x34</span>, <span class="number">0x12</span>]);
+<a href=#196 id=196 data-nosnippet>196</a>        <span class="macro">assert!</span>(value.is_negative);
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="macro">assert_eq!</span>(value::DuckValue::from(value.clone()), value::DuckValue::Bignum(value));
+<a href=#198 id=198 data-nosnippet>198</a>    }
+<a href=#199 id=199 data-nosnippet>199</a>
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="attr">#[test]
+<a href=#201 id=201 data-nosnippet>201</a>    </span><span class="kw">fn </span>logical_type_is_bignum() {
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">use </span><span class="kw">crate</span>::ffi::{duckdb_destroy_logical_type, duckdb_get_type_id};
+<a href=#203 id=203 data-nosnippet>203</a>        <span class="kw">let </span><span class="kw-2">mut </span>logical_type = DuckBignum::duck_logical_type().unwrap();
+<a href=#204 id=204 data-nosnippet>204</a>        <span class="comment">// SAFETY: `logical_type` is a live handle created by `duck_logical_type`.
+<a href=#205 id=205 data-nosnippet>205</a>        </span><span class="macro">assert_eq!</span>(<span class="kw">unsafe </span>{ duckdb_get_type_id(logical_type) }, DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM);
+<a href=#206 id=206 data-nosnippet>206</a>        <span class="comment">// SAFETY: `logical_type` is owned by this test and destroyed exactly once.
+<a href=#207 id=207 data-nosnippet>207</a>        </span><span class="kw">unsafe </span>{ duckdb_destroy_logical_type(<span class="kw-2">&amp;mut </span>logical_type) };
+<a href=#208 id=208 data-nosnippet>208</a>    }
+<a href=#209 id=209 data-nosnippet>209</a>}
 </code></pre></div></section></main></body></html>

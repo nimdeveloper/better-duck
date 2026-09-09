@@ -103,4 +103,51 @@
 <a href=#103 id=103 data-nosnippet>103</a>        String::duck_logical_type()
 <a href=#104 id=104 data-nosnippet>104</a>    }
 <a href=#105 id=105 data-nosnippet>105</a>}
+<a href=#106 id=106 data-nosnippet>106</a>
+<a href=#107 id=107 data-nosnippet>107</a><span class="attr">#[cfg(test)]
+<a href=#108 id=108 data-nosnippet>108</a>#[allow(clippy::undocumented_unsafe_blocks)]
+<a href=#109 id=109 data-nosnippet>109</a></span><span class="kw">mod </span>tests {
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">use </span><span class="kw">crate</span>::ffi::{
+<a href=#112 id=112 data-nosnippet>112</a>        duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_get_type_id,
+<a href=#113 id=113 data-nosnippet>113</a>        DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
+<a href=#114 id=114 data-nosnippet>114</a>    };
+<a href=#115 id=115 data-nosnippet>115</a>
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="attr">#[test]
+<a href=#117 id=117 data-nosnippet>117</a>    </span><span class="kw">fn </span>string_roundtrip_preserves_empty_unicode_and_multibyte_text() {
+<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">for </span>text <span class="kw">in </span>[<span class="string">""</span>, <span class="string">"hello"</span>, <span class="string">"Καλημέρα"</span>, <span class="string">"duck 🦆"</span>] {
+<a href=#119 id=119 data-nosnippet>119</a>            <span class="kw">let </span>value = text.to_owned();
+<a href=#120 id=120 data-nosnippet>120</a>            <span class="kw">let </span><span class="kw-2">mut </span>duck_value = value.to_duck().unwrap();
+<a href=#121 id=121 data-nosnippet>121</a>            <span class="macro">assert_eq!</span>(String::from_duck(duck_value).unwrap(), value);
+<a href=#122 id=122 data-nosnippet>122</a>            <span class="kw">unsafe </span>{ duckdb_destroy_value(<span class="kw-2">&amp;mut </span>duck_value) };
+<a href=#123 id=123 data-nosnippet>123</a>        }
+<a href=#124 id=124 data-nosnippet>124</a>    }
+<a href=#125 id=125 data-nosnippet>125</a>
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="attr">#[test]
+<a href=#127 id=127 data-nosnippet>127</a>    </span><span class="kw">fn </span>interior_nul_is_a_conversion_error() {
+<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">let </span>err = <span class="string">"before\0after"</span>.to_owned().to_duck().unwrap_err();
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="macro">assert!</span>(
+<a href=#130 id=130 data-nosnippet>130</a>            <span class="macro">matches!</span>(err, DuckDBConversionError::ConversionError(message) <span class="kw">if </span>message.contains(<span class="string">"nul byte"</span>))
+<a href=#131 id=131 data-nosnippet>131</a>        );
+<a href=#132 id=132 data-nosnippet>132</a>    }
+<a href=#133 id=133 data-nosnippet>133</a>
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="attr">#[test]
+<a href=#135 id=135 data-nosnippet>135</a>    </span><span class="kw">fn </span>borrowed_and_owned_strings_report_varchar_logical_type() {
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">for </span><span class="kw-2">mut </span>logical_type <span class="kw">in
+<a href=#137 id=137 data-nosnippet>137</a>            </span>[String::duck_logical_type().unwrap(), &lt;<span class="kw-2">&amp;</span>str&gt;::duck_logical_type().unwrap()]
+<a href=#138 id=138 data-nosnippet>138</a>        {
+<a href=#139 id=139 data-nosnippet>139</a>            <span class="macro">assert_eq!</span>(
+<a href=#140 id=140 data-nosnippet>140</a>                <span class="kw">unsafe </span>{ duckdb_get_type_id(logical_type) },
+<a href=#141 id=141 data-nosnippet>141</a>                DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR
+<a href=#142 id=142 data-nosnippet>142</a>            );
+<a href=#143 id=143 data-nosnippet>143</a>            <span class="kw">unsafe </span>{ duckdb_destroy_logical_type(<span class="kw-2">&amp;mut </span>logical_type) };
+<a href=#144 id=144 data-nosnippet>144</a>        }
+<a href=#145 id=145 data-nosnippet>145</a>    }
+<a href=#146 id=146 data-nosnippet>146</a>
+<a href=#147 id=147 data-nosnippet>147</a>    <span class="attr">#[test]
+<a href=#148 id=148 data-nosnippet>148</a>    </span><span class="kw">fn </span>string_conversions_create_text_values() {
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="macro">assert_eq!</span>(DuckValue::from(<span class="string">"borrowed"</span>), DuckValue::Text(<span class="string">"borrowed"</span>.to_owned()));
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="macro">assert_eq!</span>(DuckValue::from(<span class="string">"owned"</span>.to_owned()), DuckValue::Text(<span class="string">"owned"</span>.to_owned()));
+<a href=#151 id=151 data-nosnippet>151</a>    }
+<a href=#152 id=152 data-nosnippet>152</a>}
 </code></pre></div></section></main></body></html>
