@@ -226,8 +226,8 @@ impl DuckDialect<duckdb_timestamp> for TimestampTz {
     fn from_duck(value: duckdb_timestamp) -> Result<Self, DuckDBConversionError> {
         // TIMESTAMP_TZ shares the same wire format as TIMESTAMP (UTC microseconds since epoch).
         let micros = value.micros;
-        let secs = micros / 1_000_000;
-        let sub_nanos = ((micros % 1_000_000).unsigned_abs() * 1_000) as u32;
+        let secs = micros.div_euclid(1_000_000);
+        let sub_nanos = (micros.rem_euclid(1_000_000) * 1_000) as u32;
         DateTime::<Utc>::from_timestamp(secs, sub_nanos).map(TimestampTz).ok_or_else(|| {
             DuckDBConversionError::ConversionError(format!("timestamp_tz {micros}µs out of range"))
         })
@@ -305,8 +305,11 @@ pub struct TimeNs(pub NaiveTime);
 
 impl DuckDialect<duckdb_time_ns> for TimeNs {
     fn from_duck(value: duckdb_time_ns) -> Result<Self, DuckDBConversionError> {
+        if !(0..86_400_000_000_000).contains(&value.nanos) {
+            return Err(DuckDBConversionError::ConversionError("Invalid time_ns".to_string()));
+        }
         let secs = (value.nanos / 1_000_000_000) as u32;
-        let sub_nanos = (value.nanos % 1_000_000_000).unsigned_abs() as u32;
+        let sub_nanos = (value.nanos % 1_000_000_000) as u32;
         NaiveTime::from_num_seconds_from_midnight_opt(secs, sub_nanos)
             .map(TimeNs)
             .ok_or_else(|| DuckDBConversionError::ConversionError("Invalid time_ns".to_string()))

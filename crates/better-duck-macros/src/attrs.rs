@@ -24,14 +24,14 @@ pub(crate) struct ScalarAttrs {
 #[derive(Default)]
 pub(crate) struct TableAttrs {
     pub(crate) common: CommonAttrs,
+    /// Output column names; the types are inferred from the iterator item tuple.
     pub(crate) columns: Option<Vec<LitStr>>,
-    /// Names of the fn's parameters to bind as SQL named (keyword) parameters
-    /// instead of positional ones — each must match a parameter identifier.
+    /// Names of parameters that should be registered as DuckDB named parameters
+    /// instead of positional parameters.
     pub(crate) named_params: Option<Vec<LitStr>>,
-    /// Whether the generated function honors `duck_projection!()` — see
-    /// `VTab::supports_projection_pushdown`.
+    /// Whether DuckDB may push a column projection into the function.
     pub(crate) projection_pushdown: bool,
-    /// `extra_info(Type, init_expr)` — a value shared read-only across every
+    /// `extra_info(Type, expr)` — arbitrary shared data attached to the bind
     /// call, readable inside the fn body via `duck_extra_info!(Type)`.
     pub(crate) extra_info: Option<(Type, Expr)>,
 }
@@ -57,12 +57,12 @@ pub(crate) fn parse_scalar_attrs(attr: proc_macro::TokenStream) -> syn::Result<S
     let mut out = ScalarAttrs::default();
     let parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("name") {
-            let value = meta.value()?;
-            let lit = expect_str_lit(&value.parse::<Expr>()?, "name")?;
+            let expr: Expr = meta.value()?.parse()?;
+            let lit = expect_str_lit(&expr, "name")?;
             if lit.value().is_empty() || lit.value().contains('\0') {
                 return Err(syn::Error::new_spanned(
-                    &lit,
-                    "SQL function name must be non-empty and must not contain NUL bytes",
+                    lit,
+                    "`name` must be a non-empty string without NUL bytes",
                 ));
             }
             if out.common.name.is_some() {
@@ -71,8 +71,7 @@ pub(crate) fn parse_scalar_attrs(attr: proc_macro::TokenStream) -> syn::Result<S
             out.common.name = Some(lit);
             Ok(())
         } else if meta.path.is_ident("crate") {
-            let value = meta.value()?;
-            out.common.crate_path = Some(value.parse::<Path>()?);
+            out.common.crate_path = Some(meta.value()?.parse()?);
             Ok(())
         } else if meta.path.is_ident("volatile") {
             out.volatile = true;
@@ -100,12 +99,12 @@ pub(crate) fn parse_table_attrs(attr: proc_macro::TokenStream) -> syn::Result<Ta
     let mut out = TableAttrs::default();
     let parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("name") {
-            let value = meta.value()?;
-            let lit = expect_str_lit(&value.parse::<Expr>()?, "name")?;
+            let expr: Expr = meta.value()?.parse()?;
+            let lit = expect_str_lit(&expr, "name")?;
             if lit.value().is_empty() || lit.value().contains('\0') {
                 return Err(syn::Error::new_spanned(
-                    &lit,
-                    "SQL function name must be non-empty and must not contain NUL bytes",
+                    lit,
+                    "`name` must be a non-empty string without NUL bytes",
                 ));
             }
             if out.common.name.is_some() {
@@ -114,23 +113,28 @@ pub(crate) fn parse_table_attrs(attr: proc_macro::TokenStream) -> syn::Result<Ta
             out.common.name = Some(lit);
             Ok(())
         } else if meta.path.is_ident("crate") {
-            let value = meta.value()?;
-            out.common.crate_path = Some(value.parse::<Path>()?);
+            out.common.crate_path = Some(meta.value()?.parse()?);
             Ok(())
         } else if meta.path.is_ident("columns") {
             let content;
             syn::parenthesized!(content in meta.input);
-            let lits = Punctuated::<LitStr, Token![,]>::parse_terminated(&content)?;
-            out.columns = Some(lits.into_iter().collect());
+            let exprs = Punctuated::<Expr, Token![,]>::parse_terminated(&content)?;
+            out.columns = Some(
+                exprs.iter().map(|e| expect_str_lit(e, "columns")).collect::<syn::Result<_>>()?,
+            );
             Ok(())
         } else if meta.path.is_ident("named_params") {
             let content;
             syn::parenthesized!(content in meta.input);
-            let lits = Punctuated::<LitStr, Token![,]>::parse_terminated(&content)?;
-            if lits.is_empty() {
+            let exprs = Punctuated::<Expr, Token![,]>::parse_terminated(&content)?;
+            let names: Vec<LitStr> = exprs
+                .iter()
+                .map(|e| expect_str_lit(e, "named_params"))
+                .collect::<syn::Result<_>>()?;
+            if names.is_empty() {
                 return Err(meta.error("`named_params` must list at least one parameter name"));
             }
-            out.named_params = Some(lits.into_iter().collect());
+            out.named_params = Some(names);
             Ok(())
         } else if meta.path.is_ident("projection_pushdown") {
             out.projection_pushdown = true;

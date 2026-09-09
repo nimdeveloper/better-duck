@@ -5,10 +5,58 @@
 //! clause fragments, which handle the SQL text.
 
 use diesel::query_builder::{AstPass, QueryFragment};
-use diesel::query_builder::{BoxedLimitOffsetClause, LimitOffsetClause};
+use diesel::query_builder::{
+    BoxedLimitOffsetClause, IntoBoxedClause, LimitClause, LimitOffsetClause, NoLimitClause,
+    NoOffsetClause, OffsetClause,
+};
 use diesel::result::QueryResult;
 
 use crate::backend::DuckDb;
+
+impl<'a> IntoBoxedClause<'a, DuckDb> for LimitOffsetClause<NoLimitClause, NoOffsetClause> {
+    type BoxedClause = BoxedLimitOffsetClause<'a, DuckDb>;
+
+    fn into_boxed(self) -> Self::BoxedClause {
+        BoxedLimitOffsetClause { limit: None, offset: None }
+    }
+}
+
+impl<'a, L> IntoBoxedClause<'a, DuckDb> for LimitOffsetClause<LimitClause<L>, NoOffsetClause>
+where
+    L: QueryFragment<DuckDb> + Send + 'a,
+{
+    type BoxedClause = BoxedLimitOffsetClause<'a, DuckDb>;
+
+    fn into_boxed(self) -> Self::BoxedClause {
+        BoxedLimitOffsetClause { limit: Some(Box::new(self.limit_clause)), offset: None }
+    }
+}
+
+impl<'a, O> IntoBoxedClause<'a, DuckDb> for LimitOffsetClause<NoLimitClause, OffsetClause<O>>
+where
+    O: QueryFragment<DuckDb> + Send + 'a,
+{
+    type BoxedClause = BoxedLimitOffsetClause<'a, DuckDb>;
+
+    fn into_boxed(self) -> Self::BoxedClause {
+        BoxedLimitOffsetClause { limit: None, offset: Some(Box::new(self.offset_clause)) }
+    }
+}
+
+impl<'a, L, O> IntoBoxedClause<'a, DuckDb> for LimitOffsetClause<LimitClause<L>, OffsetClause<O>>
+where
+    L: QueryFragment<DuckDb> + Send + 'a,
+    O: QueryFragment<DuckDb> + Send + 'a,
+{
+    type BoxedClause = BoxedLimitOffsetClause<'a, DuckDb>;
+
+    fn into_boxed(self) -> Self::BoxedClause {
+        BoxedLimitOffsetClause {
+            limit: Some(Box::new(self.limit_clause)),
+            offset: Some(Box::new(self.offset_clause)),
+        }
+    }
+}
 
 /// Delegates both limit and offset to their inner `QueryFragment` impls.
 impl<L, O> QueryFragment<DuckDb> for LimitOffsetClause<L, O>
