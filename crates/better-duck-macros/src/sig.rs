@@ -100,3 +100,182 @@ pub(crate) fn unwrap_result(ty: &Type) -> (bool, Option<Type>, Type) {
     }
     (false, None, ty.clone())
 }
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+    use syn::{parse_quote, ItemFn, Type};
+
+    use super::{extract_params, is_option_type, unwrap_result, validate_shape};
+
+    fn assert_shape_error(
+        item: ItemFn,
+        expected: &str,
+    ) {
+        let error = validate_shape(&item).unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+
+    #[test]
+    fn validate_shape_accepts_a_free_monomorphic_function() {
+        let item = parse_quote!(
+            fn add(
+                left: i32,
+                right: i32,
+            ) -> i32 {
+                left + right
+            }
+        );
+        validate_shape(&item).unwrap();
+    }
+
+    #[test]
+    fn validate_shape_rejects_unsupported_signatures() {
+        assert_shape_error(
+            parse_quote!(
+                async fn f() {}
+            ),
+            "cannot be `async`",
+        );
+        assert_shape_error(
+            parse_quote!(
+                unsafe fn f() {}
+            ),
+            "must be a safe Rust `fn`",
+        );
+        assert_shape_error(
+            parse_quote!(
+                extern "C" fn f() {}
+            ),
+            "must not specify an ABI",
+        );
+        assert_shape_error(
+            parse_quote!(
+                extern "Rust" fn f() {}
+            ),
+            "must not specify an ABI",
+        );
+        assert_shape_error(
+            parse_quote!(
+                fn f<T>() {}
+            ),
+            "must not be generic",
+        );
+        assert_shape_error(
+            parse_quote!(
+                fn f()
+                where
+                    Self: Sized,
+                {
+                }
+            ),
+            "must not be generic",
+        );
+        assert_shape_error(
+            parse_quote!(
+                fn f(&self) {}
+            ),
+            "must be a free function, not a method",
+        );
+    }
+
+    #[test]
+    fn extract_params_preserves_names_types_order_and_option_flags() {
+        let item: ItemFn = parse_quote!(
+            fn f(
+                first: i32,
+                second: std::option::Option<String>,
+                third: &str,
+            ) {
+            }
+        );
+        let params = extract_params(&item).unwrap();
+        assert_eq!(params.len(), 3);
+        assert_eq!(params[0].ident, "first");
+        let first_ty = &params[0].ty;
+        assert_eq!(quote!(#first_ty).to_string(), "i32");
+        assert!(!params[0].is_option);
+        assert_eq!(params[1].ident, "second");
+        let second_ty = &params[1].ty;
+        assert_eq!(quote!(#second_ty).to_string(), "std :: option :: Option < String >");
+        assert!(params[1].is_option);
+        assert_eq!(params[2].ident, "third");
+        let third_ty = &params[2].ty;
+        assert_eq!(quote!(#third_ty).to_string(), "& str");
+    }
+
+    #[test]
+    fn extract_params_accepts_identifier_binding_modifiers() {
+        let item: ItemFn = parse_quote!(
+            fn f(
+                mut value: i32,
+                ref name: String,
+            ) {
+            }
+        );
+        let params = extract_params(&item).unwrap();
+        assert_eq!(params[0].ident, "value");
+        assert_eq!(params[1].ident, "name");
+    }
+
+    #[test]
+    fn extract_params_rejects_patterns() {
+        for item in [
+            parse_quote!(
+                fn f((left, right): (i32, i32)) {}
+            ),
+            parse_quote!(
+                fn f(Point { x, y }: Point) {}
+            ),
+            parse_quote!(
+                fn f(_: i32) {}
+            ),
+        ] {
+            let error = extract_params(&item).err().expect("pattern must be rejected");
+            assert!(error.to_string().contains("must be a simple identifier"));
+        }
+    }
+
+    #[test]
+    fn option_detection_is_syntactic_and_uses_the_final_path_segment() {
+        for ty in [
+            parse_quote!(Option<i32>),
+            parse_quote!(std::option::Option<i32>),
+            parse_quote!(custom::Option<i32>),
+        ] {
+            assert!(is_option_type(&ty));
+        }
+        for ty in [
+            parse_quote!(&Option<i32>),
+            parse_quote!((Option<i32>)),
+            parse_quote!((Option<i32>,)),
+            parse_quote!(Maybe<i32>),
+        ] {
+            assert!(!is_option_type(&ty));
+        }
+    }
+
+    #[test]
+    fn unwrap_result_accepts_plain_and_qualified_results() {
+        for ty in [parse_quote!(Result<i32, Error>), parse_quote!(std::result::Result<i32, Error>)]
+        {
+            let (fallible, error, ok) = unwrap_result(&ty);
+            assert!(fallible);
+            assert_eq!(quote!(#ok).to_string(), "i32");
+            let error = error.expect("Result must expose its error type");
+            assert_eq!(quote!(#error).to_string(), "Error");
+        }
+    }
+
+    #[test]
+    fn unwrap_result_leaves_other_shapes_unchanged() {
+        for ty in [parse_quote!(i32), parse_quote!((Result<i32, Error>)), parse_quote!(Result<i32>)]
+        {
+            let expected = quote!(#ty).to_string();
+            let (fallible, error, output): (bool, Option<Type>, Type) = unwrap_result(&ty);
+            assert!(!fallible);
+            assert!(error.is_none());
+            assert_eq!(quote!(#output).to_string(), expected);
+        }
+    }
+}

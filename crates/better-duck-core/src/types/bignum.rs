@@ -188,4 +188,22 @@ mod tests {
         // SAFETY: `duck_value` was created by `to_duck` above.
         unsafe { duckdb_destroy_value(&mut duck_value) };
     }
+
+    #[test]
+    fn constructor_and_duck_value_conversion_preserve_components() {
+        let value = DuckBignum::new(vec![0x34, 0x12], true);
+        assert_eq!(value.magnitude, vec![0x34, 0x12]);
+        assert!(value.is_negative);
+        assert_eq!(value::DuckValue::from(value.clone()), value::DuckValue::Bignum(value));
+    }
+
+    #[test]
+    fn logical_type_is_bignum() {
+        use crate::ffi::{duckdb_destroy_logical_type, duckdb_get_type_id};
+        let mut logical_type = DuckBignum::duck_logical_type().unwrap();
+        // SAFETY: `logical_type` is a live handle created by `duck_logical_type`.
+        assert_eq!(unsafe { duckdb_get_type_id(logical_type) }, DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM);
+        // SAFETY: `logical_type` is owned by this test and destroyed exactly once.
+        unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+    }
 }

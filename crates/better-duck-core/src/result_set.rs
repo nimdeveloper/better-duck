@@ -78,3 +78,90 @@ impl<'a> IntoIterator for &'a ResultSet {
         self.rows.iter()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::types::value::DuckValue;
+
+    fn column_names() -> Box<[Box<str>]> {
+        vec![Box::from("id"), Box::from("name")].into_boxed_slice()
+    }
+
+    fn result_set() -> ResultSet {
+        let column_names = column_names();
+        let row_column_names = Arc::from(column_names.clone());
+        let rows = vec![
+            DuckRow::new(
+                vec![DuckValue::Int(20), DuckValue::Text("second".into())],
+                Arc::clone(&row_column_names),
+            ),
+            DuckRow::new(
+                vec![DuckValue::Int(10), DuckValue::Text("first".into())],
+                row_column_names,
+            ),
+        ];
+
+        ResultSet::new(rows, 2, column_names)
+    }
+
+    fn ids<'a>(rows: impl IntoIterator<Item = &'a DuckRow>) -> Vec<i32> {
+        rows.into_iter()
+            .map(|row| match row.get_idx(0) {
+                Some(DuckValue::Int(id)) => *id,
+                value => panic!("expected integer id, got {value:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn empty_result_exposes_metadata_and_no_rows() {
+        let result = ResultSet::new(Vec::new(), 3, column_names());
+
+        assert!(result.is_empty());
+        assert_eq!(result.len(), 0);
+        assert!(result.rows().is_empty());
+        assert!(result.first().is_none());
+        assert_eq!(result.changes(), 3);
+        assert_eq!(result.column_names(), &[Box::from("id"), Box::from("name")]);
+        assert!(result.into_rows().is_empty());
+    }
+
+    #[test]
+    fn non_empty_accessors_clone_and_debug_preserve_data() {
+        let result = result_set();
+        let cloned = result.clone();
+
+        assert!(!result.is_empty());
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.changes(), 2);
+        assert_eq!(result.column_names(), &[Box::from("id"), Box::from("name")]);
+        assert_eq!(
+            result.first().and_then(|row| row.get("name")),
+            Some(&DuckValue::Text("second".into()))
+        );
+        assert_eq!(ids(result.rows()), vec![20, 10]);
+        assert_eq!(ids(cloned.rows()), vec![20, 10]);
+
+        let debug = format!("{result:?}");
+        assert!(debug.contains("ResultSet"));
+        assert!(debug.contains("changes: 2"));
+        assert!(debug.contains("second"));
+    }
+
+    #[test]
+    fn borrowed_and_consuming_iteration_retain_order() {
+        let result = result_set();
+
+        assert_eq!(ids(&result), vec![20, 10]);
+        assert_eq!(result.len(), 2, "borrowing must not consume the result");
+
+        let names: Vec<_> = result.into_iter().map(|row| row.get("name").cloned()).collect();
+        assert_eq!(
+            names,
+            vec![Some(DuckValue::Text("second".into())), Some(DuckValue::Text("first".into())),]
+        );
+    }
+}

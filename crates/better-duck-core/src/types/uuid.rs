@@ -124,4 +124,29 @@ mod tests {
         to_duck_is_passthrough(v);
         from_duck_undoes_storage_flip(v);
     }
+
+    #[test]
+    fn constructor_and_duck_value_conversion_preserve_bits() {
+        let raw = 0x8000_0000_0000_0001_ffff_ffff_ffff_fffe;
+        let value = DuckUuid::new(raw);
+        assert_eq!(value.0, raw);
+        assert_eq!(value::DuckValue::from(value), value::DuckValue::Uuid(value));
+    }
+
+    #[test]
+    fn ordering_matches_standard_u128_uuid_order() {
+        let low = DuckUuid::new(0x7fff_ffff_ffff_ffff_ffff_ffff_ffff_ffff);
+        let high = DuckUuid::new(0x8000_0000_0000_0000_0000_0000_0000_0000);
+        assert!(low < high);
+    }
+
+    #[test]
+    fn logical_type_is_uuid() {
+        use crate::ffi::{duckdb_destroy_logical_type, duckdb_get_type_id};
+        let mut logical_type = DuckUuid::duck_logical_type().unwrap();
+        // SAFETY: `logical_type` is a live handle created by `duck_logical_type`.
+        assert_eq!(unsafe { duckdb_get_type_id(logical_type) }, DUCKDB_TYPE_DUCKDB_TYPE_UUID);
+        // SAFETY: `logical_type` is owned by this test and destroyed exactly once.
+        unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+    }
 }

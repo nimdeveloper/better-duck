@@ -288,3 +288,37 @@ pub enum Type {
     /// The value is an arbitrary-precision integer.
     Bignum,
 }
+
+#[cfg(test)]
+#[allow(clippy::undocumented_unsafe_blocks)]
+mod tests {
+    use super::*;
+    use crate::ffi::{duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_get_type_id};
+
+    #[test]
+    fn boolean_duck_dialect_roundtrips_both_values() {
+        for value in [false, true] {
+            let mut duck_value = value.to_duck().unwrap();
+            assert_eq!(bool::from_duck(duck_value).unwrap(), value);
+            unsafe { duckdb_destroy_value(&mut duck_value) };
+        }
+    }
+
+    #[test]
+    fn boolean_logical_type_and_duck_value_conversion_match() {
+        let mut logical_type = bool::duck_logical_type().unwrap();
+        assert_eq!(unsafe { duckdb_get_type_id(logical_type) }, DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN);
+        unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+        assert_eq!(value::DuckValue::from(true), value::DuckValue::Boolean(true));
+    }
+
+    #[test]
+    fn type_equality_includes_nested_array_shape() {
+        assert_eq!(
+            Type::Array(Box::new([Type::Int, Type::Text])),
+            Type::Array(Box::new([Type::Int, Type::Text]))
+        );
+        assert_ne!(Type::Array(Box::new([Type::Int])), Type::Array(Box::new([Type::BigInt])));
+        assert_ne!(Type::Uuid, Type::Bignum);
+    }
+}

@@ -401,3 +401,228 @@ pub(super) fn hash_system_time<H: Hasher>(
     let d = st.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     d.hash(state);
 }
+
+#[cfg(all(test, not(feature = "chrono")))]
+#[allow(clippy::undocumented_unsafe_blocks)]
+mod tests {
+    use super::*;
+    use crate::ffi::{
+        duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_get_date, duckdb_get_interval,
+        duckdb_get_time, duckdb_get_time_ns, duckdb_get_time_tz, duckdb_get_timestamp,
+        duckdb_get_type_id,
+    };
+    use std::collections::hash_map::DefaultHasher;
+
+    fn hash<T: Hash>(value: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn round_trip_date(value: DuckDate) -> DuckDate {
+        let mut duck_value = value.to_duck().expect("date should convert to duckdb_value");
+        let raw = unsafe { duckdb_get_date(duck_value) };
+        let converted = DuckDate::from_duck(raw).expect("date should convert from DuckDB");
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+        converted
+    }
+
+    fn round_trip_time(value: DuckTime) -> DuckTime {
+        let mut duck_value = value.to_duck().expect("time should convert to duckdb_value");
+        let raw = unsafe { duckdb_get_time(duck_value) };
+        let converted = DuckTime::from_duck(raw).expect("time should convert from DuckDB");
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+        converted
+    }
+
+    fn round_trip_time_ns(value: DuckTimeNs) -> DuckTimeNs {
+        let mut duck_value = value.to_duck().expect("time_ns should convert to duckdb_value");
+        let raw = unsafe { duckdb_get_time_ns(duck_value) };
+        let converted = DuckTimeNs::from_duck(raw).expect("time_ns should convert from DuckDB");
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+        converted
+    }
+
+    fn round_trip_time_tz(value: DuckTimeTz) -> DuckTimeTz {
+        let mut duck_value = value.to_duck().expect("time_tz should convert to duckdb_value");
+        let raw = unsafe { duckdb_get_time_tz(duck_value) };
+        let converted = DuckTimeTz::from_duck(raw).expect("time_tz should convert from DuckDB");
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+        converted
+    }
+
+    fn round_trip_interval(value: StdDuration) -> StdDuration {
+        let mut duck_value = value.to_duck().expect("interval should convert to duckdb_value");
+        let raw = unsafe { duckdb_get_interval(duck_value) };
+        let converted = StdDuration::from_duck(raw).expect("interval should convert from DuckDB");
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+        converted
+    }
+
+    fn round_trip_timestamp(value: SystemTime) -> SystemTime {
+        let mut duck_value = value.to_duck().expect("timestamp should convert to duckdb_value");
+        let raw = unsafe { duckdb_get_timestamp(duck_value) };
+        let converted = SystemTime::from_duck(raw).expect("timestamp should convert from DuckDB");
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+        converted
+    }
+
+    #[test]
+    fn date_round_trips_epoch_leap_day_and_pre_epoch() {
+        for date in [
+            DuckDate { year: 1970, month: 1, day: 1 },
+            DuckDate { year: 2000, month: 2, day: 29 },
+            DuckDate { year: 1969, month: 12, day: 31 },
+        ] {
+            assert_eq!(round_trip_date(date), date);
+        }
+    }
+
+    #[test]
+    fn time_round_trips_boundaries_and_microseconds() {
+        for time in [
+            DuckTime { hour: 0, min: 0, sec: 0, micros: 0 },
+            DuckTime { hour: 14, min: 30, sec: 45, micros: 123_456 },
+            DuckTime { hour: 23, min: 59, sec: 59, micros: 999_999 },
+        ] {
+            assert_eq!(round_trip_time(time), time);
+        }
+    }
+
+    #[test]
+    fn time_ns_round_trips_boundaries_and_sub_microsecond_precision() {
+        for time in [
+            DuckTimeNs { hour: 0, min: 0, sec: 0, nanos: 1 },
+            DuckTimeNs { hour: 14, min: 30, sec: 45, nanos: 123_456_789 },
+            DuckTimeNs { hour: 23, min: 59, sec: 59, nanos: 999_999_999 },
+        ] {
+            assert_eq!(round_trip_time_ns(time), time);
+        }
+    }
+
+    #[test]
+    fn time_ns_from_duck_decomposes_raw_nanoseconds() {
+        let raw = duckdb_time_ns {
+            nanos: 14 * 3_600_000_000_000 + 30 * 60_000_000_000 + 45 * 1_000_000_000 + 987_654_321,
+        };
+        assert_eq!(
+            DuckTimeNs::from_duck(raw).unwrap(),
+            DuckTimeNs { hour: 14, min: 30, sec: 45, nanos: 987_654_321 }
+        );
+    }
+
+    #[test]
+    fn time_tz_round_trips_offsets_and_microseconds() {
+        for time in [
+            DuckTimeTz { hour: 0, min: 0, sec: 0, micros: 0, offset_secs: 0 },
+            DuckTimeTz {
+                hour: 12,
+                min: 34,
+                sec: 56,
+                micros: 789_012,
+                offset_secs: 5 * 3_600 + 30 * 60,
+            },
+            DuckTimeTz {
+                hour: 23,
+                min: 59,
+                sec: 59,
+                micros: 999_999,
+                offset_secs: -(3 * 3_600 + 30 * 60),
+            },
+        ] {
+            assert_eq!(round_trip_time_tz(time), time);
+        }
+    }
+
+    #[test]
+    fn interval_from_duck_combines_months_days_and_micros() {
+        let raw = duckdb_interval { months: 2, days: 3, micros: 4_567_890 };
+        let expected_days = 2 * 30 + 3;
+        let expected = StdDuration::from_micros(expected_days * 86_400_000_000 + 4_567_890);
+        assert_eq!(StdDuration::from_duck(raw).unwrap(), expected);
+    }
+
+    #[test]
+    fn interval_round_trips_microsecond_precision() {
+        for interval in
+            [StdDuration::ZERO, StdDuration::from_micros(1), StdDuration::new(86_461, 987_654_000)]
+        {
+            assert_eq!(round_trip_interval(interval), interval);
+        }
+    }
+
+    #[test]
+    fn interval_to_duck_truncates_sub_microsecond_precision() {
+        let interval = StdDuration::new(7, 123_456_789);
+        assert_eq!(round_trip_interval(interval), StdDuration::new(7, 123_456_000));
+    }
+
+    #[test]
+    fn timestamp_from_duck_handles_both_sides_of_epoch() {
+        let before = SystemTime::from_duck(duckdb_timestamp { micros: -1_500_001 }).unwrap();
+        let after = SystemTime::from_duck(duckdb_timestamp { micros: 1_500_001 }).unwrap();
+        assert_eq!(UNIX_EPOCH.duration_since(before).unwrap(), StdDuration::from_micros(1_500_001));
+        assert_eq!(after.duration_since(UNIX_EPOCH).unwrap(), StdDuration::from_micros(1_500_001));
+    }
+
+    #[test]
+    fn timestamp_round_trips_epoch_and_positive_microseconds() {
+        for timestamp in [
+            UNIX_EPOCH,
+            UNIX_EPOCH + StdDuration::from_micros(1),
+            UNIX_EPOCH + StdDuration::new(1_700_000_000, 123_456_000),
+        ] {
+            assert_eq!(round_trip_timestamp(timestamp), timestamp);
+        }
+    }
+
+    #[test]
+    fn timestamp_to_duck_truncates_sub_microsecond_precision() {
+        let timestamp = UNIX_EPOCH + StdDuration::new(42, 123_456_789);
+        assert_eq!(round_trip_timestamp(timestamp), UNIX_EPOCH + StdDuration::new(42, 123_456_000));
+    }
+
+    #[test]
+    fn timestamp_to_duck_rejects_pre_epoch_values() {
+        let timestamp = UNIX_EPOCH - StdDuration::from_micros(1);
+        assert!(matches!(timestamp.to_duck(), Err(DuckDBConversionError::ConversionError(_))));
+    }
+
+    #[test]
+    fn logical_types_match_native_duckdb_types() {
+        macro_rules! assert_logical_type {
+            ($rust_type:ty, $duck_type:expr) => {{
+                let mut logical_type =
+                    <$rust_type as DuckLogicalType>::duck_logical_type().unwrap();
+                assert_eq!(unsafe { duckdb_get_type_id(logical_type) }, $duck_type);
+                unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+            }};
+        }
+
+        assert_logical_type!(DuckDate, DUCKDB_TYPE_DUCKDB_TYPE_DATE);
+        assert_logical_type!(DuckTime, DUCKDB_TYPE_DUCKDB_TYPE_TIME);
+        assert_logical_type!(DuckTimeNs, DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS);
+        assert_logical_type!(DuckTimeTz, DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ);
+        assert_logical_type!(StdDuration, DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL);
+        assert_logical_type!(SystemTime, DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP);
+    }
+
+    #[test]
+    fn into_duck_value_selects_matching_variants() {
+        let date = DuckDate { year: 2024, month: 2, day: 29 };
+        let time = DuckTime { hour: 1, min: 2, sec: 3, micros: 4 };
+        let time_ns = DuckTimeNs { hour: 5, min: 6, sec: 7, nanos: 8 };
+        let time_tz = DuckTimeTz { hour: 9, min: 10, sec: 11, micros: 12, offset_secs: 3_600 };
+        let interval = StdDuration::from_secs(13);
+        let timestamp = UNIX_EPOCH + StdDuration::from_secs(14);
+
+        assert_eq!(value::DuckValue::from(date), value::DuckValue::Date(date));
+        assert_eq!(value::DuckValue::from(time), value::DuckValue::Time(time));
+        assert_eq!(value::DuckValue::from(time_ns), value::DuckValue::TimeNs(time_ns));
+        assert_eq!(value::DuckValue::from(time_tz), value::DuckValue::TimeTz(time_tz));
+        assert_eq!(value::DuckValue::from(interval), value::DuckValue::Interval(interval));
+        assert_eq!(value::DuckValue::from(timestamp), value::DuckValue::Timestamp(timestamp));
+    }
+
+    // MORE_TESTS
+}

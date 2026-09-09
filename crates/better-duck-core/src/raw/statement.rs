@@ -299,9 +299,11 @@ mod tests {
     use crate::config::Config;
     use crate::helpers::path::path_to_cstring;
     use crate::raw::connection::RawConnection;
-    use crate::types::appendable::AppendAble;
+    use crate::types::{appendable::AppendAble, value::DuckValue};
 
+    struct CheckedI32(i32);
     struct DummyAppendAble;
+
     impl AppendAble for DummyAppendAble {
         fn stmt_append(
             &mut self,
@@ -310,11 +312,35 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
+
+        fn appender_append(
+            &mut self,
+            _appender: ffi::duckdb_appender,
+        ) -> Result<()> {
+            unreachable!("DummyAppendAble is only used for statement binding")
+        }
+    }
+
+    impl AppendAble for CheckedI32 {
+        fn stmt_append(
+            &mut self,
+            idx: u64,
+            stmt: duckdb_prepared_statement,
+        ) -> Result<()> {
+            // SAFETY: `stmt` comes from a live Statement and the scalar value is copied.
+            let state = unsafe { ffi::duckdb_bind_int32(stmt, idx, self.0) };
+            if state == DuckDBSuccess {
+                Ok(())
+            } else {
+                Err(Error::DuckDBFailure(ffi::Error::new(state), None))
+            }
+        }
+
         fn appender_append(
             &mut self,
             _appender: crate::ffi::duckdb_appender,
         ) -> Result<()> {
-            Ok(())
+            unreachable!("CheckedI32 is only used for statement binding")
         }
     }
 
@@ -322,6 +348,16 @@ mod tests {
         let c_path = path_to_cstring(":memory:".as_ref()).unwrap();
         let config = Config::default().with("duckdb_api", "rust").unwrap();
         RawConnection::open_with_flags(&c_path, config).unwrap()
+    }
+
+    fn assert_single_value(
+        mut result: DuckResult,
+        column: &str,
+        expected: DuckValue,
+    ) {
+        let row = result.next().expect("expected one row").unwrap();
+        assert_eq!(row.get(column), Some(&expected));
+        assert!(result.next().is_none());
     }
 
     #[test]
@@ -333,13 +369,75 @@ mod tests {
     }
 
     #[test]
-    fn test_bind_and_bind_at() {
+    fn test_prepare_rejects_invalid_sql_and_interior_nul() {
         let con = get_test_connection();
-        let sql = "SELECT ?";
-        let mut stmt = Statement::new(&con, sql).unwrap();
-        let mut dummy = DummyAppendAble;
-        assert!(stmt.bind(&mut dummy).is_ok());
-        assert!(stmt.bind_at(&mut dummy, 1).is_ok());
+
+        assert!(matches!(Statement::new(&con, "SELEC 1"), Err(Error::DuckDBFailure(..))));
+        assert!(matches!(Statement::new(&con, "SELECT \0 1"), Err(Error::NulError(_))));
+        assert!(matches!(CachedStatement::prepare(&con, "SELEC 1"), Err(Error::DuckDBFailure(..))));
+        assert!(matches!(CachedStatement::prepare(&con, "SELECT \0 1"), Err(Error::NulError(_))));
+    }
+
+    #[test]
+    fn test_statement_binds_real_values_and_reports_parameter_errors() {
+        let con = get_test_connection();
+        let mut stmt = Statement::new(&con, "SELECT $1::INTEGER + $2::INTEGER AS total").unwrap();
+        assert_eq!(stmt.bind_parameter_count(), 2);
+
+        let mut first = CheckedI32(19);
+        let mut second = CheckedI32(23);
+        stmt.bind(&mut first).unwrap();
+        stmt.bind(&mut second).unwrap();
+        assert_single_value(stmt.execute().unwrap(), "total", DuckValue::Int(42));
+
+        let mut out_of_range = CheckedI32(99);
+        assert!(matches!(stmt.bind_at(&mut out_of_range, 3), Err(Error::DuckDBFailure(..))));
+        assert_single_value(stmt.execute().unwrap(), "total", DuckValue::Int(42));
+    }
+
+    #[test]
+    fn test_statement_clear_bindings_resets_and_reuses() {
+        let con = get_test_connection();
+        let mut stmt = Statement::new(&con, "SELECT $1::INTEGER AS value").unwrap();
+        let mut first = CheckedI32(7);
+        stmt.bind(&mut first).unwrap();
+        assert_single_value(stmt.execute().unwrap(), "value", DuckValue::Int(7));
+
+        stmt.clear_bindings().unwrap();
+        assert_eq!(stmt.bind_idx, 0);
+        let mut second = CheckedI32(11);
+        stmt.bind(&mut second).unwrap();
+        assert_single_value(stmt.execute().unwrap(), "value", DuckValue::Int(11));
+    }
+
+    #[test]
+    fn test_cached_statement_retains_sql_and_resets_for_reuse() {
+        let con = get_test_connection();
+        let sql = "SELECT $1::INTEGER AS value";
+        let mut stmt = CachedStatement::prepare(&con, sql).unwrap();
+        assert_eq!(stmt.sql.as_ref(), sql);
+
+        let mut first = CheckedI32(100);
+        stmt.bind(1, &mut first).unwrap();
+        assert_single_value(stmt.execute().unwrap(), "value", DuckValue::Int(100));
+
+        stmt.reset_bindings().unwrap();
+        let mut second = CheckedI32(200);
+        stmt.bind(1, &mut second).unwrap();
+        assert_single_value(stmt.execute().unwrap(), "value", DuckValue::Int(200));
+    }
+
+    #[test]
+    fn test_cached_statement_recovers_after_invalid_bind_position() {
+        let con = get_test_connection();
+        let mut stmt = CachedStatement::prepare(&con, "SELECT $1::INTEGER AS value").unwrap();
+        let mut invalid = CheckedI32(1);
+        assert!(matches!(stmt.bind(0, &mut invalid), Err(Error::DuckDBFailure(..))));
+
+        stmt.reset_bindings().unwrap();
+        let mut valid = CheckedI32(55);
+        stmt.bind(1, &mut valid).unwrap();
+        assert_single_value(stmt.execute().unwrap(), "value", DuckValue::Int(55));
     }
 
     #[test]

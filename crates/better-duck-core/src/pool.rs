@@ -103,6 +103,7 @@ pub use r2d2::State as PoolState;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use r2d2::ManageConnection;
 
     #[test]
     fn pool_shares_one_in_memory_database() {
@@ -140,5 +141,33 @@ mod tests {
     fn manager_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<DuckDbConnectionManager>();
+    }
+
+    #[test]
+    fn manager_validates_open_and_closed_connections() {
+        let manager = DuckDbConnectionManager::memory().unwrap();
+        let mut connection = manager.connect().unwrap();
+        assert!(manager.is_valid(&mut connection).is_ok());
+        assert!(!manager.has_broken(&mut connection));
+
+        connection.close().unwrap();
+        assert!(manager.has_broken(&mut connection));
+    }
+
+    #[test]
+    fn manager_file_connections_share_persisted_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pool.duckdb");
+        let manager = DuckDbConnectionManager::file(&path).unwrap();
+        let mut first = manager.connect().unwrap();
+        first
+            .execute_batch("CREATE TABLE pooled (value INTEGER); INSERT INTO pooled VALUES (9)")
+            .unwrap();
+        drop(first);
+
+        let mut second = manager.connect().unwrap();
+        let mut rows = second.execute("SELECT value FROM pooled").unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("value").unwrap(), &crate::types::value::DuckValue::Int(9));
     }
 }

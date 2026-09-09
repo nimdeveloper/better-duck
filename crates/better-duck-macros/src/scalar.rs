@@ -167,3 +167,155 @@ pub(crate) fn expand(
     };
     Ok(expanded)
 }
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+    use syn::parse_quote;
+
+    use crate::attrs::{CommonAttrs, ScalarAttrs};
+
+    use super::expand;
+
+    fn compact(tokens: proc_macro2::TokenStream) -> String {
+        tokens.to_string().split_whitespace().collect()
+    }
+
+    #[test]
+    fn rejects_a_function_without_a_return_value() {
+        let error = expand(
+            ScalarAttrs::default(),
+            parse_quote!(
+                fn noop() {}
+            ),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("scalar functions must return a value"));
+    }
+
+    #[test]
+    fn expands_zero_argument_infallible_function() {
+        let tokens = compact(
+            expand(
+                ScalarAttrs::default(),
+                parse_quote!(
+                    fn answer() -> i64 {
+                        42
+                    }
+                ),
+            )
+            .unwrap(),
+        );
+        assert!(tokens.contains("modanswer"), "{tokens}");
+        assert!(tokens.contains("super::answer()"), "{tokens}");
+        assert!(tokens.contains("ScalarRet>::write(__r,output,row)?"), "{tokens}");
+        assert!(tokens.contains("register_scalar_function"), "{tokens}");
+        assert!(tokens.contains("\"answer\""), "{tokens}");
+        assert!(!tokens.contains("map_err(__p::boxed_error)"));
+        assert!(tokens.contains("fnspecial_handling()->bool{false}"));
+    }
+
+    #[test]
+    fn expands_fallible_function_with_error_mapping() {
+        let tokens = compact(
+            expand(
+                ScalarAttrs::default(),
+                parse_quote!(
+                    fn checked(value: i32) -> Result<i64, Error> {
+                        todo!()
+                    }
+                ),
+            )
+            .unwrap(),
+        );
+        assert!(tokens.contains("let__r=super::checked(__a0).map_err(__p::boxed_error)?"));
+        assert!(tokens.contains("<i64as__p::ScalarRet>::write"));
+    }
+
+    #[test]
+    fn non_optional_parameters_short_circuit_null_rows() {
+        let tokens = compact(
+            expand(
+                ScalarAttrs::default(),
+                parse_quote!(
+                    fn add(
+                        left: i32,
+                        right: i32,
+                    ) -> i32 {
+                        left + right
+                    }
+                ),
+            )
+            .unwrap(),
+        );
+        assert!(tokens.contains("if__col0.is_null(row)||__col1.is_null(row)"));
+        assert!(tokens.contains("output.set_null(row)"));
+        assert!(tokens.contains("fnspecial_handling()->bool{false}"));
+    }
+
+    #[test]
+    fn optional_parameters_enable_special_handling_and_skip_their_null_guard() {
+        let tokens = compact(
+            expand(
+                ScalarAttrs::default(),
+                parse_quote!(
+                    fn maybe(
+                        value: Option<i32>,
+                        required: i32,
+                    ) -> i32 {
+                        todo!()
+                    }
+                ),
+            )
+            .unwrap(),
+        );
+        assert!(tokens.contains("fnspecial_handling()->bool{true}"));
+        assert!(tokens.contains("if__col1.is_null(row)"));
+        assert!(!tokens.contains("__col0.is_null(row)"));
+    }
+
+    #[test]
+    fn honors_name_crate_volatility_and_state_options() {
+        let attrs = ScalarAttrs {
+            common: CommonAttrs {
+                name: Some(parse_quote!("sql_counter")),
+                crate_path: Some(parse_quote!(::renamed_duck)),
+            },
+            volatile: true,
+            state: Some((parse_quote!(Counter), parse_quote!(Counter::new()))),
+        };
+        let tokens = compact(
+            expand(
+                attrs,
+                parse_quote!(
+                    fn counter() -> i64 {
+                        duck_state!().next()
+                    }
+                ),
+            )
+            .unwrap(),
+        );
+        for expected in [
+            "use::renamed_duck::udf::__privateas__p",
+            "typeState=Counter",
+            "Counter::new()",
+            "fnvolatile()->bool{true}",
+            "register_scalar_function_with_state::<Udf>",
+            "\"sql_counter\"",
+            "ScalarStateGuard::enter",
+        ] {
+            assert!(tokens.contains(expected), "missing {expected} in {tokens}");
+        }
+    }
+
+    #[test]
+    fn generated_module_keeps_the_original_function() {
+        let item = parse_quote!(
+            fn identity(value: i32) -> i32 {
+                value
+            }
+        );
+        let tokens = expand(ScalarAttrs::default(), item).unwrap();
+        assert!(quote!(#tokens).to_string().contains("fn identity"));
+    }
+}

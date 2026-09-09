@@ -437,12 +437,98 @@ impl Drop for DuckResult {
 #[cfg(test)]
 #[allow(clippy::undocumented_unsafe_blocks)]
 mod tests {
-    use crate::{config::Config, helpers::path::path_to_cstring, raw::connection::RawConnection};
+    use crate::{
+        config::Config,
+        error::Error,
+        ffi::{DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR},
+        helpers::path::path_to_cstring,
+        raw::connection::RawConnection,
+        result_set::ResultSet,
+        types::value::DuckValue,
+    };
 
     fn get_test_connection() -> RawConnection {
         let c_path = path_to_cstring(":memory:".as_ref()).unwrap();
         let config = Config::default().with("duckdb_api", "rust").unwrap();
         RawConnection::open_with_flags(&c_path, config).unwrap()
+    }
+
+    #[test]
+    fn result_metadata_reports_columns_and_lookup_failures() {
+        let con = get_test_connection();
+        let mut stmt = con.prepare("SELECT 42::INTEGER AS id, 'duck'::VARCHAR AS label").unwrap();
+        let result = stmt.execute().unwrap();
+
+        assert_eq!(result.column_count(), 2);
+        assert_eq!(result.column_type(0), Ok(DUCKDB_TYPE_DUCKDB_TYPE_INTEGER));
+        assert_eq!(result.column_type(1), Ok(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR));
+        assert_eq!(result.column_name(0), Ok("id"));
+        assert_eq!(result.column_name(1), Ok("label"));
+        assert_eq!(
+            result.column_names().iter().map(AsRef::as_ref).collect::<Vec<_>>(),
+            ["id", "label"]
+        );
+        assert_eq!(result.column_idx("id"), Some(0));
+        assert_eq!(result.column_idx("label"), Some(1));
+        assert_eq!(result.column_idx("missing"), None);
+        assert_eq!(result.column_type(2), Err(Error::InvalidColumnIndex(2)));
+        assert_eq!(result.column_name(usize::MAX), Err(Error::InvalidColumnIndex(usize::MAX)));
+    }
+
+    #[test]
+    fn materialize_select_preserves_rows_columns_and_values() {
+        let con = get_test_connection();
+        let mut stmt = con
+            .prepare("SELECT * FROM (VALUES (1, 'one'), (2, 'two')) AS t(id, label) ORDER BY id")
+            .unwrap();
+        let result = stmt.execute().unwrap().materialize().unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert!(!result.is_empty());
+        assert_eq!(result.changes(), 0);
+        assert_eq!(
+            result.column_names().iter().map(AsRef::as_ref).collect::<Vec<_>>(),
+            ["id", "label"]
+        );
+        assert_eq!(result.rows()[0].get("id"), Some(&DuckValue::Int(1)));
+        assert_eq!(result.rows()[0].get("label"), Some(&DuckValue::Text("one".into())));
+        assert_eq!(result.rows()[1].get("id"), Some(&DuckValue::Int(2)));
+        assert_eq!(result.rows()[1].get("label"), Some(&DuckValue::Text("two".into())));
+    }
+
+    #[test]
+    fn materialize_empty_select_preserves_schema() {
+        let con = get_test_connection();
+        let mut stmt =
+            con.prepare("SELECT NULL::INTEGER AS id, NULL::VARCHAR AS label WHERE FALSE").unwrap();
+        let result = stmt.execute().unwrap().materialize().unwrap();
+
+        assert!(result.is_empty());
+        assert_eq!(result.len(), 0);
+        assert_eq!(result.changes(), 0);
+        assert_eq!(
+            result.column_names().iter().map(AsRef::as_ref).collect::<Vec<_>>(),
+            ["id", "label"]
+        );
+        assert!(result.first().is_none());
+    }
+
+    #[test]
+    fn materialize_dml_preserves_affected_row_count() {
+        let mut con = get_test_connection();
+        let _ = con.query("CREATE TABLE t (v INTEGER)").unwrap();
+        let result =
+            con.query("INSERT INTO t VALUES (1), (2), (3)").unwrap().materialize().unwrap();
+
+        assert_eq!(result.changes(), 3);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result.first().unwrap().get_idx(0), Some(&DuckValue::BigInt(3)));
+    }
+
+    #[test]
+    fn result_set_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ResultSet>();
     }
 
     /// Plain forward iteration (the default, rewind not enabled) must not error and

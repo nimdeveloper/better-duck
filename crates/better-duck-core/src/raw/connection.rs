@@ -424,4 +424,55 @@ mod tests {
         let appender = conn.appender("test_table", "main");
         assert!(appender.is_ok(), "{}", appender.err().unwrap());
     }
+
+    #[test]
+    fn raw_database_rejects_null_handle() {
+        // SAFETY: null is explicitly supported as an error case and is never dereferenced.
+        let error = unsafe { RawDatabase::new(ptr::null_mut()) }.err().unwrap();
+        assert!(matches!(
+            error,
+            Error::DuckDBFailure(_, Some(message)) if message == "database is null"
+        ));
+    }
+
+    #[test]
+    fn raw_connection_rejects_nul_and_invalid_sql() {
+        let path = CString::new(":memory:").unwrap();
+        let mut conn = RawConnection::open_with_flags(&path, Config::default()).unwrap();
+        assert!(matches!(conn.query("SELECT\0 1"), Err(Error::NulError(_))));
+        assert!(conn.query("SELECT * FROM missing_table").is_err());
+        assert!(conn.prepare("SELECT FROM").is_err());
+        assert!(conn.appender("missing_table", "main").is_err());
+    }
+
+    #[test]
+    fn raw_close_is_idempotent() {
+        let path = CString::new(":memory:").unwrap();
+        let mut conn = RawConnection::open_with_flags(&path, Config::default()).unwrap();
+        conn.close().unwrap();
+        conn.close().unwrap();
+        assert!(conn.con.is_null());
+    }
+
+    #[test]
+    fn cloned_raw_connection_shares_database() {
+        let path = CString::new(":memory:").unwrap();
+        let mut first = RawConnection::open_with_flags(&path, Config::default()).unwrap();
+        first.query("CREATE TABLE shared (value INTEGER); INSERT INTO shared VALUES (3)").unwrap();
+        let mut second = first.try_clone().unwrap();
+        let mut rows = second.query("SELECT value FROM shared").unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("value").unwrap(), &crate::types::value::DuckValue::Int(3));
+    }
+
+    #[test]
+    fn insert_reports_when_no_rows_change() {
+        let path = CString::new(":memory:").unwrap();
+        let mut conn = RawConnection::open_with_flags(&path, Config::default()).unwrap();
+        let error = conn.insert::<i32, _>("SELECT $1", std::iter::once(1)).unwrap_err();
+        assert!(matches!(
+            error,
+            Error::DuckDBFailure(_, Some(message)) if message == "Failed to insert values"
+        ));
+    }
 }

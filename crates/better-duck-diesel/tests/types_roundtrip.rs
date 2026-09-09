@@ -8,8 +8,18 @@
 //! 4. Selects it back (exercising `FromSql`).
 //! 5. Asserts the value is preserved.
 
-use better_duck_diesel::DuckDbConnection;
-use diesel::{connection::SimpleConnection, prelude::*};
+use better_duck_core::types::value::DuckValue;
+use better_duck_diesel::{backend::DuckDb, DuckDbConnection};
+use diesel::{connection::SimpleConnection, deserialize::FromSql, prelude::*, sql_types::SqlType};
+
+/// Assert that a concrete adapter rejects a value carried by the wrong DuckDB variant.
+fn assert_from_sql_rejects<ST, T>(value: better_duck_core::types::value_ref::DuckValueRef<'_>)
+where
+    ST: SqlType,
+    T: FromSql<ST, DuckDb>,
+{
+    assert!(T::from_sql(value).is_err());
+}
 
 // Helper
 
@@ -142,6 +152,13 @@ diesel::table! {
         val -> DuckUHugeInt,
     }
 }
+#[cfg(feature = "decimal")]
+diesel::table! {
+    t_decimal (id) {
+        id  -> Integer,
+        val -> Numeric,
+    }
+}
 
 // Chrono type tables (feature-gated)
 
@@ -226,8 +243,8 @@ fn rt_bool_false() {
 // ══════════════════════════════════════════════════════════════════════════
 // Tests: DuckDB-specific integer types
 //
-// INSERT uses raw SQL (AsExpression<DuckXxx> is not provided for primitive
-// types). SELECT uses the Diesel DSL to exercise FromSql.
+// DuckDB-specific integer adapters are exercised through explicit bind parameters,
+// because Diesel does not provide `AsExpression` implementations for these marker types.
 // ══════════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -305,6 +322,56 @@ fn rt_u128_boundary() {
     assert_eq!(row.val, big);
 }
 
+#[test]
+fn rt_duck_specific_integers_bind_and_read() {
+    use better_duck_diesel::sql_types::{
+        DuckHugeInt, DuckTinyInt, DuckUBigInt, DuckUHugeInt, DuckUInt, DuckUSmallInt, DuckUTinyInt,
+    };
+
+    macro_rules! assert_bind_roundtrip {
+        ($ddl:literal, $sql_ty:ty, $rust_ty:ty, $value:expr) => {{
+            #[derive(diesel::QueryableByName, Debug)]
+            struct Row {
+                #[diesel(sql_type = $sql_ty)]
+                val: $rust_ty,
+            }
+
+            let mut conn = conn_with($ddl);
+            let expected: $rust_ty = $value;
+            diesel::sql_query("INSERT INTO adapter_value VALUES ($1)")
+                .bind::<$sql_ty, _>(expected)
+                .execute(&mut conn)
+                .unwrap();
+            let row: Row =
+                diesel::sql_query("SELECT val FROM adapter_value").get_result(&mut conn).unwrap();
+            assert_eq!(row.val, expected);
+        }};
+    }
+
+    assert_bind_roundtrip!("CREATE TABLE adapter_value (val TINYINT)", DuckTinyInt, i8, i8::MIN);
+    assert_bind_roundtrip!("CREATE TABLE adapter_value (val UTINYINT)", DuckUTinyInt, u8, u8::MAX);
+    assert_bind_roundtrip!(
+        "CREATE TABLE adapter_value (val USMALLINT)",
+        DuckUSmallInt,
+        u16,
+        u16::MAX
+    );
+    assert_bind_roundtrip!("CREATE TABLE adapter_value (val UINTEGER)", DuckUInt, u32, u32::MAX);
+    assert_bind_roundtrip!("CREATE TABLE adapter_value (val UBIGINT)", DuckUBigInt, u64, u64::MAX);
+    assert_bind_roundtrip!(
+        "CREATE TABLE adapter_value (val HUGEINT)",
+        DuckHugeInt,
+        i128,
+        i128::MIN
+    );
+    assert_bind_roundtrip!(
+        "CREATE TABLE adapter_value (val UHUGEINT)",
+        DuckUHugeInt,
+        u128,
+        u128::MAX
+    );
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Tests: standard integer types
 // ══════════════════════════════════════════════════════════════════════════
@@ -376,6 +443,52 @@ fn rt_f64() {
     assert!((v - x).abs() < 1e-14);
 }
 
+#[cfg(feature = "decimal")]
+#[test]
+fn rt_decimal_signed_scale_and_zero() {
+    use diesel::sql_types::Numeric;
+    use rust_decimal::Decimal;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = Numeric)]
+        val: Decimal,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_decimal (id INTEGER, val DECIMAL(18, 6))");
+    let values = [Decimal::new(-12_345_678, 6), Decimal::ZERO, Decimal::new(98_765_432, 6)];
+    for (id, value) in values.iter().enumerate() {
+        diesel::sql_query("INSERT INTO t_decimal VALUES ($1, $2)")
+            .bind::<diesel::sql_types::Integer, _>(id as i32)
+            .bind::<Numeric, _>(*value)
+            .execute(&mut conn)
+            .unwrap();
+    }
+    let rows: Vec<Row> =
+        diesel::sql_query("SELECT val FROM t_decimal ORDER BY id").load(&mut conn).unwrap();
+    assert_eq!(rows.into_iter().map(|row| row.val).collect::<Vec<_>>(), values);
+}
+
+#[test]
+fn rt_text_from_distinct_dictionary_encoding() {
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        val: String,
+    }
+
+    let mut conn = conn_with("CREATE TABLE source_text (val VARCHAR)");
+    conn.batch_execute("INSERT INTO source_text VALUES ('alpha'), ('alpha'), ('beta')").unwrap();
+    let mut rows: Vec<String> = diesel::sql_query("SELECT DISTINCT val FROM source_text")
+        .load::<Row>(&mut conn)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.val)
+        .collect();
+    rows.sort();
+    assert_eq!(rows, ["alpha", "beta"]);
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Tests: text
 // ══════════════════════════════════════════════════════════════════════════
@@ -443,6 +556,24 @@ fn rt_blob_empty() {
     assert_eq!(v, data);
 }
 
+#[test]
+fn rt_blob_nullable_none() {
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Binary>)]
+        val: Option<Vec<u8>>,
+    }
+
+    let mut conn = conn_with("CREATE TABLE nullable_blob (val BLOB)");
+    diesel::sql_query("INSERT INTO nullable_blob VALUES ($1)")
+        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Binary>, _>(None::<Vec<u8>>)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM nullable_blob").get_result(&mut conn).unwrap();
+    assert_eq!(row.val, None);
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Tests: nullable
 // ══════════════════════════════════════════════════════════════════════════
@@ -467,6 +598,60 @@ fn rt_nullable_none() {
         .unwrap();
     let v: Option<i32> = t_nullable::table.select(t_nullable::val).first(&mut conn).unwrap();
     assert_eq!(v, None);
+}
+
+#[test]
+fn non_nullable_adapter_rejects_sql_null() {
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = diesel::sql_types::Integer)]
+        _val: i32,
+    }
+
+    let mut conn = conn_with("CREATE TABLE non_null_target (val INTEGER)");
+    conn.batch_execute("INSERT INTO non_null_target VALUES (NULL)").unwrap();
+    let error = diesel::sql_query("SELECT val FROM non_null_target")
+        .get_result::<Row>(&mut conn)
+        .unwrap_err();
+    assert!(matches!(error, diesel::result::Error::DeserializationError(_)));
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Tests: decimal
+// ══════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "decimal")]
+#[test]
+fn rt_decimal_positive_negative_and_zero() {
+    use diesel::sql_types::{Integer, Numeric};
+    use rust_decimal::Decimal;
+
+    #[derive(diesel::QueryableByName)]
+    struct Row {
+        #[diesel(sql_type = Numeric)]
+        val: Decimal,
+    }
+
+    let mut conn =
+        conn_with("CREATE TABLE t_decimal_values (id INTEGER PRIMARY KEY, val DECIMAL(18, 4))");
+    let values =
+        [(1, Decimal::new(123_456, 4)), (2, Decimal::new(-98_765, 4)), (3, Decimal::new(0, 4))];
+    for (id, value) in values {
+        diesel::sql_query("INSERT INTO t_decimal_values VALUES ($1, $2)")
+            .bind::<Integer, _>(id)
+            .bind::<Numeric, _>(value)
+            .execute(&mut conn)
+            .unwrap();
+    }
+
+    let actual: Vec<Decimal> = diesel::sql_query("SELECT val FROM t_decimal_values ORDER BY id")
+        .load::<Row>(&mut conn)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.val)
+        .collect();
+    assert_eq!(actual, values.map(|(_, value)| value));
+    assert!(actual.iter().all(|value| value.scale() == 4));
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -522,22 +707,43 @@ fn rt_timestamptz() {
     use chrono::{DateTime, TimeZone, Utc};
     let mut conn =
         conn_with("CREATE TABLE t_timestamptz (id INTEGER PRIMARY KEY, val TIMESTAMPTZ NOT NULL)");
-    // INSERT via raw SQL; SELECT via Diesel DSL (exercises FromSql).
-    conn.batch_execute(
-        "INSERT INTO t_timestamptz VALUES (1, '2024-06-01 12:00:00+00'::TIMESTAMPTZ)",
-    )
-    .unwrap();
+    let expected: DateTime<Utc> = Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap();
+    diesel::sql_query("INSERT INTO t_timestamptz VALUES ($1, $2)")
+        .bind::<diesel::sql_types::Integer, _>(1)
+        .bind::<better_duck_diesel::sql_types::DuckTimestamptz, _>(expected)
+        .execute(&mut conn)
+        .unwrap();
     let v: DateTime<Utc> =
         t_timestamptz::table.select(t_timestamptz::val).first(&mut conn).unwrap();
-    let expected: DateTime<Utc> = Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap();
-    assert_eq!(v.timestamp(), expected.timestamp());
+    assert_eq!(v, expected);
+}
+
+#[cfg(feature = "chrono")]
+#[test]
+fn rt_interval_chrono() {
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = diesel::sql_types::Interval)]
+        val: chrono::Duration,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_interval_chrono (val INTERVAL NOT NULL)");
+    let value = chrono::Duration::days(3)
+        + chrono::Duration::seconds(7_321)
+        + chrono::Duration::microseconds(456_789);
+    diesel::sql_query("INSERT INTO t_interval_chrono VALUES ($1)")
+        .bind::<diesel::sql_types::Interval, _>(value)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row = diesel::sql_query("SELECT val FROM t_interval_chrono LIMIT 1")
+        .get_result(&mut conn)
+        .unwrap();
+    assert_eq!(row.val, value);
 }
 
 #[cfg(feature = "chrono")]
 #[test]
 fn rt_time_tz() {
-    // Use QueryableByName — Diesel's Queryable blanket doesn't extend to the custom TimeTz
-    // struct, but FromSql<DuckTimeTz, DuckDb> for TimeTz is implemented and works via sql_query.
     use better_duck_core::types::date_chrono::TimeTz;
     use better_duck_diesel::sql_types::DuckTimeTz;
     use chrono::NaiveTime;
@@ -549,27 +755,44 @@ fn rt_time_tz() {
     }
 
     let mut conn = conn_with("CREATE TABLE t_timetz (id INTEGER PRIMARY KEY, val TIMETZ NOT NULL)");
-    conn.batch_execute("INSERT INTO t_timetz VALUES (1, '14:30:00+01'::TIMETZ)").unwrap();
+    let expected = TimeTz {
+        time: NaiveTime::from_hms_micro_opt(14, 30, 0, 123_456).unwrap(),
+        offset_secs: 3_600,
+    };
+    diesel::sql_query("INSERT INTO t_timetz VALUES ($1, $2)")
+        .bind::<diesel::sql_types::Integer, _>(1i32)
+        .bind::<DuckTimeTz, _>(expected)
+        .execute(&mut conn)
+        .unwrap();
     let row: TzRow =
         diesel::sql_query("SELECT val FROM t_timetz LIMIT 1").get_result(&mut conn).unwrap();
-    let expected_time = NaiveTime::from_hms_opt(14, 30, 0).unwrap();
-    assert_eq!(row.val.time, expected_time);
-    assert_eq!(row.val.offset_secs, 3_600);
+    assert_eq!(row.val, expected);
 }
 
 #[cfg(feature = "chrono")]
 #[test]
-fn rt_time_ns() {
-    use chrono::{NaiveTime, Timelike};
-    let mut conn =
-        conn_with("CREATE TABLE t_time_ns (id INTEGER PRIMARY KEY, val TIME_NS NOT NULL)");
-    // INSERT via raw SQL; SELECT via Diesel DSL (exercises FromSql).
-    conn.batch_execute("INSERT INTO t_time_ns VALUES (1, '14:30:00'::TIME_NS)").unwrap();
-    let v: NaiveTime = t_time_ns::table.select(t_time_ns::val).first(&mut conn).unwrap();
-    let expected = NaiveTime::from_hms_opt(14, 30, 0).unwrap();
-    assert_eq!(v.hour(), expected.hour());
-    assert_eq!(v.minute(), expected.minute());
-    assert_eq!(v.second(), expected.second());
+fn rt_chrono_interval_signed_and_fractional() {
+    use chrono::Duration;
+    use diesel::sql_types::Interval;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = Interval)]
+        val: Duration,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_interval (id INTEGER, val INTERVAL)");
+    let values = [Duration::microseconds(-1_234_567), Duration::microseconds(9_876_543)];
+    for (id, value) in values.iter().enumerate() {
+        diesel::sql_query("INSERT INTO t_interval VALUES ($1, $2)")
+            .bind::<diesel::sql_types::Integer, _>(id as i32)
+            .bind::<Interval, _>(*value)
+            .execute(&mut conn)
+            .unwrap();
+    }
+    let rows: Vec<Row> =
+        diesel::sql_query("SELECT val FROM t_interval ORDER BY id").load(&mut conn).unwrap();
+    assert_eq!(rows.into_iter().map(|row| row.val).collect::<Vec<_>>(), values);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -656,6 +879,26 @@ fn rt_list_with_null_element() {
     assert!(matches!(row.val[2], DuckValue::Int(3)));
 }
 
+#[test]
+fn rt_list_nullable_none() {
+    use better_duck_diesel::sql_types::DuckList;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = diesel::sql_types::Nullable<DuckList>)]
+        val: Option<Vec<DuckValue>>,
+    }
+
+    let mut conn = conn_with("CREATE TABLE nullable_list (val INTEGER[])");
+    diesel::sql_query("INSERT INTO nullable_list VALUES ($1)")
+        .bind::<diesel::sql_types::Nullable<DuckList>, _>(None::<Vec<DuckValue>>)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM nullable_list").get_result(&mut conn).unwrap();
+    assert_eq!(row.val, None);
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Tests: ENUM (via sql_query)
 // ══════════════════════════════════════════════════════════════════════════
@@ -704,6 +947,42 @@ fn rt_enum_nullable_null() {
     assert_eq!(row.val, None);
 }
 
+#[test]
+fn rt_enum_bind_all_labels_and_reject_unknown() {
+    use better_duck_diesel::sql_types::DuckEnum;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckEnum)]
+        val: String,
+    }
+
+    let mut conn = conn_with(
+        "CREATE TYPE adapter_status AS ENUM ('ok', 'warning', 'err');
+         CREATE TABLE enum_bind (id INTEGER, val adapter_status)",
+    );
+    for (id, label) in ["ok", "warning", "err"].into_iter().enumerate() {
+        diesel::sql_query("INSERT INTO enum_bind VALUES ($1, $2)")
+            .bind::<diesel::sql_types::Integer, _>(id as i32)
+            .bind::<DuckEnum, _>(label)
+            .execute(&mut conn)
+            .unwrap();
+    }
+    let labels: Vec<String> = diesel::sql_query("SELECT val FROM enum_bind ORDER BY id")
+        .load::<Row>(&mut conn)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.val)
+        .collect();
+    assert_eq!(labels, ["ok", "warning", "err"]);
+
+    let error = diesel::sql_query("INSERT INTO enum_bind VALUES (9, $1)")
+        .bind::<DuckEnum, _>("unknown")
+        .execute(&mut conn)
+        .unwrap_err();
+    assert!(!error.to_string().is_empty());
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Tests: non-chrono DATE (date_native)
 // ══════════════════════════════════════════════════════════════════════════
@@ -720,10 +999,242 @@ fn rt_date_native() {
     }
 
     let mut conn = conn_with("CREATE TABLE t_date_native (val DATE NOT NULL)");
-    conn.batch_execute("INSERT INTO t_date_native VALUES ('2024-06-15')").unwrap();
+    let value = DuckDate { year: 2024, month: 6, day: 15 };
+    diesel::sql_query("INSERT INTO t_date_native VALUES ($1)")
+        .bind::<diesel::sql_types::Date, _>(value)
+        .execute(&mut conn)
+        .unwrap();
     let row: Row =
         diesel::sql_query("SELECT val FROM t_date_native LIMIT 1").get_result(&mut conn).unwrap();
-    assert_eq!(row.val, DuckDate { year: 2024, month: 6, day: 15 });
+    assert_eq!(row.val, value);
+}
+
+#[cfg(not(feature = "chrono"))]
+#[test]
+fn rt_time_native() {
+    use better_duck_core::types::date_native::DuckTime;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = diesel::sql_types::Time)]
+        val: DuckTime,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_time_native (val TIME NOT NULL)");
+    let value = DuckTime { hour: 14, min: 30, sec: 45, micros: 123_456 };
+    diesel::sql_query("INSERT INTO t_time_native VALUES ($1)")
+        .bind::<diesel::sql_types::Time, _>(value)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_time_native LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(row.val, value);
+}
+
+#[cfg(not(feature = "chrono"))]
+#[test]
+fn rt_timestamp_native() {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = diesel::sql_types::Timestamp)]
+        val: std::time::SystemTime,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_timestamp_native (val TIMESTAMP NOT NULL)");
+    let value = UNIX_EPOCH + Duration::from_secs(1_717_243_200) + Duration::from_micros(654_321);
+    diesel::sql_query("INSERT INTO t_timestamp_native VALUES ($1)")
+        .bind::<diesel::sql_types::Timestamp, _>(value)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row = diesel::sql_query("SELECT val FROM t_timestamp_native LIMIT 1")
+        .get_result(&mut conn)
+        .unwrap();
+    assert_eq!(row.val, value);
+}
+
+#[cfg(not(feature = "chrono"))]
+#[test]
+fn rt_interval_native() {
+    use std::time::Duration;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = diesel::sql_types::Interval)]
+        val: Duration,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_interval_native (val INTERVAL NOT NULL)");
+    let value = Duration::from_secs(3 * 86_400 + 7_321) + Duration::from_micros(456_789);
+    diesel::sql_query("INSERT INTO t_interval_native VALUES ($1)")
+        .bind::<diesel::sql_types::Interval, _>(value)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row = diesel::sql_query("SELECT val FROM t_interval_native LIMIT 1")
+        .get_result(&mut conn)
+        .unwrap();
+    assert_eq!(row.val, value);
+}
+
+#[cfg(not(feature = "chrono"))]
+#[test]
+fn rt_timestamptz_native() {
+    use better_duck_diesel::sql_types::DuckTimestamptz;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckTimestamptz)]
+        val: std::time::SystemTime,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_timestamptz_native (val TIMESTAMPTZ NOT NULL)");
+    let value = UNIX_EPOCH + Duration::from_secs(1_717_243_200) + Duration::from_micros(654_321);
+    diesel::sql_query("INSERT INTO t_timestamptz_native VALUES ($1)")
+        .bind::<DuckTimestamptz, _>(value)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row = diesel::sql_query("SELECT val FROM t_timestamptz_native LIMIT 1")
+        .get_result(&mut conn)
+        .unwrap();
+    assert_eq!(row.val, value);
+}
+
+#[cfg(not(feature = "chrono"))]
+#[test]
+fn rt_timetz_native() {
+    use better_duck_core::types::date_native::DuckTimeTz;
+    use better_duck_diesel::sql_types::DuckTimeTz as DuckTimeTzTy;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckTimeTzTy)]
+        val: DuckTimeTz,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_timetz_native (val TIMETZ NOT NULL)");
+    let value = DuckTimeTz { hour: 14, min: 30, sec: 45, micros: 123_456, offset_secs: 3_600 };
+    diesel::sql_query("INSERT INTO t_timetz_native VALUES ($1)")
+        .bind::<DuckTimeTzTy, _>(value)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_timetz_native LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(row.val, value);
+}
+
+#[cfg(not(feature = "chrono"))]
+#[test]
+fn rt_time_ns_native() {
+    use better_duck_core::types::date_native::DuckTimeNs;
+    use better_duck_diesel::sql_types::DuckTimeNs as DuckTimeNsTy;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckTimeNsTy)]
+        val: DuckTimeNs,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_time_ns_native (val TIME_NS NOT NULL)");
+    let value = DuckTimeNs { hour: 14, min: 30, sec: 45, nanos: 123_456_789 };
+    diesel::sql_query("INSERT INTO t_time_ns_native VALUES ($1)")
+        .bind::<DuckTimeNsTy, _>(value)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row = diesel::sql_query("SELECT val FROM t_time_ns_native LIMIT 1")
+        .get_result(&mut conn)
+        .unwrap();
+    assert_eq!(row.val, value);
+}
+
+#[cfg(not(feature = "chrono"))]
+#[test]
+fn rt_native_date_time_adapters_bind_and_read() {
+    use better_duck_core::types::date_native::{DuckDate, DuckTime, DuckTimeNs, DuckTimeTz};
+    use better_duck_diesel::sql_types::{DuckTimeNs as DuckTimeNsTy, DuckTimeTz as DuckTimeTzTy};
+    use diesel::sql_types::{Date, Time};
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = Date)]
+        date_value: DuckDate,
+        #[diesel(sql_type = Time)]
+        time_value: DuckTime,
+        #[diesel(sql_type = DuckTimeTzTy)]
+        time_tz_value: DuckTimeTz,
+        #[diesel(sql_type = DuckTimeNsTy)]
+        time_ns_value: DuckTimeNs,
+    }
+
+    let mut conn = conn_with(
+        "CREATE TABLE native_components (
+            date_value DATE, time_value TIME, time_tz_value TIME WITH TIME ZONE,
+            time_ns_value TIME_NS
+        )",
+    );
+    let date_value = DuckDate { year: 1999, month: 12, day: 31 };
+    let time_value = DuckTime { hour: 23, min: 59, sec: 58, micros: 654_321 };
+    let time_tz_value =
+        DuckTimeTz { hour: 1, min: 2, sec: 3, micros: 456_789, offset_secs: 5 * 3600 + 30 * 60 };
+    let time_ns_value = DuckTimeNs { hour: 4, min: 5, sec: 6, nanos: 123_456_789 };
+    diesel::sql_query("INSERT INTO native_components VALUES ($1, $2, $3, $4)")
+        .bind::<Date, _>(date_value)
+        .bind::<Time, _>(time_value)
+        .bind::<DuckTimeTzTy, _>(time_tz_value)
+        .bind::<DuckTimeNsTy, _>(time_ns_value)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row = diesel::sql_query(
+        "SELECT date_value, time_value, time_tz_value, time_ns_value FROM native_components",
+    )
+    .get_result(&mut conn)
+    .unwrap();
+    assert_eq!(row.date_value, date_value);
+    assert_eq!(row.time_value, time_value);
+    assert_eq!(row.time_tz_value, time_tz_value);
+    assert_eq!(row.time_ns_value, time_ns_value);
+}
+
+#[cfg(not(feature = "chrono"))]
+#[test]
+fn rt_native_timestamp_interval_and_timestamptz_bind_and_read() {
+    use better_duck_diesel::sql_types::DuckTimestamptz;
+    use diesel::sql_types::{Interval, Timestamp};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = Timestamp)]
+        timestamp_value: std::time::SystemTime,
+        #[diesel(sql_type = DuckTimestamptz)]
+        timestamptz_value: std::time::SystemTime,
+        #[diesel(sql_type = Interval)]
+        interval_value: Duration,
+    }
+
+    let mut conn = conn_with(
+        "CREATE TABLE native_temporal (
+            timestamp_value TIMESTAMP, timestamptz_value TIMESTAMPTZ, interval_value INTERVAL
+        )",
+    );
+    let timestamp = UNIX_EPOCH + Duration::from_micros(1_234_567_890);
+    let timestamptz = UNIX_EPOCH + Duration::from_micros(9_876_543_210);
+    let interval = Duration::from_micros(3_600_123_456);
+    diesel::sql_query("INSERT INTO native_temporal VALUES ($1, $2, $3)")
+        .bind::<Timestamp, _>(timestamp)
+        .bind::<DuckTimestamptz, _>(timestamptz)
+        .bind::<Interval, _>(interval)
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row = diesel::sql_query(
+        "SELECT timestamp_value, timestamptz_value, interval_value FROM native_temporal",
+    )
+    .get_result(&mut conn)
+    .unwrap();
+    assert_eq!(row.timestamp_value, timestamp);
+    assert_eq!(row.timestamptz_value, timestamptz);
+    assert_eq!(row.interval_value, interval);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -829,6 +1340,41 @@ fn rt_array_elements() {
     assert_eq!(row.val, vec![DuckValue::Int(1), DuckValue::Int(2), DuckValue::Int(3)]);
 }
 
+#[test]
+fn complex_types_nullable_none() {
+    use better_duck_diesel::sql_types::{DuckArray, DuckMap, DuckStruct, DuckUnion};
+    use std::collections::HashMap;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = diesel::sql_types::Nullable<DuckStruct>)]
+        struct_value: Option<HashMap<String, DuckValue>>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<DuckMap>)]
+        map_value: Option<HashMap<DuckValue, DuckValue>>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<DuckArray>)]
+        array_value: Option<Vec<DuckValue>>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<DuckUnion>)]
+        union_value: Option<Box<DuckValue>>,
+    }
+
+    let mut conn = conn_with(
+        "CREATE TABLE nullable_complex (
+            struct_value STRUCT(name VARCHAR), map_value MAP(INTEGER, VARCHAR),
+            array_value INTEGER[2], union_value UNION(number INTEGER, text VARCHAR)
+        )",
+    );
+    conn.batch_execute("INSERT INTO nullable_complex VALUES (NULL, NULL, NULL, NULL)").unwrap();
+    let row: Row = diesel::sql_query(
+        "SELECT struct_value, map_value, array_value, union_value FROM nullable_complex",
+    )
+    .get_result(&mut conn)
+    .unwrap();
+    assert_eq!(row.struct_value, None);
+    assert_eq!(row.map_value, None);
+    assert_eq!(row.array_value, None);
+    assert_eq!(row.union_value, None);
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Tests: UUID / BIT / BIGNUM (via sql_query)
 // ══════════════════════════════════════════════════════════════════════════
@@ -900,4 +1446,122 @@ fn rt_bignum_bind_and_read() {
     let row: Row =
         diesel::sql_query("SELECT val FROM t_bignum LIMIT 1").get_result(&mut conn).unwrap();
     assert_eq!(row.val, value);
+}
+
+#[test]
+fn rt_uuid_nil_and_max_bind_and_read() {
+    use better_duck_core::types::uuid::DuckUuid;
+    use better_duck_diesel::sql_types::DuckUuid as DuckUuidTy;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckUuidTy)]
+        val: DuckUuid,
+    }
+
+    let mut conn = conn_with("CREATE TABLE uuid_edges (id INTEGER, val UUID)");
+    let values = [DuckUuid(0), DuckUuid(u128::MAX)];
+    for (id, value) in values.iter().enumerate() {
+        diesel::sql_query("INSERT INTO uuid_edges VALUES ($1, $2)")
+            .bind::<diesel::sql_types::Integer, _>(id as i32)
+            .bind::<DuckUuidTy, _>(*value)
+            .execute(&mut conn)
+            .unwrap();
+    }
+    let rows: Vec<Row> =
+        diesel::sql_query("SELECT val FROM uuid_edges ORDER BY id").load(&mut conn).unwrap();
+    assert_eq!(rows.into_iter().map(|row| row.val).collect::<Vec<_>>(), values);
+}
+
+#[test]
+fn rt_bit_edge_patterns_bind_and_read() {
+    use better_duck_core::types::bit::DuckBit;
+    use better_duck_diesel::sql_types::DuckBit as DuckBitTy;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckBitTy)]
+        val: DuckBit,
+    }
+
+    let mut conn = conn_with("CREATE TABLE bit_edges (id INTEGER, val BIT)");
+    let values = [
+        DuckBit::new(vec![0]),
+        DuckBit::new(vec![7, 0b1000_0000]),
+        DuckBit::new(vec![3, 0b1110_0000]),
+        DuckBit::new(vec![0, 0xff]),
+    ];
+    for (id, value) in values.iter().enumerate() {
+        diesel::sql_query("INSERT INTO bit_edges VALUES ($1, $2)")
+            .bind::<diesel::sql_types::Integer, _>(id as i32)
+            .bind::<DuckBitTy, _>(value.clone())
+            .execute(&mut conn)
+            .unwrap();
+    }
+    let rows: Vec<Row> =
+        diesel::sql_query("SELECT val FROM bit_edges ORDER BY id").load(&mut conn).unwrap();
+    assert_eq!(rows.into_iter().map(|row| row.val).collect::<Vec<_>>(), values);
+}
+
+#[test]
+fn rt_bignum_sign_zero_and_large_bind_and_read() {
+    use better_duck_core::types::bignum::DuckBignum;
+    use better_duck_diesel::sql_types::DuckBignum as DuckBignumTy;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckBignumTy)]
+        val: DuckBignum,
+    }
+
+    let mut conn = conn_with("CREATE TABLE bignum_edges (id INTEGER, val BIGNUM)");
+    let values = [
+        DuckBignum::new(vec![0], false),
+        DuckBignum::new(vec![42], true),
+        DuckBignum::new(vec![0xff; 32], false),
+    ];
+    for (id, value) in values.iter().enumerate() {
+        diesel::sql_query("INSERT INTO bignum_edges VALUES ($1, $2)")
+            .bind::<diesel::sql_types::Integer, _>(id as i32)
+            .bind::<DuckBignumTy, _>(value.clone())
+            .execute(&mut conn)
+            .unwrap();
+    }
+    let rows: Vec<Row> =
+        diesel::sql_query("SELECT val FROM bignum_edges ORDER BY id").load(&mut conn).unwrap();
+    assert_eq!(rows.into_iter().map(|row| row.val).collect::<Vec<_>>(), values);
+}
+
+#[test]
+fn from_sql_rejects_wrong_variants() {
+    use better_duck_core::types::value_ref::DuckValueRef;
+    use better_duck_diesel::sql_types::{
+        DuckArray, DuckBignum, DuckBit, DuckEnum, DuckHugeInt, DuckList, DuckMap, DuckStruct,
+        DuckUnion, DuckUuid,
+    };
+    use diesel::sql_types::{Binary, Bool, Integer, Text};
+    use std::collections::HashMap;
+
+    assert_from_sql_rejects::<Bool, bool>(DuckValueRef::Int(1));
+    assert_from_sql_rejects::<Integer, i32>(DuckValueRef::Text("1".into()));
+    assert_from_sql_rejects::<DuckHugeInt, i128>(DuckValueRef::Int(1));
+    assert_from_sql_rejects::<Text, String>(DuckValueRef::Int(1));
+    assert_from_sql_rejects::<DuckEnum, String>(DuckValueRef::Text("ok".into()));
+    assert_from_sql_rejects::<Binary, Vec<u8>>(DuckValueRef::Text("blob".into()));
+    assert_from_sql_rejects::<DuckList, Vec<DuckValue>>(DuckValueRef::Array(Box::new([])));
+    assert_from_sql_rejects::<DuckArray, Vec<DuckValue>>(DuckValueRef::List(Vec::new()));
+    assert_from_sql_rejects::<DuckStruct, HashMap<String, DuckValue>>(DuckValueRef::Map(
+        HashMap::new(),
+    ));
+    assert_from_sql_rejects::<DuckMap, HashMap<DuckValue, DuckValue>>(DuckValueRef::Struct(
+        HashMap::new(),
+    ));
+    assert_from_sql_rejects::<DuckUnion, Box<DuckValue>>(DuckValueRef::Int(1));
+    assert_from_sql_rejects::<DuckUuid, better_duck_core::types::uuid::DuckUuid>(
+        DuckValueRef::Int(1),
+    );
+    assert_from_sql_rejects::<DuckBit, better_duck_core::types::bit::DuckBit>(DuckValueRef::Int(1));
+    assert_from_sql_rejects::<DuckBignum, better_duck_core::types::bignum::DuckBignum>(
+        DuckValueRef::Int(1),
+    );
 }

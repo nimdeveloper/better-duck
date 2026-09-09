@@ -103,3 +103,50 @@ impl DuckLogicalType for &str {
         String::duck_logical_type()
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::undocumented_unsafe_blocks)]
+mod tests {
+    use super::*;
+    use crate::ffi::{
+        duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_get_type_id,
+        DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
+    };
+
+    #[test]
+    fn string_roundtrip_preserves_empty_unicode_and_multibyte_text() {
+        for text in ["", "hello", "Καλημέρα", "duck 🦆"] {
+            let value = text.to_owned();
+            let mut duck_value = value.to_duck().unwrap();
+            assert_eq!(String::from_duck(duck_value).unwrap(), value);
+            unsafe { duckdb_destroy_value(&mut duck_value) };
+        }
+    }
+
+    #[test]
+    fn interior_nul_is_a_conversion_error() {
+        let err = "before\0after".to_owned().to_duck().unwrap_err();
+        assert!(
+            matches!(err, DuckDBConversionError::ConversionError(message) if message.contains("nul byte"))
+        );
+    }
+
+    #[test]
+    fn borrowed_and_owned_strings_report_varchar_logical_type() {
+        for mut logical_type in
+            [String::duck_logical_type().unwrap(), <&str>::duck_logical_type().unwrap()]
+        {
+            assert_eq!(
+                unsafe { duckdb_get_type_id(logical_type) },
+                DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR
+            );
+            unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+        }
+    }
+
+    #[test]
+    fn string_conversions_create_text_values() {
+        assert_eq!(DuckValue::from("borrowed"), DuckValue::Text("borrowed".to_owned()));
+        assert_eq!(DuckValue::from("owned".to_owned()), DuckValue::Text("owned".to_owned()));
+    }
+}

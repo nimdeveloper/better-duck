@@ -312,3 +312,39 @@ pub struct DuckDbOnConflictClause;
 impl sql_dialect::on_conflict_clause::SupportsOnConflictClause for DuckDbOnConflictClause {}
 impl sql_dialect::on_conflict_clause::PgLikeOnConflictClause for DuckDbOnConflictClause {}
 impl sql_dialect::on_conflict_clause::SupportsOnConflictClauseWhere for DuckDbOnConflictClause {}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    use better_duck_core::types::Type;
+
+    use super::DuckDbTypeWrapper;
+
+    fn hash(value: &DuckDbTypeWrapper) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn equal_composite_types_have_equal_hashes() {
+        let left = DuckDbTypeWrapper(Type::Array(
+            vec![Type::Int, Type::Union(Box::new(Type::Text))].into_boxed_slice(),
+        ));
+        let right = left.clone();
+        assert_eq!(left, right);
+        assert_eq!(hash(&left), hash(&right));
+    }
+
+    #[test]
+    fn distinct_composite_shapes_hash_differently() {
+        let array = DuckDbTypeWrapper(Type::Array(vec![Type::Int].into_boxed_slice()));
+        let union = DuckDbTypeWrapper(Type::Union(Box::new(Type::Int)));
+        let longer_array =
+            DuckDbTypeWrapper(Type::Array(vec![Type::Int, Type::Int].into_boxed_slice()));
+        assert_ne!(hash(&array), hash(&union));
+        assert_ne!(hash(&array), hash(&longer_array));
+    }
+}

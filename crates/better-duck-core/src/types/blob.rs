@@ -113,3 +113,108 @@ impl From<Blob> for value::DuckValue {
         value::DuckValue::Blob(b)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeSet, HashSet};
+
+    use super::*;
+    use crate::{
+        connection::Connection,
+        ffi::{
+            duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_get_type_id,
+            DUCKDB_TYPE_DUCKDB_TYPE_BLOB,
+        },
+        types::value::DuckValue,
+    };
+
+    fn assert_ffi_round_trip(expected: Blob) {
+        let mut raw = expected.to_duck().unwrap();
+        let actual = Blob::from_duck(raw);
+        // SAFETY: `raw` was created by `to_duck` above and is destroyed exactly once here.
+        unsafe { duckdb_destroy_value(&mut raw) };
+        assert_eq!(actual.unwrap(), expected);
+    }
+
+    #[test]
+    fn constructor_access_and_standard_conversions_preserve_bytes() {
+        let bytes = vec![0, 1, 0, 255];
+        let blob = Blob::new(bytes.clone());
+        assert_eq!(blob.as_bytes(), bytes.as_slice());
+
+        let from_vec = Blob::from(bytes.clone());
+        let back_to_vec: Vec<u8> = from_vec.into();
+        assert_eq!(back_to_vec, bytes);
+    }
+
+    #[test]
+    fn ordering_and_hash_follow_byte_contents() {
+        let first = Blob::new(vec![0]);
+        let second = Blob::new(vec![0, 1]);
+        let third = Blob::new(vec![1]);
+
+        let ordered = BTreeSet::from([third.clone(), first.clone(), second.clone()]);
+        assert_eq!(ordered.into_iter().collect::<Vec<_>>(), vec![first.clone(), second, third]);
+
+        let mut hashed = HashSet::new();
+        assert!(hashed.insert(first.clone()));
+        assert!(!hashed.insert(first.clone()));
+        assert!(hashed.contains(&first));
+    }
+
+    #[test]
+    fn converts_into_duck_value_blob_variant() {
+        let blob = Blob::new(vec![0x00, 0x7f, 0xff]);
+        assert_eq!(DuckValue::from(blob.clone()), DuckValue::Blob(blob));
+    }
+
+    #[test]
+    fn ffi_round_trips_empty_blob() {
+        assert_ffi_round_trip(Blob::new(Vec::new()));
+    }
+
+    #[test]
+    fn ffi_round_trips_binary_blob_with_nul_bytes() {
+        assert_ffi_round_trip(Blob::new(vec![0, 0xff, 0, 0x80, 0x41]));
+    }
+
+    #[test]
+    fn logical_type_is_blob() {
+        let mut logical_type = Blob::duck_logical_type().unwrap();
+        // SAFETY: `logical_type` is valid until it is destroyed below.
+        let type_id = unsafe { duckdb_get_type_id(logical_type) };
+        // SAFETY: `logical_type` was created above and is destroyed exactly once here.
+        unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+        assert_eq!(type_id, DUCKDB_TYPE_DUCKDB_TYPE_BLOB);
+    }
+
+    #[test]
+    fn prepared_statement_and_appender_preserve_binary_blobs() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE blobs (value BLOB)").unwrap();
+
+        let mut prepared_blob = Blob::new(vec![0, 1, 0, 255]);
+        conn.execute_with("INSERT INTO blobs VALUES ($1)", &mut [&mut prepared_blob]).unwrap();
+
+        {
+            let mut appender = conn.appender("blobs", "main").unwrap();
+            let mut appender_blob = Blob::new(vec![255, 0, 2, 0]);
+            appender.append(&mut appender_blob).unwrap();
+            appender.save().unwrap();
+        }
+
+        let values = conn
+            .execute("SELECT value FROM blobs ORDER BY value")
+            .unwrap()
+            .map(|row| row.unwrap().get("value").unwrap().clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            values,
+            vec![
+                DuckValue::Blob(Blob::new(vec![0, 1, 0, 255])),
+                DuckValue::Blob(Blob::new(vec![255, 0, 2, 0])),
+            ]
+        );
+    }
+}

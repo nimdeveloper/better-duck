@@ -69,6 +69,14 @@ fn with_extra_info() -> impl Iterator<Item = i64> + Send {
     std::iter::once(duck_extra_info!(i64))
 }
 
+/// Panics during bind to exercise the generated callback boundary.
+#[duckdb_table_function(columns("n"))]
+fn panic_table() -> impl Iterator<Item = i64> + Send {
+    panic!("intentional table UDF panic");
+    #[allow(unreachable_code)]
+    std::iter::empty()
+}
+
 #[test]
 fn series_produces_expected_rows() {
     let mut conn = Connection::open_in_memory().unwrap();
@@ -178,7 +186,7 @@ fn missing_required_named_parameter_surfaces_as_query_error() {
 }
 
 #[test]
-fn projection_pushdown_flag_does_not_break_normal_execution() {
+fn projection_pushdown_maps_each_logical_column_to_output() {
     let mut conn = Connection::open_in_memory().unwrap();
     two_cols::register(&mut conn).unwrap();
 
@@ -187,10 +195,15 @@ fn projection_pushdown_flag_does_not_break_normal_execution() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("a"), Some(&DuckValue::Int(1)));
 
-    let result2 = conn.execute("SELECT a, b FROM two_cols()").unwrap();
+    let result2 = conn.execute("SELECT b FROM two_cols()").unwrap();
     let rows2: Vec<_> = result2.collect::<better_duck_core::error::Result<_>>().unwrap();
     assert_eq!(rows2.len(), 1);
     assert_eq!(rows2[0].get("b"), Some(&DuckValue::Int(2)));
+
+    let result3 = conn.execute("SELECT a, b FROM two_cols()").unwrap();
+    let rows3: Vec<_> = result3.collect::<better_duck_core::error::Result<_>>().unwrap();
+    assert_eq!(rows3.len(), 1);
+    assert_eq!(rows3[0].get("b"), Some(&DuckValue::Int(2)));
 }
 
 #[test]
@@ -200,4 +213,17 @@ fn extra_info_option_shares_registration_time_value() {
     let mut result = conn.execute("SELECT n FROM with_extra_info()").unwrap();
     let row = result.next().unwrap().unwrap();
     assert_eq!(row.get("n"), Some(&DuckValue::BigInt(100)));
+}
+
+#[test]
+fn table_function_panic_surfaces_as_query_error_and_connection_stays_usable() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    panic_table::register(&mut conn).unwrap();
+    let err = match conn.execute("SELECT n FROM panic_table()") {
+        Ok(_) => panic!("expected an error"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("intentional table UDF panic"), "{err}");
+
+    let _ = conn.execute("SELECT 1").unwrap();
 }

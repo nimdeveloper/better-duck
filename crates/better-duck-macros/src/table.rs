@@ -357,3 +357,201 @@ pub(crate) fn expand(
     };
     Ok(expanded)
 }
+
+#[cfg(test)]
+mod tests {
+    use syn::{parse_quote, Type};
+
+    use crate::attrs::{CommonAttrs, TableAttrs};
+
+    use super::{expand, extract_iterator_item};
+
+    fn compact(tokens: proc_macro2::TokenStream) -> String {
+        tokens.to_string().split_whitespace().collect()
+    }
+
+    fn assert_iterator_error(
+        ty: Type,
+        expected: &str,
+    ) {
+        let error = extract_iterator_item(&ty).unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+
+    #[test]
+    fn extracts_iterator_items_regardless_of_bound_order_or_qualification() {
+        for ty in [
+            parse_quote!(impl Iterator<Item = i64> + Send),
+            parse_quote!(impl Send + std::iter::Iterator<Item = (i32, String)>),
+        ] {
+            let item = extract_iterator_item(&ty).unwrap();
+            let actual = quote::quote!(#item).to_string();
+            assert!(actual == "i64" || actual == "(i32 , String)");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_iterator_return_shapes() {
+        assert_iterator_error(
+            parse_quote!(std::vec::IntoIter<i32>),
+            "expected `-> impl Iterator<Item = T> + Send`",
+        );
+        assert_iterator_error(
+            parse_quote!(impl Send),
+            "expected `-> impl Iterator<Item = T> + Send`",
+        );
+        assert_iterator_error(parse_quote!(impl Iterator<Item = i32>), "iterator must be `Send`");
+        assert_iterator_error(
+            parse_quote!(impl Iterator + Send),
+            "expected `-> impl Iterator<Item = T> + Send`",
+        );
+    }
+
+    #[test]
+    fn rejects_a_function_without_a_return_value() {
+        let error = expand(
+            TableAttrs::default(),
+            parse_quote!(
+                fn rows() {}
+            ),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("table functions must return"));
+    }
+
+    #[test]
+    fn expands_single_column_and_wraps_scalar_iterator_items() {
+        let tokens = compact(
+            expand(
+                TableAttrs::default(),
+                parse_quote!(
+                    fn numbers() -> impl Iterator<Item = i64> + Send {
+                        0..3
+                    }
+                ),
+            )
+            .unwrap(),
+        );
+        assert!(tokens.contains("add_result_column"));
+        assert!(tokens.contains("\"numbers\""));
+        assert!(tokens.contains("__iter.map(|v|(v,))"));
+        assert!(tokens.contains("register_table_function"));
+    }
+
+    #[test]
+    fn expands_tuple_rows_with_default_column_names() {
+        let tokens = compact(
+            expand(
+                TableAttrs::default(),
+                parse_quote!(
+                    fn pairs() -> impl Iterator<Item = (i32, String)> + Send {
+                        todo!()
+                    }
+                ),
+            )
+            .unwrap(),
+        );
+        assert!(tokens.contains("add_result_column(\"column_0\""), "{tokens}");
+        assert!(tokens.contains("add_result_column(\"column_1\""), "{tokens}");
+        assert!(!tokens.contains("__iter.map(|v|(v,))"));
+    }
+
+    #[test]
+    fn rejects_a_column_count_mismatch() {
+        let attrs =
+            TableAttrs { columns: Some(vec![parse_quote!("only_one")]), ..TableAttrs::default() };
+        let error = expand(
+            attrs,
+            parse_quote!(
+                fn pairs() -> impl Iterator<Item = (i32, i32)> + Send {
+                    todo!()
+                }
+            ),
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("`columns` lists 1 names but the row type has 2 columns"));
+    }
+
+    #[test]
+    fn rejects_unknown_named_parameters() {
+        let attrs = TableAttrs {
+            named_params: Some(vec![parse_quote!("missing")]),
+            ..TableAttrs::default()
+        };
+        let error = expand(
+            attrs,
+            parse_quote!(
+                fn rows(limit: i64) -> impl Iterator<Item = i64> + Send {
+                    todo!()
+                }
+            ),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("no parameter with that name exists"));
+    }
+
+    #[test]
+    fn expands_named_parameters_and_fallible_iterators() {
+        let attrs =
+            TableAttrs { named_params: Some(vec![parse_quote!("label")]), ..TableAttrs::default() };
+        let tokens = compact(
+            expand(
+                attrs,
+                parse_quote!(
+                    fn rows(
+                        limit: i64,
+                        label: Option<String>,
+                    ) -> Result<impl Iterator<Item = i64> + Send, Error> {
+                        todo!()
+                    }
+                ),
+            )
+            .unwrap(),
+        );
+        assert!(tokens.contains("LogicalType::of::<i64>()?"));
+        assert!(tokens.contains("String::from(\"label\")"));
+        assert!(
+            tokens.contains("super::rows(bd.p0.clone(),bd.p1.clone()).map_err(__p::boxed_error)?")
+        );
+    }
+
+    #[test]
+    fn honors_name_crate_columns_projection_and_extra_info_options() {
+        let attrs = TableAttrs {
+            common: CommonAttrs {
+                name: Some(parse_quote!("sql_rows")),
+                crate_path: Some(parse_quote!(::renamed_duck)),
+            },
+            columns: Some(vec![parse_quote!("value")]),
+            projection_pushdown: true,
+            extra_info: Some((parse_quote!(Config), parse_quote!(Config::new()))),
+            ..TableAttrs::default()
+        };
+        let tokens = compact(
+            expand(
+                attrs,
+                parse_quote!(
+                    fn rows() -> impl Iterator<Item = i64> + Send {
+                        todo!()
+                    }
+                ),
+            )
+            .unwrap(),
+        );
+        for expected in [
+            "use::renamed_duck::udf::__privateas__p",
+            "add_result_column",
+            "\"value\"",
+            "fnsupports_projection_pushdown()->bool{true}",
+            "typeBindData=BindData",
+            "Config::new()",
+            "ProjectionGuard::enter(&__proj)",
+            "register_table_function",
+            "\"sql_rows\"",
+        ] {
+            assert!(tokens.contains(expected), "missing {expected} in {tokens}");
+        }
+    }
+}

@@ -179,4 +179,42 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<Database>();
     }
+
+    #[test]
+    fn file_database_persists_after_all_handles_are_dropped() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("persistent.duckdb");
+
+        {
+            let database = Database::open(&path).unwrap();
+            let mut connection = database.connect().unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE persisted (value INTEGER); INSERT INTO persisted VALUES (42)",
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&path).unwrap();
+        let mut connection = database.connect().unwrap();
+        let mut rows = connection.execute("SELECT value FROM persisted").unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("value").unwrap(), &crate::types::value::DuckValue::Int(42));
+    }
+
+    #[test]
+    fn rejects_a_path_with_an_embedded_nul() {
+        let error = Database::open(std::path::Path::new("bad\0path.duckdb")).unwrap_err();
+        assert!(matches!(error, crate::error::Error::NulError(_)));
+    }
+
+    #[test]
+    fn config_is_applied_when_opening_database() {
+        let config = Config::default().threads(1).unwrap();
+        let database = Database::open_in_memory_with_flags(config).unwrap();
+        let mut connection = database.connect().unwrap();
+        let mut rows = connection.execute("SELECT current_setting('threads') AS threads").unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("threads").unwrap(), &crate::types::value::DuckValue::BigInt(1));
+    }
 }

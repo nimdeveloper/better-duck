@@ -94,4 +94,21 @@ mod tests {
         // SAFETY: `duck_value` was created by `to_duck` above.
         unsafe { duckdb_destroy_value(&mut duck_value) };
     }
+
+    #[test]
+    fn constructor_and_duck_value_conversion_preserve_wire_bytes() {
+        let value = DuckBit::new(vec![7, 0x80]);
+        assert_eq!(value.0, vec![7, 0x80]);
+        assert_eq!(value::DuckValue::from(value.clone()), value::DuckValue::Bit(value));
+    }
+
+    #[test]
+    fn logical_type_is_bit() {
+        use crate::ffi::{duckdb_destroy_logical_type, duckdb_get_type_id};
+        let mut logical_type = DuckBit::duck_logical_type().unwrap();
+        // SAFETY: `logical_type` is a live handle created by `duck_logical_type`.
+        assert_eq!(unsafe { duckdb_get_type_id(logical_type) }, DUCKDB_TYPE_DUCKDB_TYPE_BIT);
+        // SAFETY: `logical_type` is owned by this test and destroyed exactly once.
+        unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+    }
 }

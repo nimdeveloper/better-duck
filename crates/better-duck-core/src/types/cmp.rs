@@ -66,4 +66,22 @@ mod tests {
     fn neg_zero_f64_canonicalized() {
         assert_eq!(canonical_f64(-0.0_f64), canonical_f64(0.0_f64));
     }
+
+    #[test]
+    fn negative_nan_patterns_are_canonicalized() {
+        let f32_nan = f32::from_bits(0xFFC0_0001);
+        let f64_nan = f64::from_bits(0xFFF8_0000_0000_0001);
+        assert_eq!(canonical_f32(f32_nan), f32::NAN.to_bits());
+        assert_eq!(canonical_f64(f64_nan), f64::NAN.to_bits());
+    }
+
+    #[test]
+    fn finite_values_keep_their_bits() {
+        for value in [f32::NEG_INFINITY, -42.5, f32::MIN_POSITIVE, f32::INFINITY] {
+            assert_eq!(canonical_f32(value), value.to_bits());
+        }
+        for value in [f64::NEG_INFINITY, -42.5, f64::MIN_POSITIVE, f64::INFINITY] {
+            assert_eq!(canonical_f64(value), value.to_bits());
+        }
+    }
 }

@@ -76,6 +76,62 @@ fn statement_cache_two_distinct_queries() {
     let _: i64 = cm_items::table.count().first(&mut conn).unwrap();
 }
 
+#[test]
+fn cached_insert_resets_bound_values() {
+    let mut conn = DuckDbConnection::establish(":memory:").unwrap();
+    conn.batch_execute("CREATE TABLE cm_items (id INTEGER PRIMARY KEY, val VARCHAR NOT NULL)")
+        .unwrap();
+
+    for (id, val) in [(1, "first"), (2, "second"), (3, "third")] {
+        diesel::insert_into(cm_items::table)
+            .values((cm_items::id.eq(id), cm_items::val.eq(val)))
+            .execute(&mut conn)
+            .unwrap();
+    }
+
+    let rows: Vec<(i32, String)> = cm_items::table
+        .select((cm_items::id, cm_items::val))
+        .order(cm_items::id)
+        .load(&mut conn)
+        .unwrap();
+    assert_eq!(rows, [(1, "first".to_owned()), (2, "second".to_owned()), (3, "third".to_owned()),]);
+}
+
+#[test]
+fn cached_select_resets_bound_values() {
+    let mut conn = DuckDbConnection::establish(":memory:").unwrap();
+    conn.batch_execute(
+        "CREATE TABLE cm_items (id INTEGER PRIMARY KEY, val VARCHAR NOT NULL);
+         INSERT INTO cm_items VALUES (1, 'first'), (2, 'second'), (3, 'third');",
+    )
+    .unwrap();
+
+    for (id, expected) in [(3, "third"), (1, "first"), (2, "second")] {
+        let actual: String = cm_items::table
+            .filter(cm_items::id.eq(id))
+            .select(cm_items::val)
+            .first(&mut conn)
+            .unwrap();
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn from_core_connections_share_database() {
+    let database = better_duck_core::database::Database::open_in_memory().unwrap();
+    let mut first = DuckDbConnection::from_core(database.connect().unwrap());
+    let mut second = DuckDbConnection::from_core(database.connect().unwrap());
+
+    first
+        .batch_execute(
+            "CREATE TABLE cm_items (id INTEGER PRIMARY KEY, val VARCHAR NOT NULL);
+             INSERT INTO cm_items VALUES (1, 'shared');",
+        )
+        .unwrap();
+    let value: String = cm_items::table.select(cm_items::val).first(&mut second).unwrap();
+    assert_eq!(value, "shared");
+}
+
 // Migration support
 
 #[test]

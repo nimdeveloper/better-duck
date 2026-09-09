@@ -165,3 +165,38 @@ pub(crate) fn parse_table_attrs(attr: proc_macro::TokenStream) -> syn::Result<Ta
     parser.parse(attr)?;
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+    use syn::parse_quote;
+
+    use super::expect_str_lit;
+
+    #[test]
+    fn expect_str_lit_accepts_a_string() {
+        let expr = parse_quote!("duck");
+        assert_eq!(expect_str_lit(&expr, "name").unwrap().value(), "duck");
+    }
+
+    #[test]
+    fn expect_str_lit_rejects_other_literals() {
+        let expr = parse_quote!(42);
+        let error = expect_str_lit(&expr, "columns").unwrap_err();
+        assert!(error.to_string().contains("`columns` must be a string literal"));
+    }
+
+    #[test]
+    fn expect_str_lit_rejects_non_literal_expressions() {
+        let expr = parse_quote!(COLUMN_NAME);
+        let error = expect_str_lit(&expr, "named_params").unwrap_err();
+        assert!(error.to_string().contains("`named_params` must be a string literal"));
+    }
+
+    #[test]
+    fn string_literal_round_trips_tokens() {
+        let expr = parse_quote!("a column");
+        let literal = expect_str_lit(&expr, "columns").unwrap();
+        assert_eq!(quote!(#literal).to_string(), "\"a column\"");
+    }
+}

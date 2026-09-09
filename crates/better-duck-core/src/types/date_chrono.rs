@@ -747,4 +747,49 @@ mod test_chrono_conversion {
         let expected = NaiveTime::from_hms_nano_opt(14, 30, 0, 123_456_789).unwrap();
         assert_eq!(converted.0, expected);
     }
+
+    #[test]
+    fn negative_fractional_timestamps_use_euclidean_seconds() {
+        use super::*;
+        let expected = NaiveDate::from_ymd_opt(1969, 12, 31)
+            .unwrap()
+            .and_hms_nano_opt(23, 59, 59, 999_999_000)
+            .unwrap();
+        assert_eq!(NaiveDateTime::from_duck(duckdb_timestamp { micros: -1 }).unwrap(), expected);
+        assert_eq!(TimestampTz::from_raw_micros_tz(-1).unwrap().0.naive_utc(), expected);
+        let expected_ns = NaiveDate::from_ymd_opt(1969, 12, 31)
+            .unwrap()
+            .and_hms_nano_opt(23, 59, 59, 999_999_999)
+            .unwrap();
+        assert_eq!(TimestampNs::from_raw_nanos(-1).unwrap().0, expected_ns);
+    }
+
+    #[test]
+    fn invalid_raw_values_are_rejected() {
+        use super::*;
+        assert!(TimeNs::from_raw_ns(-1).is_err());
+        assert!(TimeNs::from_raw_ns(86_400_000_000_000).is_err());
+        assert!(TimestampS::from_raw_secs(i64::MAX).is_err());
+        assert!(TimestampMs::from_raw_millis(i64::MAX).is_err());
+        assert!(TimestampTz::from_raw_micros_tz(i64::MAX).is_err());
+    }
+
+    #[test]
+    fn interval_components_use_duckdb_month_length() {
+        use super::*;
+        let raw = duckdb_interval { months: -2, days: 3, micros: 4_000_005 };
+        let expected = Duration::days(-57) + Duration::microseconds(4_000_005);
+        assert_eq!(Duration::from_duck(raw).unwrap(), expected);
+    }
+
+    #[test]
+    fn time_conversion_truncates_to_microseconds() {
+        use super::*;
+        let time = NaiveTime::from_hms_nano_opt(12, 30, 45, 123_456_789).unwrap();
+        let mut duck_value = time.to_duck().unwrap();
+        let raw = unsafe { duckdb_get_time(duck_value) };
+        let converted = NaiveTime::from_duck(raw).unwrap();
+        assert_eq!(converted, NaiveTime::from_hms_micro_opt(12, 30, 45, 123_456).unwrap());
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+    }
 }

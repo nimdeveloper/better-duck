@@ -37,6 +37,33 @@ fn pk_violation_returns_database_error() {
     );
 }
 
+#[test]
+fn not_null_violation_leaves_connection_usable() {
+    let mut conn = mem_conn();
+    let result = conn.batch_execute("INSERT INTO err_items (id, val) VALUES (1, NULL)");
+    assert!(
+        matches!(result, Err(Error::DatabaseError(_, _))),
+        "expected DatabaseError, got {result:?}"
+    );
+
+    conn.batch_execute("INSERT INTO err_items VALUES (2, 'valid')").unwrap();
+    let value: String = err_items::table.select(err_items::val).first(&mut conn).unwrap();
+    assert_eq!(value, "valid");
+}
+
+#[test]
+fn malformed_sql_leaves_connection_usable() {
+    let mut conn = mem_conn();
+    let result = conn.batch_execute("SELEKT * FROM err_items");
+    assert!(
+        matches!(result, Err(Error::DatabaseError(_, _))),
+        "expected DatabaseError, got {result:?}"
+    );
+
+    let count: i64 = err_items::table.count().first(&mut conn).unwrap();
+    assert_eq!(count, 0);
+}
+
 // NotFound when result set is empty
 
 #[test]

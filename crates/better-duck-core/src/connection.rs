@@ -284,4 +284,43 @@ mod connection_tests {
         assert!(exec.is_ok(), "{}", exec.unwrap_err());
         conn.close().unwrap();
     }
+
+    #[test]
+    fn close_is_idempotent() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.close().unwrap();
+        conn.close().unwrap();
+        assert!(!conn.is_open());
+    }
+
+    #[test]
+    fn execute_with_binds_values_and_reports_changes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE test (id INTEGER, name VARCHAR)").unwrap();
+        let mut id = 7_i32;
+        let mut name = String::from("bound");
+        let mut result = conn
+            .execute_with("INSERT INTO test VALUES ($1, $2)", &mut [&mut id, &mut name])
+            .unwrap();
+        assert_eq!(result.changes(), 1);
+
+        let mut rows = conn.execute("SELECT id, name FROM test").unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("id").unwrap(), &crate::types::value::DuckValue::Int(7));
+        assert_eq!(
+            row.get("name").unwrap(),
+            &crate::types::value::DuckValue::Text("bound".to_owned())
+        );
+    }
+
+    #[test]
+    fn nul_sql_and_missing_appender_table_return_errors() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        assert!(matches!(
+            conn.execute_batch("SELECT 1;\0SELECT 2"),
+            Err(crate::error::Error::NulError(_))
+        ));
+        assert!(matches!(conn.execute("SELECT '\0'"), Err(crate::error::Error::NulError(_))));
+        assert!(conn.appender("missing_table", "main").is_err());
+    }
 }

@@ -136,3 +136,44 @@ impl<'a, T> QueryId for In<'a, T> {
     type QueryId = ();
     const HAS_STATIC_QUERY_ID: bool = false;
 }
+
+#[cfg(test)]
+mod tests {
+    use diesel::query_builder::QueryBuilder;
+
+    use super::DuckDbQueryBuilder;
+    use crate::backend::DuckDb;
+
+    #[test]
+    fn query_builder_quotes_and_escapes_identifiers() {
+        let mut builder = DuckDbQueryBuilder::default();
+        builder.push_identifier("odd\"name").unwrap();
+        assert_eq!(builder.finish(), "\"odd\"\"name\"");
+    }
+
+    #[test]
+    fn query_builder_numbers_bind_parameters() {
+        let mut builder = DuckDbQueryBuilder::default();
+        builder.push_bind_param();
+        builder.push_sql(", ");
+        builder.push_bind_param_value_only();
+        builder.push_bind_param();
+        assert_eq!(builder.finish(), "$1, $3");
+    }
+
+    #[test]
+    fn debug_query_uses_escaped_identifier_and_numbered_bind() {
+        diesel::table! {
+            #[sql_name = "odd\"table"]
+            odd_table (id) {
+                id -> Integer,
+            }
+        }
+
+        use diesel::prelude::*;
+        let query = odd_table::table.filter(odd_table::id.eq(42));
+        let sql = diesel::debug_query::<DuckDb, _>(&query).to_string();
+        assert!(sql.contains("\"odd\"\"table\""), "unexpected SQL: {sql}");
+        assert!(sql.contains("$1"), "unexpected SQL: {sql}");
+    }
+}

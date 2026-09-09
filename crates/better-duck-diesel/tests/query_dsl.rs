@@ -261,3 +261,110 @@ fn eq_any_in_list() {
         .unwrap();
     assert_eq!(ids, [1, 3, 5]);
 }
+
+#[test]
+fn eq_any_empty_list_matches_nothing() {
+    let mut c = mem_conn();
+    let ids: Vec<i32> = products::table
+        .filter(products::id.eq_any(Vec::<i32>::new()))
+        .select(products::id)
+        .load(&mut c)
+        .unwrap();
+    assert!(ids.is_empty());
+}
+
+#[test]
+fn ne_all_empty_list_matches_everything() {
+    let mut c = mem_conn();
+    let count: i64 = products::table
+        .filter(products::id.ne_all(Vec::<i32>::new()))
+        .count()
+        .first(&mut c)
+        .unwrap();
+    assert_eq!(count, 6);
+}
+
+// Joins
+
+#[test]
+fn inner_join_returns_matching_rows() {
+    let mut c = mem_conn();
+    let rows: Vec<(String, String)> = products::table
+        .inner_join(categories::table.on(products::id.eq(categories::id)))
+        .select((products::name, categories::name))
+        .order(products::id)
+        .load(&mut c)
+        .unwrap();
+    assert_eq!(
+        rows,
+        [
+            ("Laptop".to_owned(), "Electronics".to_owned()),
+            ("Tablet".to_owned(), "Books".to_owned()),
+            ("Novel".to_owned(), "Food".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn left_join_preserves_unmatched_rows() {
+    let mut c = mem_conn();
+    let rows: Vec<(i32, Option<String>)> = products::table
+        .left_join(categories::table.on(products::id.eq(categories::id)))
+        .select((products::id, categories::name.nullable()))
+        .order(products::id)
+        .load(&mut c)
+        .unwrap();
+    assert_eq!(rows.len(), 6);
+    assert_eq!(rows[0], (1, Some("Electronics".to_owned())));
+    assert_eq!(rows[5], (6, None));
+}
+
+// Boxed pagination
+
+#[test]
+fn boxed_query_applies_limit_and_offset() {
+    let mut c = mem_conn();
+    let ids: Vec<i32> = products::table
+        .into_boxed()
+        .order(products::id)
+        .limit(2)
+        .offset(1)
+        .select(products::id)
+        .load(&mut c)
+        .unwrap();
+    assert_eq!(ids, [2, 3]);
+}
+
+#[test]
+fn boxed_query_supports_offset_without_limit() {
+    let mut c = mem_conn();
+    let ids: Vec<i32> = products::table
+        .into_boxed()
+        .order(products::id)
+        .offset(3)
+        .select(products::id)
+        .load(&mut c)
+        .unwrap();
+    assert_eq!(ids, [4, 5, 6]);
+}
+
+#[test]
+fn boxed_query_supports_limit_without_offset() {
+    let mut c = mem_conn();
+    let ids: Vec<i32> = products::table
+        .into_boxed()
+        .order(products::id)
+        .limit(3)
+        .select(products::id)
+        .load(&mut c)
+        .unwrap();
+    assert_eq!(ids, [1, 2, 3]);
+}
+
+#[test]
+fn boxed_query_without_pagination_returns_all_rows() {
+    let mut c = mem_conn();
+    let ids: Vec<i32> =
+        products::table.into_boxed().order(products::id).select(products::id).load(&mut c).unwrap();
+    assert_eq!(ids, [1, 2, 3, 4, 5, 6]);
+}

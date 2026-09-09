@@ -360,4 +360,19 @@ mod tests {
         let config = Config::default().enable_autoload_extension(true).unwrap();
         drop(config);
     }
+
+    #[test]
+    fn test_rejects_interior_nul_in_key_or_value() {
+        let key_error = Config::default().with("bad\0key", "value").err().unwrap();
+        assert!(matches!(key_error, Error::NulError(_)));
+
+        let value_error = Config::default().with("threads", "1\0extra").err().unwrap();
+        assert!(matches!(value_error, Error::NulError(_)));
+    }
+
+    #[test]
+    fn config_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<Config>();
+    }
 }

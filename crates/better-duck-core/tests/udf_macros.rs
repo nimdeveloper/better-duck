@@ -38,6 +38,19 @@ fn add_offset(x: i32) -> i32 {
     x + duck_state!(i32)
 }
 
+/// Uses DuckDB's default NULL propagation for a non-`Option` argument.
+#[duckdb_scalar]
+fn strict_double(x: i32) -> i32 {
+    x * 2
+}
+
+/// Panics on demand to exercise the generated callback boundary.
+#[duckdb_scalar]
+fn panic_scalar(should_panic: bool) -> i32 {
+    assert!(!should_panic, "intentional scalar UDF panic");
+    7
+}
+
 #[test]
 fn repeat_str_computes_expected_output() {
     let mut conn = Connection::open_in_memory().unwrap();
@@ -117,4 +130,32 @@ fn state_option_shares_registration_time_value_across_calls() {
         })
         .collect();
     assert_eq!(got, vec![11, 12, 13]);
+}
+
+#[test]
+fn non_option_scalar_argument_propagates_null_without_invocation() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    strict_double::register(&mut conn).unwrap();
+    let result = conn
+        .execute("SELECT strict_double(x) AS r FROM (VALUES (21), (NULL)) t(x) ORDER BY x")
+        .unwrap();
+    let rows: Vec<_> = result.collect::<better_duck_core::error::Result<_>>().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].get("r"), Some(&DuckValue::Int(42)));
+    assert_eq!(rows[1].get("r"), Some(&DuckValue::Null));
+}
+
+#[test]
+fn scalar_panic_surfaces_as_query_error_and_connection_stays_usable() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    panic_scalar::register(&mut conn).unwrap();
+    let err = match conn.execute("SELECT panic_scalar(true)") {
+        Ok(_) => panic!("expected an error"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("intentional scalar UDF panic"), "{err}");
+
+    let mut result = conn.execute("SELECT panic_scalar(false) AS r").unwrap();
+    let row = result.next().unwrap().unwrap();
+    assert_eq!(row.get("r"), Some(&DuckValue::Int(7)));
 }

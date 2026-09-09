@@ -100,6 +100,50 @@ fn nested_inner_rollback_outer_commits() {
     assert_eq!(v, "outer");
 }
 
+#[test]
+fn nested_inner_commit_outer_rollback_discards_everything() {
+    let mut conn = mem_conn();
+    let result = conn.transaction(|outer| -> QueryResult<()> {
+        diesel::insert_into(tx_items::table)
+            .values((tx_items::id.eq(1), tx_items::val.eq("outer")))
+            .execute(outer)?;
+        outer.transaction(|inner| {
+            diesel::insert_into(tx_items::table)
+                .values((tx_items::id.eq(2), tx_items::val.eq("inner")))
+                .execute(inner)
+        })?;
+        assert_eq!(tx_items::table.count().first::<i64>(outer)?, 2);
+        Err(diesel::result::Error::RollbackTransaction)
+    });
+
+    assert!(result.is_err());
+    assert_eq!(count(&mut conn), 0);
+}
+
+#[test]
+fn nested_inner_commit_then_outer_database_error_rolls_back_everything() {
+    let mut conn = mem_conn();
+    let result = conn.transaction(|outer| -> QueryResult<()> {
+        outer.transaction(|inner| {
+            diesel::insert_into(tx_items::table)
+                .values((tx_items::id.eq(1), tx_items::val.eq("inner")))
+                .execute(inner)
+        })?;
+        diesel::insert_into(tx_items::table)
+            .values((tx_items::id.eq(1), tx_items::val.eq("duplicate")))
+            .execute(outer)?;
+        Ok(())
+    });
+
+    assert!(result.is_err());
+    assert_eq!(count(&mut conn), 0);
+    diesel::insert_into(tx_items::table)
+        .values((tx_items::id.eq(2), tx_items::val.eq("recovered")))
+        .execute(&mut conn)
+        .unwrap();
+    assert_eq!(count(&mut conn), 1);
+}
+
 // test_transaction
 
 #[test]

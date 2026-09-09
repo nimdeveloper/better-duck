@@ -161,3 +161,50 @@ fn execute_returns_affected_rows() {
         .unwrap();
     assert_eq!(affected, 2);
 }
+
+// ON CONFLICT
+
+#[test]
+fn on_conflict_do_nothing_keeps_existing_row() {
+    let mut conn = mem_conn();
+    diesel::insert_into(items::table)
+        .values((items::id.eq(1), items::label.eq("first"), items::score.eq(10)))
+        .execute(&mut conn)
+        .unwrap();
+
+    let affected = diesel::insert_into(items::table)
+        .values((items::id.eq(1), items::label.eq("duplicate"), items::score.eq(20)))
+        .on_conflict(items::id)
+        .do_nothing()
+        .execute(&mut conn)
+        .unwrap();
+
+    assert_eq!(affected, 0);
+    let row: (String, i32) =
+        items::table.select((items::label, items::score)).first(&mut conn).unwrap();
+    assert_eq!(row, ("first".to_owned(), 10));
+}
+
+#[test]
+fn on_conflict_updates_from_excluded_values() {
+    use diesel::upsert::excluded;
+
+    let mut conn = mem_conn();
+    diesel::insert_into(items::table)
+        .values((items::id.eq(1), items::label.eq("first"), items::score.eq(10)))
+        .execute(&mut conn)
+        .unwrap();
+
+    let affected = diesel::insert_into(items::table)
+        .values((items::id.eq(1), items::label.eq("replacement"), items::score.eq(30)))
+        .on_conflict(items::id)
+        .do_update()
+        .set((items::label.eq(excluded(items::label)), items::score.eq(excluded(items::score))))
+        .execute(&mut conn)
+        .unwrap();
+
+    assert_eq!(affected, 1);
+    let row: (String, i32) =
+        items::table.select((items::label, items::score)).first(&mut conn).unwrap();
+    assert_eq!(row, ("replacement".to_owned(), 30));
+}
