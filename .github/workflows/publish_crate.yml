@@ -9,12 +9,23 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Validate the exact tag commit before any irreversible crates.io operation.
+  verify:
+    uses: ./.github/workflows/ci.yml
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   # Create .crate artifact and calculate its digest for SLSA
   create_crate_artifact:
+    needs: verify
     runs-on: ubuntu-latest
     outputs:
       crate_digest: ${{ steps.calculate_digest.outputs.digest }}

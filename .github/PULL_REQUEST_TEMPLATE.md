@@ -14,8 +14,8 @@
 ## Checklist
 
 - [ ] `cargo fmt --all` — no diffs
-- [ ] `cargo clippy --all-targets --features "chrono,decimal,r2d2" -- -D warnings` — clean
-- [ ] `cargo test --workspace` — all tests pass
+- [ ] `cargo clippy --workspace --all-targets --features "chrono,decimal,json,parquet,async,pool,udf,better-duck-diesel/r2d2" -- -D warnings` — clean
+- [ ] Package-scoped core, Diesel, and macro tests pass (see `CONTRIBUTING.md`)
 - [ ] New public API has `///` doc comments
 - [ ] New `unsafe` blocks have `// SAFETY:` explanations
 - [ ] Added tests for new functionality (or explained why tests aren't needed)

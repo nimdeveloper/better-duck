@@ -1,53 +1,67 @@
 name: Build and Deploy Documentation
 
 on:
-  push:
-    branches:
-      - main # Deploy docs when changes are pushed to the main branch
-  workflow_dispatch: # Allows manual triggering of the workflow from GitHub UI
+  workflow_run:
+    workflows: ["Rust CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build_and_deploy_docs:
+  deploy-docs:
+    name: Deploy documentation
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
-      contents: write # To push to the gh-pages branch
-      pages: write # To enable GitHub Pages deployment
-      id-token: write # For OIDC authentication for GitHub Pages
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Checkout validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          toolchain: stable
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Cache Cargo registry and build artifacts
-        uses: actions/cache@v6
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - name: Restore documentation dependencies
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          shared-key: linux-stable-docs-deploy-v1
+          cache-workspace-crates: false
+          cache-on-failure: false
 
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --locked --no-deps --all-features
 
-      - name: Deploy documentation to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Configure Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./target/doc # The directory where cargo doc outputs the HTML files
-          publish_branch: gh-pages # The branch where the docs will be pushed
-          # cname: your-domain.com # Uncomment and replace if you use a custom domain
+          path: target/doc
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

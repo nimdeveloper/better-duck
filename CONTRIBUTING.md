@@ -82,7 +82,7 @@ These are the commands CI runs; make sure they all pass before opening a PR:
 cargo fmt --all
 
 # Lint — zero warnings allowed
-cargo clippy --all-targets --features "chrono,decimal,json,parquet,r2d2" -- -D warnings
+cargo clippy --workspace --all-targets --features "chrono,decimal,json,parquet,async,pool,udf,better-duck-diesel/r2d2" -- -D warnings
 
 # Run package-scoped tests (workspace-wide normal tests unify incompatible chrono paths)
 cargo test -p better-duck-core
@@ -215,8 +215,8 @@ Keep subject lines under 72 characters. Write the body in plain English — what
 Before marking a PR ready for review, go through this checklist:
 
 - [ ] `cargo fmt --all` produces no changes
-- [ ] `cargo clippy --all-targets --features "chrono,decimal,r2d2" -- -D warnings` is clean
-- [ ] `cargo test --workspace` passes
+- [ ] `cargo clippy --workspace --all-targets --features "chrono,decimal,json,parquet,async,pool,udf,better-duck-diesel/r2d2" -- -D warnings` is clean
+- [ ] Package-scoped core, Diesel, and macro tests above pass
 - [ ] If adding a new feature, there are tests covering the happy path and at least one error/edge case
 - [ ] Public API has doc comments (`///`)
 - [ ] Any `unsafe` block has a `// SAFETY:` comment explaining the invariants

@@ -5,285 +5,214 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      CODECOV_TOKEN:
+        required: false
   schedule:
-    # Run the security audit once a week even without a push.
+    # The schedule runs the audit only; build jobs are gated by preflight.
     - cron: "0 6 * * 1"
 
 permissions:
   contents: read
 
-# Avoid spending cache/storage and runner time on superseded branch/PR runs.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Never cancel reusable release/tag validation once it has begun.
+  cancel-in-progress: ${{ github.event_name != 'workflow_call' && !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Formatting
-  fmt:
-    name: Format check
+  preflight:
+    name: Preflight
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Formatting does not compile; restore registry/tool caches but do not
-          # upload a redundant target cache from this short-lived job.
-          cache-targets: false
-          save-if: false
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all --check
+      - name: Validate locked workspace metadata
+        run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
 
-  # Lint (Clippy)
   lint:
     name: Clippy
+    needs: preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
-          shared-key: linux-stable-full
-          cache-on-failure: true
+          shared-key: linux-stable-deps-v1
+          cache-workspace-crates: false
+          cache-on-failure: false
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
       - name: Run Clippy
-        # --workspace is required, and r2d2 (a better-duck-diesel-only feature) must
-        # use pkg/feature syntax: cargo validates an unqualified --features list
-        # against the first workspace member (better-duck-core), which does not have
-        # r2d2 (it has pool instead).
-        run: cargo clippy --workspace --all-targets --features "chrono,decimal,json,parquet,async,pool,udf,better-duck-diesel/r2d2" -- -D warnings
+        run: >-
+          cargo clippy --locked --workspace --all-targets
+          --features "chrono,decimal,json,parquet,async,pool,udf,better-duck-diesel/r2d2"
+          -- -D warnings
 
-  # Documentation
-  docs:
-    name: Docs build
+  linux-tests:
+    name: Tests (Linux)
+    needs: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
-          shared-key: linux-stable-full
-          cache-on-failure: true
+          shared-key: linux-stable-deps-v1
+          cache-workspace-crates: false
+          save-if: false
+      - name: Run package-scoped tests
+        run: |
+          cargo test --locked -p better-duck-core --verbose
+          cargo test --locked -p better-duck-core --features udf --verbose
+          cargo test --locked -p better-duck-diesel --verbose
+          cargo test --locked -p better-duck-diesel --features chrono --verbose
+          cargo test --locked -p better-duck-macros --lib --verbose
+      - name: Verify release UDF build (panic=abort, LTO)
+        run: cargo build --locked --release -p better-duck-core --features udf --verbose
+
+  docs-and-doctests:
+    name: Docs and doctests
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          shared-key: linux-stable-deps-v1
+          cache-workspace-crates: false
+          save-if: false
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --workspace --no-deps --features "chrono,decimal,async,pool,udf"
-
-  # Tests — Linux (default)
-  test_linux:
-    name: Tests (Linux)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-stable-full
-          cache-on-failure: true
-      - name: Run tests
-        # Scoped per-package, not `--workspace`: better-duck-core defaults to
-        # chrono=on, better-duck-diesel defaults to chrono=off. A `--workspace`
-        # build unifies the shared better-duck-core dependency to chrono=on (since
-        # core is also tested directly with its own defaults), which does not match
-        # what diesel's non-chrono code (compiled for diesel's own chrono=off) expects.
-        run: |
-          cargo test -p better-duck-core --verbose
-          cargo test -p better-duck-core --features udf --verbose
-          cargo test -p better-duck-diesel --verbose
-      - name: Release build (udf) — proves it compiles under panic=abort, lto=fat
-        # `cargo test --release` cannot exercise callback panic containment: Cargo
-        # forces `panic = "unwind"` for test harness targets even under --release.
-        # This step proves only that the udf path compiles under this workspace's
-        # actual release profile; see `udf` module docs for the abort caveat.
-        run: cargo build --release -p better-duck-core --features udf --verbose
-
-  # Tests — Linux with chrono
-  test_linux_chrono:
-    name: Tests (Linux, +chrono)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-stable-full
-          cache-on-failure: true
-      - name: Run tests with chrono feature
-        run: cargo test -p better-duck-diesel --features chrono --verbose
-
-  # Doctests
-  doctest:
-    name: Doctests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-stable-full
-          cache-on-failure: true
+        run: cargo doc --locked --workspace --no-deps --features "chrono,decimal,async,pool,udf"
       - name: Run doctests
-        run: cargo test --workspace --doc --features "chrono,decimal,async,pool,udf"
+        run: cargo test --locked --workspace --doc --features "chrono,decimal,async,pool,udf"
 
-  # Tests — Windows
-  test_windows:
-    name: Tests (Windows)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: windows-stable-tests
-          cache-on-failure: true
-      - name: Run tests
-        # Scoped per-package — see the comment on the Linux job for why. The udf
-        # feature is exercised here specifically because MSVC's `duckdb_string_t`
-        # layout/alignment is exactly the class of bug the udf write path can hide.
-        run: |
-          cargo test -p better-duck-core --verbose
-          cargo test -p better-duck-core --features udf --verbose
-          cargo test -p better-duck-diesel --verbose
-
-  # Tests — macOS + iOS cross-build
-  test_macos_and_ios_build:
-    name: Tests (macOS) + iOS cross-build
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: macos-stable-tests-ios
-          cache-on-failure: true
-      - name: Run tests on macOS
-        # Scoped per-package — see the comment on the Linux job for why.
-        run: |
-          cargo test -p better-duck-core --verbose
-          cargo test -p better-duck-diesel --verbose
-      - name: Add iOS targets
-        run: |
-          rustup target add aarch64-apple-ios
-          rustup target add x86_64-apple-ios
-      - name: Cross-build for iOS (aarch64)
-        # Scoped to -p better-duck-core — see the comment on the Linux job for
-        # why an unscoped build (which on this virtual workspace defaults to
-        # building every member together) unifies better-duck-core's chrono
-        # feature to "on" even though better-duck-diesel wants it off,
-        # breaking diesel's `#[cfg(not(feature = "chrono"))] date_native`
-        # module (it still compiles, since *diesel's own* chrono feature is
-        # unaffected, but the `better_duck_core::types::date_native` module it
-        # imports has been compiled out).
-        run: cargo build -p better-duck-core --target aarch64-apple-ios --verbose
-      - name: Cross-build for iOS Simulator (x86_64)
-        run: cargo build -p better-duck-core --target x86_64-apple-ios --verbose
-
-  # Feature matrix
-  features:
-    name: Feature matrix (${{ matrix.name }})
+  feature-shards:
+    name: Features (${{ matrix.name }})
+    needs: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         include:
-          # Core crate. `better-duck-sys` is a required (non-optional)
-          # dependency, so its vendored DuckDB always compiles and links
-          # regardless of feature flags — there's no more "no DuckDB linked"
-          # mode to fall back to `cmd: check` for (unlike the old external
-          # `libduckdb-sys`'s `bundled` feature, now removed entirely).
-          - name: core/no-default-features
-            package: better-duck-core
-            args: --no-default-features
-          - name: core/chrono-only
-            package: better-duck-core
-            args: --no-default-features --features chrono
-          - name: core/decimal-only
-            package: better-duck-core
-            args: --no-default-features --features decimal
-          - name: core/json
-            package: better-duck-core
-            args: --features json
-          - name: core/parquet
-            package: better-duck-core
-            args: --features parquet
-          # Diesel crate
-          - name: diesel/default
-            package: better-duck-diesel
-            args: ""
-          - name: diesel/chrono
-            package: better-duck-diesel
-            args: --features chrono
-          - name: diesel/r2d2
-            package: better-duck-diesel
-            args: --features r2d2
-          - name: diesel/all
-            package: better-duck-diesel
-            args: --features "chrono,decimal,r2d2"
-          - name: core/async
-            package: better-duck-core
-            args: --features async
-          - name: core/pool
-            package: better-duck-core
-            args: --features pool
-          - name: core/async-pool
-            package: better-duck-core
-            args: --features "async,pool"
-          # compile-only: just cfg-correctness of async/pool, no need to
-          # exercise them at runtime for this check.
-          - name: core/no-default-async-pool
-            package: better-duck-core
-            args: --no-default-features --features "async,pool"
-            cmd: check
-          - name: core/udf
-            package: better-duck-core
-            args: --features udf
-          # catches #[cfg(feature = "chrono")] mistakes in udf marshalling code
-          # that the default (chrono-on) build would hide.
-          - name: core/udf-no-chrono
-            package: better-duck-core
-            args: --no-default-features --features udf
-          - name: core/udf-all
-            package: better-duck-core
-            args: --features "udf,async,pool,json"
+          - name: core-minimal
+            commands: |
+              cargo test --locked -p better-duck-core --no-default-features
+              cargo test --locked -p better-duck-core --no-default-features --features chrono
+              cargo test --locked -p better-duck-core --no-default-features --features decimal
+          - name: core-extensions
+            commands: |
+              cargo test --locked -p better-duck-core --features json
+              cargo test --locked -p better-duck-core --features parquet
+              cargo test --locked -p better-duck-core --features async
+              cargo test --locked -p better-duck-core --features pool
+              cargo test --locked -p better-duck-core --features "async,pool"
+              cargo check --locked -p better-duck-core --no-default-features --features "async,pool"
+          - name: core-udf
+            commands: |
+              cargo test --locked -p better-duck-core --no-default-features --features udf
+              cargo test --locked -p better-duck-core --features "udf,async,pool,json"
+          - name: diesel-features
+            commands: |
+              cargo test --locked -p better-duck-diesel --features r2d2
+              cargo test --locked -p better-duck-diesel --all-features
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
-          # All stable Linux matrix entries share the expensive vendored DuckDB build;
-          # the feature name remains a secondary key for exact-match preference.
-          shared-key: linux-stable-features
-          key: ${{ matrix.name }}
-          cache-on-failure: true
-      - name: Check / test ${{ matrix.name }}
-        run: cargo ${{ matrix.cmd || 'test' }} -p ${{ matrix.package }} ${{ matrix.args }}
+          shared-key: linux-stable-deps-v1
+          cache-workspace-crates: false
+          save-if: false
+      - name: Run ${{ matrix.name }} configurations
+        env:
+          SHARD_COMMANDS: ${{ matrix.commands }}
+        run: bash -euo pipefail -c "$SHARD_COMMANDS"
 
-  # MSRV
+  windows-tests:
+    name: Tests (Windows)
+    needs: preflight
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          shared-key: windows-stable-tests-v1
+          cache-workspace-crates: false
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+      - name: Run package-scoped tests
+        run: |
+          cargo test --locked -p better-duck-core --verbose
+          cargo test --locked -p better-duck-core --features udf --verbose
+          cargo test --locked -p better-duck-diesel --verbose
+
+  macos-tests-and-ios-builds:
+    name: Tests (macOS) and iOS builds
+    needs: preflight
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          shared-key: macos-stable-ios-v1
+          cache-workspace-crates: false
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+      - name: Run macOS package-scoped tests
+        run: |
+          cargo test --locked -p better-duck-core --verbose
+          cargo test --locked -p better-duck-diesel --verbose
+      - name: Add iOS targets
+        run: rustup target add aarch64-apple-ios x86_64-apple-ios
+      - name: Cross-build for iOS
+        run: |
+          cargo build --locked -p better-duck-core --target aarch64-apple-ios --verbose
+          cargo build --locked -p better-duck-core --target x86_64-apple-ios --verbose
+
   msrv:
     name: MSRV (Rust 1.96)
+    needs: preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@1.96
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
-          shared-key: linux-msrv-1.96
-          key: msrv-1.96
-          cache-on-failure: true
+          shared-key: linux-msrv-1.96-v1
+          cache-workspace-crates: false
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
       - name: Check workspace compiles on MSRV
-        run: cargo check --workspace --features "chrono,decimal,async,pool,udf"
+        run: cargo check --locked --workspace --features "chrono,decimal,async,pool,udf"
 
-  # Security audit
   audit:
     name: Security audit
     runs-on: ubuntu-latest
-    # Only block on push/PR — the weekly schedule run is advisory only.
+    timeout-minutes: 15
     continue-on-error: ${{ github.event_name == 'schedule' }}
     permissions:
       contents: read
@@ -291,36 +220,30 @@ jobs:
       checks: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: rustsec/audit-check@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # Coverage
   coverage:
-    name: Coverage (llvm-cov → Codecov)
+    name: Coverage
+    needs: linux-tests
     runs-on: ubuntu-latest
-    # Coverage upload requires CODECOV_TOKEN; job is advisory if the secret
-    # is absent (e.g. on forks or before the secret is configured).
-    continue-on-error: true
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
-          # Instrumented objects are incompatible with ordinary test/clippy outputs.
-          shared-key: linux-stable-llvm-cov
-          cache-on-failure: true
-          cache-directories: |
-            ~/.cargo/bin
+          shared-key: linux-stable-llvm-cov-v1
+          cache-workspace-crates: false
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
-      - name: Generate coverage report
+        run: cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - name: Generate scoped coverage report
         run: |
-          # Package-scoped runs avoid the workspace's chrono feature-unification conflict.
-          # No invocation enables doctests; sys and xtask are omitted from tests and reports.
           cargo llvm-cov --no-report -p better-duck-core --tests \
             --features "chrono,decimal,async,pool,udf" \
             --exclude-from-report better-duck-sys \
@@ -338,9 +261,45 @@ jobs:
             --exclude-from-report xtask
           cargo llvm-cov report --lcov --output-path lcov.info
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v7
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        continue-on-error: true
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: lcov.info
           fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  required-checks:
+    name: Required checks
+    if: ${{ always() && github.event_name != 'schedule' }}
+    needs:
+      - lint
+      - linux-tests
+      - docs-and-doctests
+      - feature-shards
+      - windows-tests
+      - macos-tests-and-ios-builds
+      - msrv
+      - audit
+      - coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every CI dependency
         env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          LINUX_RESULT: ${{ needs.linux-tests.result }}
+          DOCS_RESULT: ${{ needs.docs-and-doctests.result }}
+          FEATURES_RESULT: ${{ needs.feature-shards.result }}
+          WINDOWS_RESULT: ${{ needs.windows-tests.result }}
+          MACOS_RESULT: ${{ needs.macos-tests-and-ios-builds.result }}
+          MSRV_RESULT: ${{ needs.msrv.result }}
+          AUDIT_RESULT: ${{ needs.audit.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+        run: |
+          for result in \
+            "$LINT_RESULT" "$LINUX_RESULT" "$DOCS_RESULT" \
+            "$FEATURES_RESULT" "$WINDOWS_RESULT" "$MACOS_RESULT" \
+            "$MSRV_RESULT" "$AUDIT_RESULT" "$COVERAGE_RESULT"; do
+            test "$result" = success
+          done
