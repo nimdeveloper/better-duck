@@ -276,8 +276,18 @@ jobs:
         run: cargo install cargo-llvm-cov --locked
       - name: Generate coverage report
         run: |
-          cargo llvm-cov --workspace --features "chrono,decimal,async,pool,udf" \
-            --lcov --output-path lcov.info
+          # Package-scoped runs avoid the workspace's chrono feature-unification conflict.
+          # No invocation enables doctests; sys and xtask are omitted from tests and reports.
+          cargo llvm-cov --no-report -p better-duck-core --tests \
+            --features "chrono,decimal,async,pool,udf"
+          cargo llvm-cov --no-report -p better-duck-core --tests \
+            --no-default-features
+          cargo llvm-cov --no-report -p better-duck-diesel --tests \
+            --all-features
+          cargo llvm-cov --no-report -p better-duck-macros --lib
+          cargo llvm-cov report --lcov --output-path lcov.info \
+            --exclude-from-report better-duck-sys \
+            --exclude-from-report xtask
       - name: Upload to Codecov
         uses: codecov/codecov-action@v7
         with:

@@ -84,11 +84,19 @@ cargo fmt --all
 # Lint — zero warnings allowed
 cargo clippy --all-targets --features "chrono,decimal,json,parquet,r2d2" -- -D warnings
 
-# Run all tests
-cargo test --workspace
-
-# Diesel tests with chrono enabled
+# Run package-scoped tests (workspace-wide normal tests unify incompatible chrono paths)
+cargo test -p better-duck-core
+cargo test -p better-duck-core --features udf
+cargo test -p better-duck-diesel
 cargo test -p better-duck-diesel --features chrono
+cargo test -p better-duck-macros --lib
+
+# Generate merged coverage for testable crates only; doctests are not invoked.
+cargo llvm-cov --no-report -p better-duck-core --tests --features "chrono,decimal,async,pool,udf"
+cargo llvm-cov --no-report -p better-duck-core --tests --no-default-features
+cargo llvm-cov --no-report -p better-duck-diesel --tests --all-features
+cargo llvm-cov --no-report -p better-duck-macros --lib
+cargo llvm-cov report --lcov --output-path lcov.info --exclude-from-report better-duck-sys --exclude-from-report xtask
 
 # Build docs (doc warnings are errors in CI)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --features "chrono,decimal"
@@ -96,7 +104,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --features "chrono,de
 
 For a quick sanity check before pushing:
 ```sh
-cargo fmt --all && cargo test --workspace
+cargo fmt --all && cargo test -p better-duck-core && cargo test -p better-duck-diesel
 ```
 
 ---
