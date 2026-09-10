@@ -154,10 +154,55 @@ fn migration_setup_idempotent() {
 
 #[cfg(feature = "r2d2")]
 #[test]
-fn r2d2_pool_acquire_and_ping() {
-    use diesel::r2d2::{ConnectionManager, Pool, R2D2Connection};
-    let manager = ConnectionManager::<DuckDbConnection>::new(":memory:");
-    let pool = Pool::builder().max_size(2).build(manager).expect("build pool");
-    let mut conn = pool.get().expect("acquire connection");
-    conn.ping().expect("ping");
+fn shared_r2d2_manager_exposes_database_and_trait_operations() {
+    use better_duck_diesel::pool::SharedDuckDbConnectionManager;
+    use diesel::r2d2::ManageConnection;
+
+    let database = better_duck_core::database::Database::open_in_memory().unwrap();
+    let manager = SharedDuckDbConnectionManager::new(database);
+    let mut direct = manager.database().connect().unwrap();
+    direct.execute_batch("CREATE TABLE manager_items (id INTEGER)").unwrap();
+
+    let mut conn = ManageConnection::connect(&manager).unwrap();
+    conn.batch_execute("INSERT INTO manager_items VALUES (1)").unwrap();
+    assert!(ManageConnection::is_valid(&manager, &mut conn).is_ok());
+    assert!(!ManageConnection::has_broken(&manager, &mut conn));
+}
+
+#[cfg(feature = "r2d2")]
+#[test]
+fn shared_r2d2_file_manager_shares_file_backing() {
+    use better_duck_diesel::pool::SharedDuckDbConnectionManager;
+    use diesel::r2d2::ManageConnection;
+
+    let dir = tempfile::tempdir().unwrap();
+    let manager = SharedDuckDbConnectionManager::file(dir.path().join("shared.duckdb")).unwrap();
+    let mut first = ManageConnection::connect(&manager).unwrap();
+    first
+        .batch_execute(
+            "CREATE TABLE shared_items (id INTEGER); INSERT INTO shared_items VALUES (1)",
+        )
+        .unwrap();
+
+    let mut second = ManageConnection::connect(&manager).unwrap();
+    let count: i64 = diesel::sql_query("SELECT count(*) AS count FROM shared_items")
+        .get_result::<CountRow>(&mut second)
+        .unwrap()
+        .count;
+    assert_eq!(count, 1);
+}
+
+#[cfg(feature = "r2d2")]
+#[derive(diesel::QueryableByName)]
+struct CountRow {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    count: i64,
+}
+
+#[cfg(feature = "r2d2")]
+#[test]
+fn shared_r2d2_file_manager_rejects_nul_path() {
+    use better_duck_diesel::pool::SharedDuckDbConnectionManager;
+
+    assert!(SharedDuckDbConnectionManager::file(std::path::Path::new("invalid\0path")).is_err());
 }

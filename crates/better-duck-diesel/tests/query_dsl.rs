@@ -362,6 +362,46 @@ fn boxed_query_supports_limit_without_offset() {
 }
 
 #[test]
+fn limit_then_into_boxed_preserves_limit() {
+    let mut c = mem_conn();
+    let ids: Vec<i32> = products::table
+        .order(products::id)
+        .limit(3)
+        .into_boxed()
+        .select(products::id)
+        .load(&mut c)
+        .unwrap();
+    assert_eq!(ids, [1, 2, 3]);
+}
+
+#[test]
+fn offset_then_into_boxed_preserves_offset() {
+    let mut c = mem_conn();
+    let ids: Vec<i32> = products::table
+        .order(products::id)
+        .offset(3)
+        .into_boxed()
+        .select(products::id)
+        .load(&mut c)
+        .unwrap();
+    assert_eq!(ids, [4, 5, 6]);
+}
+
+#[test]
+fn limit_and_offset_then_into_boxed_preserve_both() {
+    let mut c = mem_conn();
+    let ids: Vec<i32> = products::table
+        .order(products::id)
+        .limit(2)
+        .offset(1)
+        .into_boxed()
+        .select(products::id)
+        .load(&mut c)
+        .unwrap();
+    assert_eq!(ids, [2, 3]);
+}
+
+#[test]
 fn boxed_query_without_pagination_returns_all_rows() {
     let mut c = mem_conn();
     let ids: Vec<i32> =

@@ -96,7 +96,7 @@ cargo llvm-cov --no-report -p better-duck-core --tests --features "chrono,decima
 cargo llvm-cov --no-report -p better-duck-core --tests --no-default-features --exclude-from-report better-duck-sys --exclude-from-report xtask
 cargo llvm-cov --no-report -p better-duck-diesel --tests --all-features --exclude-from-report better-duck-sys --exclude-from-report xtask
 cargo llvm-cov --no-report -p better-duck-macros --lib --exclude-from-report better-duck-sys --exclude-from-report xtask
-cargo llvm-cov report --lcov --output-path lcov.info
+cargo llvm-cov report --lcov --output-path lcov.info --ignore-filename-regex '(^|[\\/])(xtask|crates[\\/]better-duck-sys)([\\/]|$)'
 
 # Build docs (doc warnings are errors in CI)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --features "chrono,decimal"

@@ -291,7 +291,10 @@ impl From<DuckStruct> for DuckValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::connection::Connection;
+    use crate::{
+        connection::Connection,
+        ffi::{duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_get_type_id},
+    };
 
     #[test]
     fn duck_struct_appends_and_reads_back() {
@@ -311,5 +314,74 @@ mod tests {
             },
             other => panic!("expected Struct, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn duck_struct_new_and_conversion_preserve_fields() {
+        let fields = HashMap::from([("answer".to_owned(), DuckValue::Int(42))]);
+        let value: DuckValue = DuckStruct::new(fields.clone()).into();
+        assert_eq!(value, DuckValue::Struct(fields));
+    }
+
+    #[test]
+    fn struct_value_and_logical_type_are_created() {
+        let value = DuckValue::Struct(HashMap::from([
+            ("a".to_owned(), DuckValue::Int(1)),
+            ("b".to_owned(), DuckValue::Null),
+        ]));
+        let mut raw = value.to_duck().unwrap();
+        assert!(!raw.is_null());
+        // SAFETY: `raw` was created by `DuckValue::to_duck` and is destroyed once.
+        unsafe { duckdb_destroy_value(&mut raw) };
+
+        let mut logical_type = DuckValue::logical_type_of(&value).unwrap();
+        assert_eq!(
+            // SAFETY: `logical_type` is valid until it is destroyed below.
+            unsafe { duckdb_get_type_id(logical_type) },
+            crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_STRUCT
+        );
+        // SAFETY: `logical_type` was created by `logical_type_of` and is destroyed once.
+        unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+    }
+
+    #[test]
+    fn empty_struct_reports_conversion_errors() {
+        let value = DuckValue::Struct(HashMap::new());
+        assert!(matches!(value.to_duck(), Err(DuckDBConversionError::ConversionError(_))));
+        assert!(matches!(
+            DuckValue::logical_type_of(&value),
+            Err(DuckDBConversionError::ConversionError(_))
+        ));
+    }
+
+    #[test]
+    fn struct_reads_null_fields_nested_values_and_multiple_rows() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let mut result = conn
+            .execute(
+                "SELECT * FROM (VALUES \
+                 ({'name': 'first', 'score': NULL::INTEGER, 'items': [1, 2]}), \
+                 ({'name': 'second', 'score': 9, 'items': [3]})) AS t(v)",
+            )
+            .unwrap();
+
+        let first = result.next().unwrap().unwrap();
+        assert_eq!(
+            first.get("v"),
+            Some(&DuckValue::Struct(HashMap::from([
+                ("name".to_owned(), DuckValue::text("first")),
+                ("score".to_owned(), DuckValue::Null),
+                ("items".to_owned(), DuckValue::List(vec![DuckValue::Int(1), DuckValue::Int(2)]),),
+            ])))
+        );
+        let second = result.next().unwrap().unwrap();
+        assert_eq!(
+            second.get("v"),
+            Some(&DuckValue::Struct(HashMap::from([
+                ("name".to_owned(), DuckValue::text("second")),
+                ("score".to_owned(), DuckValue::Int(9)),
+                ("items".to_owned(), DuckValue::List(vec![DuckValue::Int(3)])),
+            ])))
+        );
     }
 }

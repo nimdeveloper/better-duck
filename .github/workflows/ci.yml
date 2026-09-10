@@ -261,7 +261,8 @@ jobs:
           cargo llvm-cov --no-report -p better-duck-macros --lib \
             --exclude-from-report better-duck-sys \
             --exclude-from-report xtask
-          cargo llvm-cov report --lcov --output-path lcov.info
+          cargo llvm-cov report --lcov --output-path lcov.info \
+            --ignore-filename-regex '(^|[\\/])(xtask|crates[\\/]better-duck-sys)([\\/]|$)'
       - name: Upload to Codecov
         if: ${{ env.CODECOV_TOKEN != '' }}
         continue-on-error: true

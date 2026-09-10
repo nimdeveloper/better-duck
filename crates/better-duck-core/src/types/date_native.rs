@@ -315,7 +315,10 @@ impl AppendAble for SystemTime {
         &mut self,
         appender: crate::ffi::duckdb_appender,
     ) -> crate::error::Result<()> {
-        let dur = self.duration_since(UNIX_EPOCH).unwrap_or_default();
+        use crate::error::Error;
+        let dur = self.duration_since(UNIX_EPOCH).map_err(|e| {
+            Error::ConversionError(DuckDBConversionError::ConversionError(e.to_string()))
+        })?;
         let micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
         let raw = duckdb_timestamp { micros };
         // SAFETY: `raw` is a valid duckdb_timestamp; `appender` is valid.
@@ -327,7 +330,10 @@ impl AppendAble for SystemTime {
         idx: u64,
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> crate::error::Result<()> {
-        let dur = self.duration_since(UNIX_EPOCH).unwrap_or_default();
+        use crate::error::Error;
+        let dur = self.duration_since(UNIX_EPOCH).map_err(|e| {
+            Error::ConversionError(DuckDBConversionError::ConversionError(e.to_string()))
+        })?;
         let micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
         let raw = duckdb_timestamp { micros };
         // SAFETY: `raw` is a valid duckdb_timestamp; `stmt`/`idx` are valid.
@@ -624,5 +630,133 @@ mod tests {
         assert_eq!(value::DuckValue::from(timestamp), value::DuckValue::Timestamp(timestamp));
     }
 
-    // MORE_TESTS
+    #[test]
+    fn temporal_types_bind_through_real_prepared_statements() {
+        use crate::{connection::Connection, types::value::DuckValue};
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        let mut date = DuckDate { year: 2024, month: 2, day: 29 };
+        let mut time = DuckTime { hour: 12, min: 30, sec: 45, micros: 123_456 };
+        let mut time_ns = DuckTimeNs { hour: 12, min: 30, sec: 45, nanos: 123_456_789 };
+        let mut time_tz =
+            DuckTimeTz { hour: 12, min: 30, sec: 45, micros: 123_456, offset_secs: 19_800 };
+        let mut interval = StdDuration::from_secs(90) + StdDuration::from_micros(7);
+        let mut timestamp =
+            UNIX_EPOCH + StdDuration::from_secs(1_700_000_000) + StdDuration::from_micros(123_456);
+
+        let mut rows = conn
+            .execute_with(
+                "SELECT $1::DATE AS d, $2::TIME AS t, $3::TIME_NS AS tn, \
+             $4::TIMETZ AS ttz, $5::INTERVAL AS i, $6::TIMESTAMP AS ts",
+                &mut [
+                    &mut date,
+                    &mut time,
+                    &mut time_ns,
+                    &mut time_tz,
+                    &mut interval,
+                    &mut timestamp,
+                ],
+            )
+            .unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("d"), Some(&DuckValue::Date(date)));
+        assert_eq!(row.get("t"), Some(&DuckValue::Time(time)));
+        assert_eq!(row.get("tn"), Some(&DuckValue::TimeNs(time_ns)));
+        assert!(matches!(row.get("ttz"), Some(DuckValue::TimeTz(_))));
+        assert_eq!(row.get("i"), Some(&DuckValue::Interval(interval)));
+        assert_eq!(row.get("ts"), Some(&DuckValue::Timestamp(timestamp)));
+    }
+
+    #[test]
+    fn temporal_types_append_through_real_appender() {
+        use crate::{connection::Connection, types::value::DuckValue, AppendAble};
+
+        struct TemporalRow {
+            date: DuckDate,
+            time: DuckTime,
+            time_ns: DuckTimeNs,
+            time_tz: DuckTimeTz,
+            interval: StdDuration,
+            timestamp: SystemTime,
+        }
+
+        impl AppendAble for TemporalRow {
+            fn appender_append(
+                &mut self,
+                appender: crate::ffi::duckdb_appender,
+            ) -> crate::error::Result<()> {
+                self.date.appender_append(appender)?;
+                self.time.appender_append(appender)?;
+                self.time_ns.appender_append(appender)?;
+                self.time_tz.appender_append(appender)?;
+                self.interval.appender_append(appender)?;
+                self.timestamp.appender_append(appender)
+            }
+
+            fn stmt_append(
+                &mut self,
+                _idx: u64,
+                _stmt: crate::ffi::duckdb_prepared_statement,
+            ) -> crate::error::Result<()> {
+                unreachable!("TemporalRow is only used by an appender")
+            }
+        }
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE native_temporal (d DATE, t TIME, tn TIME_NS, ttz TIMETZ, i INTERVAL, ts TIMESTAMP)",
+        ).unwrap();
+        let mut row = TemporalRow {
+            date: DuckDate { year: 2024, month: 2, day: 29 },
+            time: DuckTime { hour: 12, min: 30, sec: 45, micros: 123_456 },
+            time_ns: DuckTimeNs { hour: 12, min: 30, sec: 45, nanos: 123_456_789 },
+            time_tz: DuckTimeTz {
+                hour: 12,
+                min: 30,
+                sec: 45,
+                micros: 123_456,
+                offset_secs: 19_800,
+            },
+            interval: StdDuration::from_secs(90) + StdDuration::from_micros(7),
+            timestamp: UNIX_EPOCH
+                + StdDuration::from_secs(1_700_000_000)
+                + StdDuration::from_micros(123_456),
+        };
+        {
+            let mut appender = conn.appender("native_temporal", "main").unwrap();
+            appender.append(&mut row).unwrap();
+            appender.save().unwrap();
+        }
+
+        let result = conn.execute("SELECT d, t, tn, ttz, i, ts FROM native_temporal").unwrap();
+        let stored = result.into_iter().next().unwrap().unwrap();
+        assert_eq!(stored.get("d"), Some(&DuckValue::Date(row.date)));
+        assert_eq!(stored.get("t"), Some(&DuckValue::Time(row.time)));
+        assert_eq!(stored.get("tn"), Some(&DuckValue::TimeNs(row.time_ns)));
+        assert!(matches!(stored.get("ttz"), Some(DuckValue::TimeTz(_))));
+        assert_eq!(stored.get("i"), Some(&DuckValue::Interval(row.interval)));
+        assert_eq!(stored.get("ts"), Some(&DuckValue::Timestamp(row.timestamp)));
+    }
+
+    #[test]
+    fn pre_epoch_system_time_append_and_bind_match_to_duck_error() {
+        use crate::connection::Connection;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE native_pre_epoch (ts TIMESTAMP)").unwrap();
+        let value = UNIX_EPOCH - StdDuration::from_micros(1);
+        assert!(matches!(value.to_duck(), Err(DuckDBConversionError::ConversionError(_))));
+
+        let mut bound = value;
+        let bind_error = match conn.execute_with("SELECT $1::TIMESTAMP", &mut [&mut bound]) {
+            Ok(_) => panic!("pre-epoch SystemTime binding should fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(bind_error, crate::error::Error::ConversionError(_)));
+
+        let mut appended = value;
+        let mut appender = conn.appender("native_pre_epoch", "main").unwrap();
+        let append_error = appender.append(&mut appended).unwrap_err();
+        assert!(matches!(append_error, crate::error::Error::ConversionError(_)));
+    }
 }

@@ -1298,10 +1298,17 @@ fn rt_map_entries() {
     }
 
     let mut conn = conn_with("CREATE TABLE t_map (val MAP(INTEGER, VARCHAR))");
-    conn.batch_execute("INSERT INTO t_map VALUES (MAP {1: 'one'})").unwrap();
+    let expected = HashMap::from([
+        (DuckValue::Int(1), DuckValue::text("one")),
+        (DuckValue::Int(2), DuckValue::text("two")),
+    ]);
+    diesel::sql_query("INSERT INTO t_map VALUES ($1)")
+        .bind::<DuckMap, _>(&expected)
+        .execute(&mut conn)
+        .unwrap();
     let row: Row =
         diesel::sql_query("SELECT val FROM t_map LIMIT 1").get_result(&mut conn).unwrap();
-    assert_eq!(row.val.get(&DuckValue::Int(1)), Some(&DuckValue::text("one")));
+    assert_eq!(row.val, expected);
 }
 
 #[test]
@@ -1315,11 +1322,15 @@ fn rt_union_active_member() {
         val: Box<DuckValue>,
     }
 
-    let mut conn = conn_with("CREATE TABLE t_union (val UNION(n INTEGER, s VARCHAR))");
-    conn.batch_execute("INSERT INTO t_union VALUES (union_value(n := 7))").unwrap();
+    let mut conn = conn_with("CREATE TABLE t_union (val UNION(value INTEGER))");
+    let expected = Box::new(DuckValue::Int(7));
+    diesel::sql_query("INSERT INTO t_union VALUES ($1)")
+        .bind::<DuckUnion, _>(expected.clone())
+        .execute(&mut conn)
+        .unwrap();
     let row: Row =
         diesel::sql_query("SELECT val FROM t_union LIMIT 1").get_result(&mut conn).unwrap();
-    assert_eq!(*row.val, DuckValue::Int(7));
+    assert_eq!(row.val, expected);
 }
 
 #[test]
@@ -1334,10 +1345,14 @@ fn rt_array_elements() {
     }
 
     let mut conn = conn_with("CREATE TABLE t_array (val INTEGER[3])");
-    conn.batch_execute("INSERT INTO t_array VALUES ([1, 2, 3])").unwrap();
+    let expected = vec![DuckValue::Int(1), DuckValue::Int(2), DuckValue::Int(3)];
+    diesel::sql_query("INSERT INTO t_array VALUES ($1)")
+        .bind::<DuckArray, _>(&expected)
+        .execute(&mut conn)
+        .unwrap();
     let row: Row =
         diesel::sql_query("SELECT val FROM t_array LIMIT 1").get_result(&mut conn).unwrap();
-    assert_eq!(row.val, vec![DuckValue::Int(1), DuckValue::Int(2), DuckValue::Int(3)]);
+    assert_eq!(row.val, expected);
 }
 
 #[test]
@@ -1530,6 +1545,48 @@ fn rt_bignum_sign_zero_and_large_bind_and_read() {
     let rows: Vec<Row> =
         diesel::sql_query("SELECT val FROM bignum_edges ORDER BY id").load(&mut conn).unwrap();
     assert_eq!(rows.into_iter().map(|row| row.val).collect::<Vec<_>>(), values);
+}
+
+#[cfg(feature = "chrono")]
+#[test]
+fn rt_time_ns_preserves_nanoseconds() {
+    use better_duck_core::types::value_ref::DuckValueRef;
+    use better_duck_diesel::backend::DuckDb;
+    use better_duck_diesel::sql_types::DuckTimeNs;
+    use chrono::NaiveTime;
+    use diesel::serialize::{Output, ToSql};
+
+    let expected = NaiveTime::from_hms_nano_opt(14, 30, 55, 123_456_789).unwrap();
+    let mut metadata_lookup = ();
+    let mut output = Output::new(DuckValueRef::Null, &mut metadata_lookup);
+    assert_eq!(
+        <NaiveTime as ToSql<DuckTimeNs, DuckDb>>::to_sql(&expected, &mut output).unwrap(),
+        diesel::serialize::IsNull::No
+    );
+    assert!(matches!(output.into_inner(), DuckValueRef::TimeNs(value) if value == expected));
+    assert_eq!(
+        <NaiveTime as FromSql<DuckTimeNs, DuckDb>>::from_sql(DuckValueRef::TimeNs(expected))
+            .unwrap(),
+        expected
+    );
+}
+
+#[cfg(feature = "chrono")]
+#[test]
+fn chrono_from_sql_rejects_wrong_variants() {
+    use better_duck_core::types::date_chrono::TimeTz as CoreTimeTz;
+    use better_duck_core::types::value_ref::DuckValueRef;
+    use better_duck_diesel::sql_types::{DuckTimeNs, DuckTimeTz, DuckTimestamptz};
+    use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+    use diesel::sql_types::{Date, Interval, Time, Timestamp};
+
+    assert_from_sql_rejects::<Date, NaiveDate>(DuckValueRef::Int(1));
+    assert_from_sql_rejects::<Time, NaiveTime>(DuckValueRef::Int(1));
+    assert_from_sql_rejects::<Timestamp, NaiveDateTime>(DuckValueRef::Int(1));
+    assert_from_sql_rejects::<Interval, Duration>(DuckValueRef::Int(1));
+    assert_from_sql_rejects::<DuckTimestamptz, DateTime<Utc>>(DuckValueRef::Int(1));
+    assert_from_sql_rejects::<DuckTimeTz, CoreTimeTz>(DuckValueRef::Int(1));
+    assert_from_sql_rejects::<DuckTimeNs, NaiveTime>(DuckValueRef::Int(1));
 }
 
 #[test]

@@ -894,6 +894,7 @@ impl<'a, T: Into<DuckValueRef<'a>>> From<Option<T>> for DuckValueRef<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::hash::{Hash, Hasher};
 
     #[test]
     fn test_value_ref_conversion() {
@@ -976,5 +977,68 @@ mod tests {
         map.insert(DuckValueRef::Text(Cow::Borrowed("key")), 20);
         assert_eq!(map.get(&DuckValueRef::Int(1)), Some(&10));
         assert_eq!(map.get(&DuckValueRef::Text(Cow::Borrowed("key"))), Some(&20));
+    }
+
+    #[test]
+    fn composite_refs_roundtrip_borrowed_and_owned() {
+        let value = DuckValue::Struct(HashMap::from([
+            (
+                "list".to_owned(),
+                DuckValue::List(vec![DuckValue::text("borrowed"), DuckValue::Null]),
+            ),
+            (
+                "map".to_owned(),
+                DuckValue::Map(HashMap::from([(
+                    DuckValue::Int(1),
+                    DuckValue::Array(vec![DuckValue::Boolean(true)].into_boxed_slice()),
+                )])),
+            ),
+            ("union".to_owned(), DuckValue::Union(Box::new(DuckValue::Int(9)))),
+        ]));
+
+        let borrowed = DuckValueRef::from(&value);
+        assert_eq!(DuckValue::from(&borrowed), value);
+
+        let owned: DuckValueRef<'static> = DuckValueRef::from(value.clone());
+        assert_eq!(DuckValue::from(&owned), value);
+    }
+
+    #[test]
+    fn composite_ref_hashes_ignore_map_and_struct_insertion_order() {
+        use std::collections::hash_map::DefaultHasher;
+
+        let first = DuckValueRef::Struct(HashMap::from([
+            ("a".to_owned(), DuckValueRef::Int(1)),
+            ("b".to_owned(), DuckValueRef::Int(2)),
+        ]));
+        let second = DuckValueRef::Struct(HashMap::from([
+            ("b".to_owned(), DuckValueRef::Int(2)),
+            ("a".to_owned(), DuckValueRef::Int(1)),
+        ]));
+        let hash = |value: &DuckValueRef<'_>| {
+            let mut hasher = DefaultHasher::new();
+            value.hash(&mut hasher);
+            hasher.finish()
+        };
+
+        assert_eq!(first, second);
+        assert_eq!(hash(&first), hash(&second));
+        assert_ne!(DuckValueRef::List(vec![]), DuckValueRef::Array(Box::new([])));
+        assert_ne!(DuckValueRef::Union(Box::new(DuckValueRef::Int(1))), DuckValueRef::Int(1));
+    }
+
+    #[test]
+    fn primitive_ref_conversions_cover_all_integer_paths_and_nulls() {
+        assert_eq!(String::from(DuckValueRef::Text(Cow::Borrowed("duck"))), "duck");
+        assert_eq!(String::from(DuckValueRef::Null), "");
+        assert_eq!(i64::from(DuckValueRef::BigInt(9)), 9);
+        assert_eq!(i64::from(DuckValueRef::Int(8)), 8);
+        assert_eq!(i64::from(DuckValueRef::SmallInt(7)), 7);
+        assert_eq!(i64::from(DuckValueRef::TinyInt(6)), 6);
+        assert_eq!(i64::from(DuckValueRef::Null), 0);
+        assert_eq!(i32::from(DuckValueRef::Int(5)), 5);
+        assert_eq!(i32::from(DuckValueRef::SmallInt(4)), 4);
+        assert_eq!(i32::from(DuckValueRef::TinyInt(3)), 3);
+        assert_eq!(i32::from(DuckValueRef::Null), 0);
     }
 }

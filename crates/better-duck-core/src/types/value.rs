@@ -1501,4 +1501,81 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
+
+    #[test]
+    fn composite_values_roundtrip_through_borrowed_refs() {
+        let values = [
+            DuckValue::Array(vec![DuckValue::Int(1), DuckValue::Null].into_boxed_slice()),
+            DuckValue::Struct(HashMap::from([(
+                "field".to_owned(),
+                DuckValue::List(vec![DuckValue::text("value")]),
+            )])),
+            DuckValue::Map(HashMap::from([(
+                DuckValue::Int(1),
+                DuckValue::Array(vec![DuckValue::Boolean(true)].into_boxed_slice()),
+            )])),
+            DuckValue::Union(Box::new(DuckValue::text("active"))),
+        ];
+
+        for value in values {
+            let value_ref = DuckValueRef::from(&value);
+            assert_eq!(DuckValue::from(&value_ref), value);
+        }
+    }
+
+    #[test]
+    fn composite_values_roundtrip_through_owned_refs() {
+        let values = [
+            DuckValue::List(vec![DuckValue::Int(1)]),
+            DuckValue::Array(vec![DuckValue::Int(2)].into_boxed_slice()),
+            DuckValue::Struct(HashMap::from([("field".to_owned(), DuckValue::Int(3))])),
+            DuckValue::Map(HashMap::from([(DuckValue::Int(4), DuckValue::Int(5))])),
+            DuckValue::Union(Box::new(DuckValue::Int(6))),
+        ];
+
+        for value in values {
+            let value_ref: DuckValueRef<'static> = DuckValueRef::from(value.clone());
+            assert_eq!(DuckValue::from(&value_ref), value);
+        }
+    }
+
+    #[test]
+    fn composite_equality_hashing_and_variant_discriminants_are_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let first = DuckValue::Struct(HashMap::from([
+            ("a".to_owned(), DuckValue::Int(1)),
+            ("b".to_owned(), DuckValue::Int(2)),
+        ]));
+        let second = DuckValue::Struct(HashMap::from([
+            ("b".to_owned(), DuckValue::Int(2)),
+            ("a".to_owned(), DuckValue::Int(1)),
+        ]));
+        let hash = |value: &DuckValue| {
+            let mut hasher = DefaultHasher::new();
+            value.hash(&mut hasher);
+            hasher.finish()
+        };
+
+        assert_eq!(first, second);
+        assert_eq!(hash(&first), hash(&second));
+        assert_ne!(DuckValue::List(vec![]), DuckValue::Array(Box::new([])));
+        assert_ne!(DuckValue::Int(1), DuckValue::BigInt(1));
+        assert_ne!(DuckValue::Union(Box::new(DuckValue::Int(1))), DuckValue::Int(1));
+    }
+
+    #[test]
+    fn integer_extraction_handles_supported_variants_and_null() {
+        assert_eq!(i64::from(DuckValue::BigInt(9)), 9);
+        assert_eq!(i64::from(DuckValue::Int(8)), 8);
+        assert_eq!(i64::from(DuckValue::SmallInt(7)), 7);
+        assert_eq!(i64::from(DuckValue::TinyInt(6)), 6);
+        assert_eq!(i64::from(DuckValue::Null), 0);
+
+        assert_eq!(i32::from(DuckValue::Int(5)), 5);
+        assert_eq!(i32::from(DuckValue::SmallInt(4)), 4);
+        assert_eq!(i32::from(DuckValue::TinyInt(3)), 3);
+        assert_eq!(i32::from(DuckValue::Null), 0);
+    }
 }

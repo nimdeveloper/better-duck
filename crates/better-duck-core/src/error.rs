@@ -275,3 +275,152 @@ impl error::Error for Error {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ffi::{DuckDBError, DuckDBSuccess};
+    use std::{error::Error as _, ffi::CString, io};
+
+    fn invalid_utf8() -> str::Utf8Error {
+        let bytes = vec![0xff];
+        str::from_utf8(&bytes).unwrap_err()
+    }
+
+    #[test]
+    fn equality_covers_comparable_variants_and_rejects_others() {
+        assert_eq!(
+            Error::DuckDBFailure(FFIError::new(DuckDBError), Some("context".into())),
+            Error::DuckDBFailure(FFIError::new(DuckDBError), Some("context".into()))
+        );
+        assert_ne!(
+            Error::DuckDBFailure(FFIError::new(DuckDBSuccess), None),
+            Error::DuckDBFailure(FFIError::new(DuckDBError), None)
+        );
+        assert_eq!(Error::IntegralValueOutOfRange(2, 300), Error::IntegralValueOutOfRange(2, 300));
+        assert_ne!(Error::IntegralValueOutOfRange(2, 300), Error::IntegralValueOutOfRange(3, 300));
+        assert_eq!(Error::Utf8Error(invalid_utf8()), Error::Utf8Error(invalid_utf8()));
+        assert_eq!(
+            Error::NulError(CString::new("a\0b").unwrap_err()),
+            Error::NulError(CString::new("a\0b").unwrap_err())
+        );
+        assert_eq!(
+            Error::InvalidParameterName("p".into()),
+            Error::InvalidParameterName("p".into())
+        );
+        assert_eq!(
+            Error::InvalidPath(PathBuf::from("file.db")),
+            Error::InvalidPath(PathBuf::from("file.db"))
+        );
+        assert_eq!(Error::ExecuteReturnedResults, Error::ExecuteReturnedResults);
+        assert_eq!(Error::QueryReturnedNoRows, Error::QueryReturnedNoRows);
+        assert_eq!(Error::InvalidColumnIndex(4), Error::InvalidColumnIndex(4));
+        assert_eq!(
+            Error::InvalidColumnName("value".into()),
+            Error::InvalidColumnName("value".into())
+        );
+        assert_eq!(Error::StatementChangedRows(3), Error::StatementChangedRows(3));
+        assert_eq!(Error::InvalidParameterCount(1, 2), Error::InvalidParameterCount(1, 2));
+        assert_ne!(
+            Error::ToSqlConversionFailure(Box::new(io::Error::other("same"))),
+            Error::ToSqlConversionFailure(Box::new(io::Error::other("same")))
+        );
+        assert_ne!(Error::InvalidQuery, Error::InvalidQuery);
+        assert_ne!(Error::MultipleStatement, Error::MultipleStatement);
+        assert_ne!(Error::AppendError, Error::AppendError);
+        assert_ne!(
+            Error::ConversionError(DuckDBConversionError::TypeMismatch {
+                expected: crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
+                found: crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR
+            }),
+            Error::ConversionError(DuckDBConversionError::TypeMismatch {
+                expected: crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
+                found: crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR
+            })
+        );
+        assert_ne!(
+            Error::ConversionError(DuckDBConversionError::NullValue),
+            Error::ConversionError(DuckDBConversionError::NullValue)
+        );
+        assert_ne!(
+            Error::BackgroundTaskFailed("same".into()),
+            Error::BackgroundTaskFailed("same".into())
+        );
+        assert_ne!(Error::Pool("same".into()), Error::Pool("same".into()));
+        assert_ne!(Error::InvalidQuery, Error::MultipleStatement);
+    }
+
+    #[test]
+    fn utf8_and_nul_errors_convert_and_compare() {
+        let utf8 = invalid_utf8();
+        let converted: Error = utf8.into();
+        assert_eq!(converted, Error::Utf8Error(utf8));
+
+        let nul = CString::new("a\0b").unwrap_err();
+        let expected = CString::new("a\0b").unwrap_err();
+        let converted: Error = nul.into();
+        assert_eq!(converted, Error::NulError(expected));
+    }
+
+    #[test]
+    fn display_formats_error_context() {
+        assert_eq!(
+            Error::IntegralValueOutOfRange(2, 300).to_string(),
+            "Integer 300 out of range at index 2"
+        );
+        assert_eq!(
+            Error::IntegralValueOutOfRange(usize::MAX, 300).to_string(),
+            "Integer 300 out of range"
+        );
+        assert_eq!(
+            Error::ConversionError(DuckDBConversionError::ConversionError("bad value".into()))
+                .to_string(),
+            "Conversion error: bad value"
+        );
+        assert_eq!(
+            Error::ConversionError(DuckDBConversionError::NullValue).to_string(),
+            "Null value encountered"
+        );
+        assert_eq!(
+            Error::ConversionError(DuckDBConversionError::PrecisionLoss("rounded".into()))
+                .to_string(),
+            "Precision loss: rounded"
+        );
+        assert_eq!(Error::AppendError.to_string(), "Append error");
+        assert_eq!(Error::InvalidQuery.to_string(), "Query is not read-only");
+        assert_eq!(Error::MultipleStatement.to_string(), "Multiple statements provided");
+        assert_eq!(
+            Error::BackgroundTaskFailed("worker stopped".into()).to_string(),
+            "Background task failed: worker stopped"
+        );
+        assert_eq!(Error::Pool("timed out".into()).to_string(), "Connection pool error: timed out");
+        assert_eq!(
+            Error::DuckDBFailure(FFIError::new(DuckDBError), Some("query failed".into()))
+                .to_string(),
+            "query failed"
+        );
+        assert_eq!(
+            Error::DuckDBFailure(FFIError::new(DuckDBError), None).to_string(),
+            "DuckDB call failed with result code 1"
+        );
+    }
+
+    #[test]
+    fn sources_are_exposed_only_for_wrapped_errors() {
+        let utf8 = Error::Utf8Error(invalid_utf8());
+        let nul = Error::NulError(CString::new("a\0b").unwrap_err());
+        let ffi = Error::DuckDBFailure(FFIError::new(DuckDBError), None);
+        let sql = Error::ToSqlConversionFailure(Box::new(io::Error::other("sql")));
+        let unknown = Error::UNKNOWN(Box::new(io::Error::other("unknown")));
+
+        assert!(ffi.source().is_some());
+        assert!(utf8.source().is_some());
+        assert!(nul.source().is_some());
+        assert_eq!(sql.source().unwrap().to_string(), "sql");
+        assert_eq!(unknown.source().unwrap().to_string(), "unknown");
+        assert!(Error::AppendError.source().is_none());
+        assert!(Error::ConversionError(DuckDBConversionError::NullValue).source().is_none());
+        assert!(Error::BackgroundTaskFailed("stopped".into()).source().is_none());
+        assert!(Error::Pool("timeout".into()).source().is_none());
+    }
+}

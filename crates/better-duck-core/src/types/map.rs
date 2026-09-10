@@ -396,7 +396,10 @@ pub(super) fn map_entries_hash_ref<'a, H: Hasher>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::connection::Connection;
+    use crate::{
+        connection::Connection,
+        ffi::{duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_get_type_id},
+    };
 
     #[test]
     fn empty_hashmap_appends_and_reads_back() {
@@ -426,5 +429,73 @@ mod tests {
             },
             other => panic!("expected Map, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn duck_value_map_creates_value_and_logical_type() {
+        let value = DuckValue::Map(HashMap::from([
+            (DuckValue::Int(1), DuckValue::text("one")),
+            (DuckValue::Int(2), DuckValue::text("two")),
+        ]));
+        let mut raw = value.to_duck().unwrap();
+        // SAFETY: `raw` was created by `DuckValue::to_duck` and is destroyed once.
+        unsafe { duckdb_destroy_value(&mut raw) };
+
+        let mut logical_type = DuckValue::logical_type_of(&value).unwrap();
+        assert_eq!(
+            // SAFETY: `logical_type` is valid until it is destroyed below.
+            unsafe { duckdb_get_type_id(logical_type) },
+            crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_MAP
+        );
+        // SAFETY: `logical_type` was created by `logical_type_of` and is destroyed once.
+        unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+    }
+
+    #[test]
+    fn empty_duck_value_map_reports_conversion_errors() {
+        let value = DuckValue::Map(HashMap::new());
+        assert!(matches!(value.to_duck(), Err(DuckDBConversionError::ConversionError(_))));
+        assert!(matches!(
+            DuckValue::logical_type_of(&value),
+            Err(DuckDBConversionError::ConversionError(_))
+        ));
+    }
+
+    #[test]
+    fn map_reads_arbitrary_keys_null_values_and_row_offsets() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let mut result = conn
+            .execute(
+                "SELECT * FROM (VALUES \
+                 (map([1, 2], ['one', NULL])), \
+                 (map([3], ['three']))) AS t(v)",
+            )
+            .unwrap();
+
+        let first = result.next().unwrap().unwrap();
+        assert_eq!(
+            first.get("v"),
+            Some(&DuckValue::Map(HashMap::from([
+                (DuckValue::Int(1), DuckValue::text("one")),
+                (DuckValue::Int(2), DuckValue::Null),
+            ])))
+        );
+        let second = result.next().unwrap().unwrap();
+        assert_eq!(
+            second.get("v"),
+            Some(&DuckValue::Map(HashMap::from([(DuckValue::Int(3), DuckValue::text("three"),)])))
+        );
+    }
+
+    #[test]
+    fn map_conversions_preserve_keys_and_values() {
+        let direct = HashMap::from([(DuckValue::Int(1), DuckValue::Boolean(true))]);
+        assert_eq!(DuckValue::from(direct.clone()), DuckValue::Map(direct));
+
+        let string_map = HashMap::from([("name".to_owned(), DuckValue::Int(7))]);
+        let expected =
+            DuckValue::Map(HashMap::from([(DuckValue::text("name"), DuckValue::Int(7))]));
+        assert_eq!(DuckValue::from(string_map), expected);
+        assert_eq!(DuckValue::from(vec![("name".to_owned(), DuckValue::Int(7))]), expected);
     }
 }

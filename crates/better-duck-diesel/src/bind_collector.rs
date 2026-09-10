@@ -109,3 +109,52 @@ impl MoveableBindCollector<DuckDb> for DuckDbBindCollector<'_> {
         f.extend(bind_data.binds.iter().map(|b| Box::new(b.clone()) as Box<dyn std::fmt::Debug>));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use better_duck_core::types::{value::DuckValue, value_ref::DuckValueRef, Type};
+    use diesel::query_builder::{BindCollector, MoveableBindCollector};
+
+    use super::{DuckDbBindCollector, DuckDbBindCollectorData};
+    use crate::backend::DuckDbTypeWrapper;
+
+    #[test]
+    fn push_null_value_appends_null_bind() {
+        let mut collector = DuckDbBindCollector::default();
+        collector.push_null_value(DuckDbTypeWrapper(Type::Int)).unwrap();
+        assert_eq!(collector.binds, [DuckValueRef::Null]);
+    }
+
+    #[test]
+    fn moveable_owns_borrowed_values() {
+        let text = String::from("borrowed");
+        let collector =
+            DuckDbBindCollector { binds: vec![DuckValueRef::Text(text.as_str().into())] };
+        let data = collector.moveable();
+        drop(text);
+        assert_eq!(data.binds, [DuckValue::text("borrowed")]);
+    }
+
+    #[test]
+    fn append_bind_data_preserves_values_and_order() {
+        let data = DuckDbBindCollectorData {
+            binds: vec![DuckValue::Int(1), DuckValue::text("two"), DuckValue::Null],
+        };
+        let mut collector = DuckDbBindCollector::default();
+        collector.append_bind_data(&data);
+        assert_eq!(
+            collector.binds,
+            [DuckValueRef::Int(1), DuckValueRef::Text("two".into()), DuckValueRef::Null,]
+        );
+    }
+
+    #[test]
+    fn push_debug_binds_emits_one_representation_per_bind() {
+        let data =
+            DuckDbBindCollectorData { binds: vec![DuckValue::Int(7), DuckValue::text("duck")] };
+        let mut debug_binds = Vec::new();
+        DuckDbBindCollector::push_debug_binds(&data, &mut debug_binds);
+        let rendered: Vec<String> = debug_binds.iter().map(|bind| format!("{bind:?}")).collect();
+        assert_eq!(rendered, ["Int(7)", "Text(\"duck\")"]);
+    }
+}

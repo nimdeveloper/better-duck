@@ -125,3 +125,50 @@ pub(crate) fn union_logical_type(
     unsafe { duckdb_destroy_logical_type(&mut member_lt) };
     Ok(lt)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        connection::Connection,
+        ffi::{duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_get_type_id},
+    };
+
+    #[test]
+    fn union_value_and_logical_type_are_created() {
+        let value = DuckValue::Union(Box::new(DuckValue::Int(42)));
+        let mut raw = value.to_duck().unwrap();
+        assert!(!raw.is_null());
+        // SAFETY: `raw` was created by `DuckValue::to_duck` and is destroyed once.
+        unsafe { duckdb_destroy_value(&mut raw) };
+
+        let mut logical_type = DuckValue::logical_type_of(&value).unwrap();
+        assert_eq!(
+            // SAFETY: `logical_type` is valid until it is destroyed below.
+            unsafe { duckdb_get_type_id(logical_type) },
+            crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_UNION
+        );
+        // SAFETY: `logical_type` was created by `logical_type_of` and is destroyed once.
+        unsafe { duckdb_destroy_logical_type(&mut logical_type) };
+    }
+
+    #[test]
+    fn union_reads_active_members_and_nulls() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let mut result = conn
+            .execute(
+                "SELECT union_value(i := 7) AS int_value, \
+                 union_value(s := 'duck') AS text_value, \
+                 union_value(i := NULL::INTEGER) AS null_value",
+            )
+            .unwrap();
+        let row = result.next().unwrap().unwrap();
+
+        assert_eq!(row.get("int_value"), Some(&DuckValue::Union(Box::new(DuckValue::Int(7)))));
+        assert_eq!(
+            row.get("text_value"),
+            Some(&DuckValue::Union(Box::new(DuckValue::text("duck"))))
+        );
+        assert_eq!(row.get("null_value"), Some(&DuckValue::Union(Box::new(DuckValue::Null))));
+    }
+}

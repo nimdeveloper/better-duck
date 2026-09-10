@@ -557,6 +557,7 @@ impl From<TimeNs> for value::DuckValue {
 #[cfg(test)]
 #[allow(clippy::undocumented_unsafe_blocks)]
 mod test_chrono_conversion {
+    use super::*;
 
     #[test]
     fn test_duration_conversion() {
@@ -791,5 +792,166 @@ mod test_chrono_conversion {
         let converted = NaiveTime::from_duck(raw).unwrap();
         assert_eq!(converted, NaiveTime::from_hms_micro_opt(12, 30, 45, 123_456).unwrap());
         unsafe { duckdb_destroy_value(&mut duck_value) };
+    }
+
+    #[test]
+    fn temporal_types_bind_through_real_prepared_statements() {
+        use crate::{connection::Connection, types::value::DuckValue};
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        let date = NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
+        let time = NaiveTime::from_hms_micro_opt(12, 30, 45, 123_456).unwrap();
+        let timestamp = date.and_time(time);
+        let interval = Duration::seconds(90) + Duration::microseconds(7);
+        let mut timestamp_s = TimestampS(timestamp);
+        let mut timestamp_ms = TimestampMs(timestamp);
+        let mut timestamp_ns = TimestampNs(timestamp);
+        let mut time_tz = TimeTz {
+            time: NaiveTime::from_hms_micro_opt(12, 30, 45, 123_456).unwrap(),
+            offset_secs: 19_800,
+        };
+        let mut time_ns = TimeNs(NaiveTime::from_hms_nano_opt(12, 30, 45, 123_456_789).unwrap());
+        let mut timestamp_tz = TimestampTz(
+            DateTime::parse_from_rfc3339("2024-02-29T12:30:45.123456Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        );
+        let mut date = date;
+        let mut time = time;
+        let mut timestamp = timestamp;
+        let mut interval = interval;
+
+        let mut rows = conn
+            .execute_with(
+                "SELECT $1::DATE AS d, $2::TIME AS t, $3::TIMESTAMP AS ts, $4::INTERVAL AS i, \
+             $5::TIMESTAMP_S AS tss, $6::TIMESTAMP_MS AS tsm, $7::TIMESTAMP_NS AS tsn, \
+             $8::TIMETZ AS ttz, $9::TIME_NS AS tn, $10::TIMESTAMPTZ AS tstz",
+                &mut [
+                    &mut date,
+                    &mut time,
+                    &mut timestamp,
+                    &mut interval,
+                    &mut timestamp_s,
+                    &mut timestamp_ms,
+                    &mut timestamp_ns,
+                    &mut time_tz,
+                    &mut time_ns,
+                    &mut timestamp_tz,
+                ],
+            )
+            .unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("d"), Some(&DuckValue::Date(date)));
+        assert_eq!(row.get("t"), Some(&DuckValue::Time(time)));
+        assert_eq!(row.get("ts"), Some(&DuckValue::Timestamp(timestamp)));
+        assert_eq!(row.get("i"), Some(&DuckValue::Interval(interval)));
+        assert_eq!(
+            row.get("tss"),
+            Some(&DuckValue::TimestampS(timestamp_s.0.with_nanosecond(0).unwrap()))
+        );
+        assert_eq!(
+            row.get("tsm"),
+            Some(&DuckValue::TimestampMs(timestamp_ms.0.with_nanosecond(123_000_000).unwrap()))
+        );
+        assert_eq!(row.get("tsn"), Some(&DuckValue::TimestampNs(timestamp_ns.0)));
+        assert!(matches!(row.get("ttz"), Some(DuckValue::TimeTz(_))));
+        assert_eq!(row.get("tn"), Some(&DuckValue::TimeNs(time_ns.0)));
+        assert_eq!(row.get("tstz"), Some(&DuckValue::TimestampTz(timestamp_tz.0)));
+    }
+
+    #[test]
+    fn temporal_types_append_through_real_appender() {
+        use crate::{connection::Connection, types::value::DuckValue, AppendAble};
+
+        struct TemporalRow {
+            date: NaiveDate,
+            time: NaiveTime,
+            timestamp: NaiveDateTime,
+            interval: Duration,
+            timestamp_s: TimestampS,
+            timestamp_ms: TimestampMs,
+            timestamp_ns: TimestampNs,
+            time_tz: TimeTz,
+            time_ns: TimeNs,
+            timestamp_tz: TimestampTz,
+        }
+
+        impl AppendAble for TemporalRow {
+            fn appender_append(
+                &mut self,
+                appender: crate::ffi::duckdb_appender,
+            ) -> crate::error::Result<()> {
+                self.date.appender_append(appender)?;
+                self.time.appender_append(appender)?;
+                self.timestamp.appender_append(appender)?;
+                self.interval.appender_append(appender)?;
+                self.timestamp_s.appender_append(appender)?;
+                self.timestamp_ms.appender_append(appender)?;
+                self.timestamp_ns.appender_append(appender)?;
+                self.time_tz.appender_append(appender)?;
+                self.time_ns.appender_append(appender)?;
+                self.timestamp_tz.appender_append(appender)
+            }
+
+            fn stmt_append(
+                &mut self,
+                _idx: u64,
+                _stmt: crate::ffi::duckdb_prepared_statement,
+            ) -> crate::error::Result<()> {
+                unreachable!("TemporalRow is only used by an appender")
+            }
+        }
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE temporal_values (d DATE, t TIME, ts TIMESTAMP, i INTERVAL, \
+             tss TIMESTAMP_S, tsm TIMESTAMP_MS, tsn TIMESTAMP_NS, ttz TIMETZ, \
+             tn TIME_NS, tstz TIMESTAMPTZ)",
+        )
+        .unwrap();
+        let date = NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
+        let time = NaiveTime::from_hms_micro_opt(12, 30, 45, 123_456).unwrap();
+        let timestamp = date.and_time(time);
+        let expected_tz = DateTime::parse_from_rfc3339("2024-02-29T12:30:45.123456Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut row = TemporalRow {
+            date,
+            time,
+            timestamp,
+            interval: Duration::seconds(90) + Duration::microseconds(7),
+            timestamp_s: TimestampS(timestamp),
+            timestamp_ms: TimestampMs(timestamp),
+            timestamp_ns: TimestampNs(timestamp),
+            time_tz: TimeTz { time, offset_secs: 19_800 },
+            time_ns: TimeNs(NaiveTime::from_hms_nano_opt(12, 30, 45, 123_456_789).unwrap()),
+            timestamp_tz: TimestampTz(expected_tz),
+        };
+        {
+            let mut appender = conn.appender("temporal_values", "main").unwrap();
+            appender.append(&mut row).unwrap();
+            appender.save().unwrap();
+        }
+
+        let result = conn
+            .execute("SELECT d, t, ts, i, tss, tsm, tsn, ttz, tn, tstz FROM temporal_values")
+            .unwrap();
+        let stored = result.into_iter().next().unwrap().unwrap();
+        assert_eq!(stored.get("d"), Some(&DuckValue::Date(date)));
+        assert_eq!(stored.get("t"), Some(&DuckValue::Time(time)));
+        assert_eq!(stored.get("ts"), Some(&DuckValue::Timestamp(timestamp)));
+        assert_eq!(stored.get("i"), Some(&DuckValue::Interval(row.interval)));
+        assert_eq!(
+            stored.get("tss"),
+            Some(&DuckValue::TimestampS(timestamp.with_nanosecond(0).unwrap()))
+        );
+        assert_eq!(
+            stored.get("tsm"),
+            Some(&DuckValue::TimestampMs(timestamp.with_nanosecond(123_000_000).unwrap()))
+        );
+        assert_eq!(stored.get("tsn"), Some(&DuckValue::TimestampNs(timestamp)));
+        assert!(matches!(stored.get("ttz"), Some(DuckValue::TimeTz(_))));
+        assert_eq!(stored.get("tn"), Some(&DuckValue::TimeNs(row.time_ns.0)));
+        assert_eq!(stored.get("tstz"), Some(&DuckValue::TimestampTz(expected_tz)));
     }
 }

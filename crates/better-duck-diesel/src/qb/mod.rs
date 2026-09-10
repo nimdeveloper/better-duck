@@ -58,13 +58,12 @@ impl QueryBuilder<DuckDb> for DuckDbQueryBuilder {
 #[derive(Debug, Default)]
 pub struct Comma<'a, T> {
     values: &'a [T],
-    already_appended: bool,
 }
 
 impl<'a, T> Comma<'a, T> {
     /// Creates a new comma helper for the given slice
     pub fn new(values: &'a [T]) -> Self {
-        Self { values, already_appended: false }
+        Self { values }
     }
 }
 
@@ -77,8 +76,8 @@ where
         &'b self,
         mut out: AstPass<'_, 'b, DB>,
     ) -> QueryResult<()> {
-        for value in self.values {
-            if self.already_appended {
+        for (index, value) in self.values.iter().enumerate() {
+            if index > 0 {
                 out.push_sql(", ");
             }
             value.walk_ast(out.reborrow())?;
@@ -139,10 +138,47 @@ impl<'a, T> QueryId for In<'a, T> {
 
 #[cfg(test)]
 mod tests {
-    use diesel::query_builder::QueryBuilder;
+    use diesel::expression::SqlLiteral;
+    use diesel::query_builder::{QueryBuilder, QueryFragment};
 
-    use super::DuckDbQueryBuilder;
+    use super::{Comma, DuckDbQueryBuilder, In};
     use crate::backend::DuckDb;
+
+    fn render<T>(fragment: &T) -> String
+    where
+        T: QueryFragment<DuckDb>,
+    {
+        let mut builder = DuckDbQueryBuilder::default();
+        fragment.to_sql(&mut builder, &DuckDb).unwrap();
+        builder.finish()
+    }
+
+    fn literal(sql: &'static str) -> SqlLiteral<diesel::sql_types::Integer> {
+        diesel::dsl::sql(sql)
+    }
+
+    #[test]
+    fn comma_renders_empty_single_and_multiple_values() {
+        let empty: [SqlLiteral<diesel::sql_types::Integer>; 0] = [];
+        assert_eq!(render(&Comma::new(&empty)), "");
+
+        let single = [literal("1")];
+        assert_eq!(render(&Comma::new(&single)), "1");
+
+        let multiple = [literal("1"), literal("2"), literal("3")];
+        assert_eq!(render(&Comma::new(&multiple)), "1, 2, 3");
+    }
+
+    #[test]
+    fn in_renders_positive_negated_and_empty_lists() {
+        let values = [literal("1"), literal("2")];
+        assert_eq!(render(&In::new(&values)), " IN (1, 2)");
+        assert_eq!(render(&In::new_not_in(&values)), " NOT IN (1, 2)");
+
+        let empty: [SqlLiteral<diesel::sql_types::Integer>; 0] = [];
+        assert_eq!(render(&In::new(&empty)), " IN ()");
+        assert_eq!(render(&In::new_not_in(&empty)), " NOT IN ()");
+    }
 
     #[test]
     fn query_builder_quotes_and_escapes_identifiers() {

@@ -320,12 +320,67 @@ mod tests {
 
     use better_duck_core::types::Type;
 
-    use super::DuckDbTypeWrapper;
+    use super::{
+        DuckArray, DuckBignum, DuckBit, DuckDb, DuckDbTypeWrapper, DuckEnum, DuckHugeInt,
+        DuckInterval, DuckList, DuckMap, DuckStruct, DuckTimeNs, DuckTimeTz, DuckTimestamptz,
+        DuckTinyInt, DuckUBigInt, DuckUHugeInt, DuckUInt, DuckUSmallInt, DuckUTinyInt, DuckUnion,
+        DuckUuid,
+    };
+    use diesel::sql_types::{
+        BigInt, Binary, Bool, Date, Double, Float, HasSqlType, Integer, Interval, SmallInt, Text,
+        Time, Timestamp,
+    };
+
+    fn metadata<ST>() -> Type
+    where
+        DuckDb: HasSqlType<ST>,
+    {
+        <DuckDb as HasSqlType<ST>>::metadata(&mut ()).0
+    }
 
     fn hash(value: &DuckDbTypeWrapper) -> u64 {
         let mut hasher = DefaultHasher::new();
         value.hash(&mut hasher);
         hasher.finish()
+    }
+
+    #[test]
+    fn metadata_matches_every_supported_sql_type() {
+        assert_eq!(metadata::<Bool>(), Type::Boolean);
+        assert_eq!(metadata::<SmallInt>(), Type::SmallInt);
+        assert_eq!(metadata::<Integer>(), Type::Int);
+        assert_eq!(metadata::<BigInt>(), Type::BigInt);
+        assert_eq!(metadata::<Float>(), Type::Float);
+        assert_eq!(metadata::<Double>(), Type::Double);
+        assert_eq!(metadata::<Text>(), Type::Text);
+        assert_eq!(metadata::<Binary>(), Type::Blob);
+        assert_eq!(metadata::<Date>(), Type::Date);
+        assert_eq!(metadata::<Time>(), Type::Time);
+        assert_eq!(metadata::<Timestamp>(), Type::Timestamp);
+        assert_eq!(metadata::<Interval>(), Type::Interval);
+        #[cfg(feature = "decimal")]
+        assert_eq!(metadata::<diesel::sql_types::Numeric>(), Type::Decimal);
+
+        assert_eq!(metadata::<DuckTinyInt>(), Type::TinyInt);
+        assert_eq!(metadata::<DuckUTinyInt>(), Type::UTinyInt);
+        assert_eq!(metadata::<DuckUSmallInt>(), Type::USmallInt);
+        assert_eq!(metadata::<DuckUInt>(), Type::UInt);
+        assert_eq!(metadata::<DuckUBigInt>(), Type::UBigInt);
+        assert_eq!(metadata::<DuckHugeInt>(), Type::HugeInt);
+        assert_eq!(metadata::<DuckUHugeInt>(), Type::UHugeInt);
+        assert_eq!(metadata::<DuckInterval>(), Type::Interval);
+        assert_eq!(metadata::<DuckTimestamptz>(), Type::TimestampTz);
+        assert_eq!(metadata::<DuckTimeTz>(), Type::TimeTz);
+        assert_eq!(metadata::<DuckTimeNs>(), Type::TimeNs);
+        assert_eq!(metadata::<DuckList>(), Type::List);
+        assert_eq!(metadata::<DuckEnum>(), Type::Enum);
+        assert_eq!(metadata::<DuckStruct>(), Type::Struct);
+        assert_eq!(metadata::<DuckMap>(), Type::Map);
+        assert_eq!(metadata::<DuckUnion>(), Type::Union(Box::new(Type::Any)));
+        assert_eq!(metadata::<DuckArray>(), Type::Array(Box::new([Type::Any])));
+        assert_eq!(metadata::<DuckUuid>(), Type::Uuid);
+        assert_eq!(metadata::<DuckBit>(), Type::Bit);
+        assert_eq!(metadata::<DuckBignum>(), Type::Bignum);
     }
 
     #[test]

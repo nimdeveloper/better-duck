@@ -508,4 +508,62 @@ mod tests {
             other => panic!("expected List, got {other:?}"),
         }
     }
+
+    #[test]
+    fn duck_values_create_list_and_array_values() {
+        let list = DuckValue::List(vec![DuckValue::Int(1), DuckValue::Null]);
+        let mut raw_list = list.to_duck().unwrap();
+        assert!(!raw_list.is_null());
+        // SAFETY: `raw_list` was created by `DuckValue::to_duck` and is destroyed once.
+        unsafe { duckdb_destroy_value(&mut raw_list) };
+
+        let array = DuckValue::Array(vec![DuckValue::Int(1), DuckValue::Int(2)].into_boxed_slice());
+        let mut raw_array = array.to_duck().unwrap();
+        assert!(!raw_array.is_null());
+        // SAFETY: `raw_array` was created by `DuckValue::to_duck` and is destroyed once.
+        unsafe { duckdb_destroy_value(&mut raw_array) };
+    }
+
+    #[test]
+    fn empty_duck_value_collections_report_conversion_errors() {
+        for value in [DuckValue::List(vec![]), DuckValue::Array(Box::new([]))] {
+            assert!(matches!(value.to_duck(), Err(DuckDBConversionError::ConversionError(_))));
+            assert!(matches!(
+                DuckValue::logical_type_of(&value),
+                Err(DuckDBConversionError::ConversionError(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn list_and_array_read_null_elements_and_multiple_rows() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let mut result = conn
+            .execute(
+                "SELECT * FROM (VALUES \
+                 ([1, NULL]::INTEGER[], [1, NULL]::INTEGER[2]), \
+                 ([2, 3]::INTEGER[], [2, 3]::INTEGER[2])) AS t(list_value, array_value)",
+            )
+            .unwrap();
+
+        let first = result.next().unwrap().unwrap();
+        assert_eq!(
+            first.get("list_value"),
+            Some(&DuckValue::List(vec![DuckValue::Int(1), DuckValue::Null]))
+        );
+        assert_eq!(
+            first.get("array_value"),
+            Some(&DuckValue::Array(vec![DuckValue::Int(1), DuckValue::Null].into_boxed_slice()))
+        );
+
+        let second = result.next().unwrap().unwrap();
+        assert_eq!(
+            second.get("list_value"),
+            Some(&DuckValue::List(vec![DuckValue::Int(2), DuckValue::Int(3)]))
+        );
+        assert_eq!(
+            second.get("array_value"),
+            Some(&DuckValue::Array(vec![DuckValue::Int(2), DuckValue::Int(3)].into_boxed_slice()))
+        );
+    }
 }
