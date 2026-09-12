@@ -1,0 +1,3754 @@
+{
+  "schema_version": 1,
+  "api_version": "1.5.5",
+  "expected_total": 403,
+  "expected_production_used": 216,
+  "expected_pending": 187,
+  "methods": [
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_create_instance_cache",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "R1",
+      "evidence": []
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_get_or_create_from_cache",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "R1",
+      "evidence": []
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_destroy_instance_cache",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "R1",
+      "evidence": []
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_open",
+      "current_state": "pending",
+      "target_disposition": "safe_alternative",
+      "owner_task": "R3",
+      "evidence": []
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_open_ext",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/connection.rs"
+      ]
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_close",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/connection.rs"
+      ]
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_connect",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/connection.rs"
+      ]
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_interrupt",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "E5",
+      "evidence": []
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_query_progress",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "E5",
+      "evidence": []
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_disconnect",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/connection.rs"
+      ]
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_connection_get_client_context",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X2",
+      "evidence": []
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_client_context_get_connection_id",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X2",
+      "evidence": []
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_destroy_client_context",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X2",
+      "evidence": []
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_library_version",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C1",
+      "evidence": []
+    },
+    {
+      "category": "Open Connect",
+      "symbol": "duckdb_get_table_names",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C2",
+      "evidence": []
+    },
+    {
+      "category": "Configuration",
+      "symbol": "duckdb_create_config",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/config.rs"
+      ]
+    },
+    {
+      "category": "Configuration",
+      "symbol": "duckdb_config_count",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C1",
+      "evidence": []
+    },
+    {
+      "category": "Configuration",
+      "symbol": "duckdb_get_config_flag",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C1",
+      "evidence": []
+    },
+    {
+      "category": "Configuration",
+      "symbol": "duckdb_set_config",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/config.rs"
+      ]
+    },
+    {
+      "category": "Configuration",
+      "symbol": "duckdb_destroy_config",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/config.rs"
+      ]
+    },
+    {
+      "category": "Error Data",
+      "symbol": "duckdb_create_error_data",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "E2",
+      "evidence": []
+    },
+    {
+      "category": "Error Data",
+      "symbol": "duckdb_destroy_error_data",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "E2",
+      "evidence": []
+    },
+    {
+      "category": "Error Data",
+      "symbol": "duckdb_error_data_error_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "E2",
+      "evidence": []
+    },
+    {
+      "category": "Error Data",
+      "symbol": "duckdb_error_data_message",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "E2",
+      "evidence": []
+    },
+    {
+      "category": "Error Data",
+      "symbol": "duckdb_error_data_has_error",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "E2",
+      "evidence": []
+    },
+    {
+      "category": "Query Execution",
+      "symbol": "duckdb_query",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/connection.rs"
+      ]
+    },
+    {
+      "category": "Query Execution",
+      "symbol": "duckdb_destroy_result",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/helpers/duck_result.rs",
+        "crates/better-duck-core/src/raw/result.rs"
+      ]
+    },
+    {
+      "category": "Query Execution",
+      "symbol": "duckdb_column_name",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/result.rs"
+      ]
+    },
+    {
+      "category": "Query Execution",
+      "symbol": "duckdb_column_type",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/result.rs"
+      ]
+    },
+    {
+      "category": "Query Execution",
+      "symbol": "duckdb_result_statement_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q5",
+      "evidence": []
+    },
+    {
+      "category": "Query Execution",
+      "symbol": "duckdb_column_logical_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T3",
+      "evidence": []
+    },
+    {
+      "category": "Query Execution",
+      "symbol": "duckdb_column_count",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/result.rs"
+      ]
+    },
+    {
+      "category": "Query Execution",
+      "symbol": "duckdb_rows_changed",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/result.rs"
+      ]
+    },
+    {
+      "category": "Query Execution",
+      "symbol": "duckdb_result_error",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/helpers/duck_result.rs"
+      ]
+    },
+    {
+      "category": "Query Execution",
+      "symbol": "duckdb_result_error_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "E3",
+      "evidence": []
+    },
+    {
+      "category": "Result Functions",
+      "symbol": "duckdb_result_return_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q5",
+      "evidence": []
+    },
+    {
+      "category": "Helpers",
+      "symbol": "duckdb_malloc",
+      "current_state": "pending",
+      "target_disposition": "safe_alternative",
+      "owner_task": "R3",
+      "evidence": []
+    },
+    {
+      "category": "Helpers",
+      "symbol": "duckdb_free",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/connection.rs",
+        "crates/better-duck-core/src/types/bignum.rs",
+        "crates/better-duck-core/src/types/bit.rs",
+        "crates/better-duck-core/src/types/duck_struct.rs",
+        "crates/better-duck-core/src/types/value.rs",
+        "crates/better-duck-core/src/types/varchar.rs"
+      ]
+    },
+    {
+      "category": "Helpers",
+      "symbol": "duckdb_vector_size",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/data_chunk.rs"
+      ]
+    },
+    {
+      "category": "Helpers",
+      "symbol": "duckdb_string_is_inlined",
+      "current_state": "pending",
+      "target_disposition": "safe_alternative",
+      "owner_task": "R3",
+      "evidence": []
+    },
+    {
+      "category": "Helpers",
+      "symbol": "duckdb_string_t_length",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/value.rs",
+        "crates/better-duck-core/src/udf/vector.rs"
+      ]
+    },
+    {
+      "category": "Helpers",
+      "symbol": "duckdb_string_t_data",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/value.rs",
+        "crates/better-duck-core/src/udf/vector.rs"
+      ]
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_from_date",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_to_date",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_is_finite_date",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T6",
+      "evidence": []
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_from_time",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_create_time_tz",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_from_time_tz",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_to_time",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_from_timestamp",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T9",
+      "evidence": []
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_to_timestamp",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T9",
+      "evidence": []
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_is_finite_timestamp",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T6",
+      "evidence": []
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_is_finite_timestamp_s",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T6",
+      "evidence": []
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_is_finite_timestamp_ms",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T6",
+      "evidence": []
+    },
+    {
+      "category": "Date Time Timestamp Helpers",
+      "symbol": "duckdb_is_finite_timestamp_ns",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T6",
+      "evidence": []
+    },
+    {
+      "category": "Hugeint Helpers",
+      "symbol": "duckdb_hugeint_to_double",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T9",
+      "evidence": []
+    },
+    {
+      "category": "Hugeint Helpers",
+      "symbol": "duckdb_double_to_hugeint",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T9",
+      "evidence": []
+    },
+    {
+      "category": "Unsigned Hugeint Helpers",
+      "symbol": "duckdb_uhugeint_to_double",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T9",
+      "evidence": []
+    },
+    {
+      "category": "Unsigned Hugeint Helpers",
+      "symbol": "duckdb_double_to_uhugeint",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T9",
+      "evidence": []
+    },
+    {
+      "category": "Decimal Helpers",
+      "symbol": "duckdb_double_to_decimal",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T8",
+      "evidence": []
+    },
+    {
+      "category": "Decimal Helpers",
+      "symbol": "duckdb_decimal_to_double",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T8",
+      "evidence": []
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_prepare",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_destroy_prepare",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/helpers/duck_result.rs",
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_prepare_error",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/helpers/duck_result.rs"
+      ]
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_nparams",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_parameter_name",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q1",
+      "evidence": []
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_param_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q1",
+      "evidence": []
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_param_logical_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q1",
+      "evidence": []
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_clear_bindings",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_prepared_statement_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q1",
+      "evidence": []
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_prepared_statement_column_count",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q1",
+      "evidence": []
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_prepared_statement_column_name",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q1",
+      "evidence": []
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_prepared_statement_column_logical_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q1",
+      "evidence": []
+    },
+    {
+      "category": "Prepared Statements",
+      "symbol": "duckdb_prepared_statement_column_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q1",
+      "evidence": []
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_value",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/appendable.rs",
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/duck_struct.rs",
+        "crates/better-duck-core/src/types/map.rs",
+        "crates/better-duck-core/src/types/numeric.rs",
+        "crates/better-duck-core/src/types/value_ref.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_parameter_index",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q1",
+      "evidence": []
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_boolean",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/mod.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_int8",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_int16",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_int32",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_int64",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_hugeint",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_uhugeint",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs",
+        "crates/better-duck-core/src/types/value_ref.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_decimal",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T8",
+      "evidence": []
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_uint8",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_uint16",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_uint32",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_uint64",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_float",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_double",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_date",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_time",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_timestamp",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_timestamp_tz",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_interval",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_varchar",
+      "current_state": "pending",
+      "target_disposition": "safe_alternative",
+      "owner_task": "R3",
+      "evidence": []
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_varchar_length",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/varchar.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_blob",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/blob.rs"
+      ]
+    },
+    {
+      "category": "Bind Values to Prepared Statements",
+      "symbol": "duckdb_bind_null",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/value_ref.rs"
+      ]
+    },
+    {
+      "category": "Execute Prepared Statements",
+      "symbol": "duckdb_execute_prepared",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
+    },
+    {
+      "category": "Extract Statements",
+      "symbol": "duckdb_extract_statements",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q2",
+      "evidence": []
+    },
+    {
+      "category": "Extract Statements",
+      "symbol": "duckdb_prepare_extracted_statement",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q2",
+      "evidence": []
+    },
+    {
+      "category": "Extract Statements",
+      "symbol": "duckdb_extract_statements_error",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q2",
+      "evidence": []
+    },
+    {
+      "category": "Extract Statements",
+      "symbol": "duckdb_destroy_extracted",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q2",
+      "evidence": []
+    },
+    {
+      "category": "Pending Result Interface",
+      "symbol": "duckdb_pending_prepared",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q3",
+      "evidence": []
+    },
+    {
+      "category": "Pending Result Interface",
+      "symbol": "duckdb_destroy_pending",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q3",
+      "evidence": []
+    },
+    {
+      "category": "Pending Result Interface",
+      "symbol": "duckdb_pending_error",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q3",
+      "evidence": []
+    },
+    {
+      "category": "Pending Result Interface",
+      "symbol": "duckdb_pending_execute_task",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q3",
+      "evidence": []
+    },
+    {
+      "category": "Pending Result Interface",
+      "symbol": "duckdb_pending_execute_check_state",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q3",
+      "evidence": []
+    },
+    {
+      "category": "Pending Result Interface",
+      "symbol": "duckdb_execute_pending",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q3",
+      "evidence": []
+    },
+    {
+      "category": "Pending Result Interface",
+      "symbol": "duckdb_pending_execution_is_finished",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "Q3",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_destroy_value",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/appendable.rs",
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/duck_struct.rs",
+        "crates/better-duck-core/src/types/map.rs",
+        "crates/better-duck-core/src/types/numeric.rs",
+        "crates/better-duck-core/src/types/union.rs",
+        "crates/better-duck-core/src/types/value_ref.rs",
+        "crates/better-duck-core/src/udf/replacement.rs",
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_varchar",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/varchar.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_varchar_length",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T4",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_bool",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/mod.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_int8",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_uint8",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_int16",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_uint16",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_int32",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_uint32",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_uint64",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_int64",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_hugeint",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_uhugeint",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs",
+        "crates/better-duck-core/src/types/value.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_bignum",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/bignum.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_decimal",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_float",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_double",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_date",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_time",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_time_ns",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_time_tz_value",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_timestamp",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_timestamp_tz",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_timestamp_s",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_timestamp_ms",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_timestamp_ns",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_interval",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_blob",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/blob.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_bit",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/bit.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_uuid",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/uuid.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_bool",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/mod.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_int8",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_uint8",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_int16",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_uint16",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_int32",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_uint32",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_int64",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_uint64",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_hugeint",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_uhugeint",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_bignum",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/bignum.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_decimal",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_float",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_double",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_date",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_time",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_time_ns",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_time_tz",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_timestamp",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_timestamp_tz",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_timestamp_s",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_timestamp_ms",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_timestamp_ns",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_interval",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_value_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T7",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_blob",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/blob.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_bit",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/bit.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_uuid",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T10",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_varchar",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/varchar.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_struct_value",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/duck_struct.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_list_value",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_array_value",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_map_value",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/map.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_union_value",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/union.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_map_size",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T7",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_map_key",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T7",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_map_value",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T7",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_is_null_value",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T7",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_null_value",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/value.rs"
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_list_size",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T7",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_list_child",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T7",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_enum_value",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T4",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_enum_value",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T4",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_get_struct_child",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T7",
+      "evidence": []
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_value_to_string",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T7",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_create_logical_type",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/bignum.rs",
+        "crates/better-duck-core/src/types/bit.rs",
+        "crates/better-duck-core/src/types/blob.rs",
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs",
+        "crates/better-duck-core/src/types/mod.rs",
+        "crates/better-duck-core/src/types/numeric.rs",
+        "crates/better-duck-core/src/types/uuid.rs",
+        "crates/better-duck-core/src/types/value.rs",
+        "crates/better-duck-core/src/types/varchar.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_logical_type_get_alias",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T2",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_logical_type_set_alias",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X8",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_create_list_type",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_create_array_type",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_create_map_type",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/map.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_create_union_type",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/union.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_create_struct_type",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/duck_struct.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_create_enum_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T4",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_create_decimal_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T1",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_get_type_id",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/duck_struct.rs",
+        "crates/better-duck-core/src/types/map.rs",
+        "crates/better-duck-core/src/types/union.rs",
+        "crates/better-duck-core/src/udf/vector.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_decimal_width",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T1",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_decimal_scale",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/value.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_decimal_internal_type",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/value.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_enum_internal_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T4",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_enum_dictionary_size",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/value.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_enum_dictionary_value",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/value.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_list_type_child_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T2",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_array_type_child_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T2",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_array_type_array_size",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_map_type_key_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T2",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_map_type_value_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T2",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_struct_type_child_count",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/duck_struct.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_struct_type_child_name",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/duck_struct.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_struct_type_child_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T2",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_union_type_member_count",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/union.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_union_type_member_name",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T2",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_union_type_member_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "T2",
+      "evidence": []
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_destroy_logical_type",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/duck_struct.rs",
+        "crates/better-duck-core/src/types/map.rs",
+        "crates/better-duck-core/src/types/union.rs",
+        "crates/better-duck-core/src/types/value.rs",
+        "crates/better-duck-core/src/udf/logical_type.rs",
+        "crates/better-duck-core/src/udf/vector.rs"
+      ]
+    },
+    {
+      "category": "Logical Type Interface",
+      "symbol": "duckdb_register_logical_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X8",
+      "evidence": []
+    },
+    {
+      "category": "Data Chunk Interface",
+      "symbol": "duckdb_create_data_chunk",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/data_chunk.rs"
+      ]
+    },
+    {
+      "category": "Data Chunk Interface",
+      "symbol": "duckdb_destroy_data_chunk",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/data_chunk.rs",
+        "crates/better-duck-core/src/udf/data_chunk.rs"
+      ]
+    },
+    {
+      "category": "Data Chunk Interface",
+      "symbol": "duckdb_data_chunk_reset",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V1",
+      "evidence": []
+    },
+    {
+      "category": "Data Chunk Interface",
+      "symbol": "duckdb_data_chunk_get_column_count",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/data_chunk.rs"
+      ]
+    },
+    {
+      "category": "Data Chunk Interface",
+      "symbol": "duckdb_data_chunk_get_vector",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/row.rs",
+        "crates/better-duck-core/src/udf/data_chunk.rs"
+      ]
+    },
+    {
+      "category": "Data Chunk Interface",
+      "symbol": "duckdb_data_chunk_get_size",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/data_chunk.rs",
+        "crates/better-duck-core/src/udf/data_chunk.rs"
+      ]
+    },
+    {
+      "category": "Data Chunk Interface",
+      "symbol": "duckdb_data_chunk_set_size",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/data_chunk.rs"
+      ]
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_create_vector",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V1",
+      "evidence": []
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_destroy_vector",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V1",
+      "evidence": []
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_vector_get_column_type",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/duck_struct.rs",
+        "crates/better-duck-core/src/types/map.rs",
+        "crates/better-duck-core/src/types/union.rs",
+        "crates/better-duck-core/src/types/value.rs",
+        "crates/better-duck-core/src/udf/vector.rs"
+      ]
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_vector_get_data",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/map.rs",
+        "crates/better-duck-core/src/types/union.rs",
+        "crates/better-duck-core/src/types/value.rs",
+        "crates/better-duck-core/src/udf/vector.rs"
+      ]
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_vector_get_validity",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/value.rs",
+        "crates/better-duck-core/src/udf/vector.rs"
+      ]
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_vector_ensure_validity_writable",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/vector.rs"
+      ]
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_vector_assign_string_element",
+      "current_state": "pending",
+      "target_disposition": "safe_alternative",
+      "owner_task": "R3",
+      "evidence": []
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_vector_assign_string_element_len",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/vector.rs"
+      ]
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_list_vector_get_child",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/map.rs"
+      ]
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_list_vector_get_size",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V2",
+      "evidence": []
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_list_vector_set_size",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V2",
+      "evidence": []
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_list_vector_reserve",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V2",
+      "evidence": []
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_struct_vector_get_child",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/duck_struct.rs",
+        "crates/better-duck-core/src/types/map.rs",
+        "crates/better-duck-core/src/types/union.rs"
+      ]
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_array_vector_get_child",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs"
+      ]
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_slice_vector",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V4",
+      "evidence": []
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_vector_copy_sel",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V4",
+      "evidence": []
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_vector_reference_value",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V5",
+      "evidence": []
+    },
+    {
+      "category": "Vector Interface",
+      "symbol": "duckdb_vector_reference_vector",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V5",
+      "evidence": []
+    },
+    {
+      "category": "Validity Mask Functions",
+      "symbol": "duckdb_validity_row_is_valid",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/value.rs",
+        "crates/better-duck-core/src/udf/vector.rs"
+      ]
+    },
+    {
+      "category": "Validity Mask Functions",
+      "symbol": "duckdb_validity_set_row_validity",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V2",
+      "evidence": []
+    },
+    {
+      "category": "Validity Mask Functions",
+      "symbol": "duckdb_validity_set_row_invalid",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/vector.rs"
+      ]
+    },
+    {
+      "category": "Validity Mask Functions",
+      "symbol": "duckdb_validity_set_row_valid",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V2",
+      "evidence": []
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_create_scalar_function",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_destroy_scalar_function",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_set_name",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_set_varargs",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_set_special_handling",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_set_volatile",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_add_parameter",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_set_return_type",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_set_extra_info",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_set_bind",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X4",
+      "evidence": []
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_set_bind_data",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X4",
+      "evidence": []
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_set_bind_data_copy",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X4",
+      "evidence": []
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_bind_set_error",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X4",
+      "evidence": []
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_set_function",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_register_scalar_function",
+      "current_state": "pending",
+      "target_disposition": "safe_alternative",
+      "owner_task": "R3",
+      "evidence": []
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_get_extra_info",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_bind_get_extra_info",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X4",
+      "evidence": []
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_get_bind_data",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X4",
+      "evidence": []
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_get_client_context",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X4",
+      "evidence": []
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_set_error",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_create_scalar_function_set",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_destroy_scalar_function_set",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_add_scalar_function_to_set",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_register_scalar_function_set",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_bind_get_argument_count",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X4",
+      "evidence": []
+    },
+    {
+      "category": "Scalar Functions",
+      "symbol": "duckdb_scalar_function_bind_get_argument",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X4",
+      "evidence": []
+    },
+    {
+      "category": "Selection Vector Interface",
+      "symbol": "duckdb_create_selection_vector",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V4",
+      "evidence": []
+    },
+    {
+      "category": "Selection Vector Interface",
+      "symbol": "duckdb_destroy_selection_vector",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V4",
+      "evidence": []
+    },
+    {
+      "category": "Selection Vector Interface",
+      "symbol": "duckdb_selection_vector_get_data_ptr",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "V4",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_create_aggregate_function",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_destroy_aggregate_function",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_aggregate_function_set_name",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_aggregate_function_add_parameter",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_aggregate_function_set_return_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_aggregate_function_set_functions",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_aggregate_function_set_destructor",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_register_aggregate_function",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_aggregate_function_set_special_handling",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_aggregate_function_set_extra_info",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_aggregate_function_get_extra_info",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_aggregate_function_set_error",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X5",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_create_aggregate_function_set",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X6",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_destroy_aggregate_function_set",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X6",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_add_aggregate_function_to_set",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X6",
+      "evidence": []
+    },
+    {
+      "category": "Aggregate Functions",
+      "symbol": "duckdb_register_aggregate_function_set",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X6",
+      "evidence": []
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_create_table_function",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_destroy_table_function",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_table_function_set_name",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_table_function_add_parameter",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_table_function_add_named_parameter",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_table_function_set_extra_info",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_table_function_set_bind",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_table_function_set_init",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_table_function_set_local_init",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_table_function_set_function",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_table_function_supports_projection_pushdown",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Functions",
+      "symbol": "duckdb_register_table_function",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Bind",
+      "symbol": "duckdb_bind_get_extra_info",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Bind",
+      "symbol": "duckdb_table_function_get_client_context",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X2",
+      "evidence": []
+    },
+    {
+      "category": "Table Function Bind",
+      "symbol": "duckdb_bind_add_result_column",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Bind",
+      "symbol": "duckdb_bind_get_parameter_count",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Bind",
+      "symbol": "duckdb_bind_get_parameter",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Bind",
+      "symbol": "duckdb_bind_get_named_parameter",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Bind",
+      "symbol": "duckdb_bind_set_bind_data",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Bind",
+      "symbol": "duckdb_bind_set_cardinality",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Bind",
+      "symbol": "duckdb_bind_set_error",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Init",
+      "symbol": "duckdb_init_get_extra_info",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Init",
+      "symbol": "duckdb_init_get_bind_data",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Init",
+      "symbol": "duckdb_init_set_init_data",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Init",
+      "symbol": "duckdb_init_get_column_count",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Init",
+      "symbol": "duckdb_init_get_column_index",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Init",
+      "symbol": "duckdb_init_set_max_threads",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function Init",
+      "symbol": "duckdb_init_set_error",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function",
+      "symbol": "duckdb_function_get_extra_info",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function",
+      "symbol": "duckdb_function_get_bind_data",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function",
+      "symbol": "duckdb_function_get_init_data",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function",
+      "symbol": "duckdb_function_get_local_init_data",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Table Function",
+      "symbol": "duckdb_function_set_error",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
+    },
+    {
+      "category": "Replacement Scans",
+      "symbol": "duckdb_add_replacement_scan",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/replacement.rs"
+      ]
+    },
+    {
+      "category": "Replacement Scans",
+      "symbol": "duckdb_replacement_scan_set_function_name",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/replacement.rs"
+      ]
+    },
+    {
+      "category": "Replacement Scans",
+      "symbol": "duckdb_replacement_scan_add_parameter",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/replacement.rs"
+      ]
+    },
+    {
+      "category": "Replacement Scans",
+      "symbol": "duckdb_replacement_scan_set_error",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/replacement.rs"
+      ]
+    },
+    {
+      "category": "Profiling Info",
+      "symbol": "duckdb_get_profiling_info",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C4",
+      "evidence": []
+    },
+    {
+      "category": "Profiling Info",
+      "symbol": "duckdb_profiling_info_get_value",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C4",
+      "evidence": []
+    },
+    {
+      "category": "Profiling Info",
+      "symbol": "duckdb_profiling_info_get_metrics",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C4",
+      "evidence": []
+    },
+    {
+      "category": "Profiling Info",
+      "symbol": "duckdb_profiling_info_get_child_count",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C4",
+      "evidence": []
+    },
+    {
+      "category": "Profiling Info",
+      "symbol": "duckdb_profiling_info_get_child",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C4",
+      "evidence": []
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_create",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/appender.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_create_ext",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C5",
+      "evidence": []
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_create_query",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C5",
+      "evidence": []
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_column_count",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C5",
+      "evidence": []
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_column_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C5",
+      "evidence": []
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_error_data",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "E3",
+      "evidence": []
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_flush",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/appender.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_close",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/appender.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_destroy",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/helpers/duck_result.rs",
+        "crates/better-duck-core/src/raw/appender.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_add_column",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C5",
+      "evidence": []
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_clear_columns",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C5",
+      "evidence": []
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_begin_row",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/appender.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_appender_end_row",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/appender.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_default",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C6",
+      "evidence": []
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_default_to_chunk",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C6",
+      "evidence": []
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_bool",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/mod.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_int8",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_int16",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_int32",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_int64",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_hugeint",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_uint8",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_uint16",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_uint32",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_uint64",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_uhugeint",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs",
+        "crates/better-duck-core/src/types/value_ref.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_float",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_double",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/numeric.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_date",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_time",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_timestamp",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_interval",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/date_native.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_varchar",
+      "current_state": "pending",
+      "target_disposition": "safe_alternative",
+      "owner_task": "R3",
+      "evidence": []
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_varchar_length",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/value_ref.rs",
+        "crates/better-duck-core/src/types/varchar.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_blob",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/blob.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_null",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/value_ref.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_value",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/appendable.rs",
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/date_chrono.rs",
+        "crates/better-duck-core/src/types/duck_struct.rs",
+        "crates/better-duck-core/src/types/map.rs",
+        "crates/better-duck-core/src/types/numeric.rs",
+        "crates/better-duck-core/src/types/value_ref.rs"
+      ]
+    },
+    {
+      "category": "Appender",
+      "symbol": "duckdb_append_data_chunk",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C6",
+      "evidence": []
+    },
+    {
+      "category": "Table Description",
+      "symbol": "duckdb_table_description_create",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C3",
+      "evidence": []
+    },
+    {
+      "category": "Table Description",
+      "symbol": "duckdb_table_description_create_ext",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C3",
+      "evidence": []
+    },
+    {
+      "category": "Table Description",
+      "symbol": "duckdb_table_description_destroy",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C3",
+      "evidence": []
+    },
+    {
+      "category": "Table Description",
+      "symbol": "duckdb_table_description_error",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C3",
+      "evidence": []
+    },
+    {
+      "category": "Table Description",
+      "symbol": "duckdb_column_has_default",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C3",
+      "evidence": []
+    },
+    {
+      "category": "Table Description",
+      "symbol": "duckdb_table_description_get_column_name",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "C3",
+      "evidence": []
+    },
+    {
+      "category": "Threading Information",
+      "symbol": "duckdb_execute_tasks",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "R2",
+      "evidence": []
+    },
+    {
+      "category": "Threading Information",
+      "symbol": "duckdb_create_task_state",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "R2",
+      "evidence": []
+    },
+    {
+      "category": "Threading Information",
+      "symbol": "duckdb_execute_tasks_state",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "R2",
+      "evidence": []
+    },
+    {
+      "category": "Threading Information",
+      "symbol": "duckdb_execute_n_tasks_state",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "R2",
+      "evidence": []
+    },
+    {
+      "category": "Threading Information",
+      "symbol": "duckdb_finish_execution",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "R2",
+      "evidence": []
+    },
+    {
+      "category": "Threading Information",
+      "symbol": "duckdb_task_state_is_finished",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "R2",
+      "evidence": []
+    },
+    {
+      "category": "Threading Information",
+      "symbol": "duckdb_destroy_task_state",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "R2",
+      "evidence": []
+    },
+    {
+      "category": "Threading Information",
+      "symbol": "duckdb_execution_is_finished",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "R2",
+      "evidence": []
+    },
+    {
+      "category": "Streaming Result Interface",
+      "symbol": "duckdb_fetch_chunk",
+      "current_state": "production_used",
+      "target_disposition": "production_used",
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/data_chunk.rs"
+      ]
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_create_cast_function",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_cast_function_set_source_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_cast_function_set_target_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_cast_function_set_implicit_cast_cost",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_cast_function_set_function",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_cast_function_set_extra_info",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_cast_function_get_extra_info",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_cast_function_get_cast_mode",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_cast_function_set_error",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_cast_function_set_row_error",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_register_cast_function",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Cast Functions",
+      "symbol": "duckdb_destroy_cast_function",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X7",
+      "evidence": []
+    },
+    {
+      "category": "Expression Interface",
+      "symbol": "duckdb_destroy_expression",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X3",
+      "evidence": []
+    },
+    {
+      "category": "Expression Interface",
+      "symbol": "duckdb_expression_return_type",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X3",
+      "evidence": []
+    },
+    {
+      "category": "Expression Interface",
+      "symbol": "duckdb_expression_is_foldable",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X3",
+      "evidence": []
+    },
+    {
+      "category": "Expression Interface",
+      "symbol": "duckdb_expression_fold",
+      "current_state": "pending",
+      "target_disposition": "production_used",
+      "owner_task": "X3",
+      "evidence": []
+    }
+  ]
+}

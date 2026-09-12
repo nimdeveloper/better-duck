@@ -17,6 +17,7 @@
 //! would be fragile against upstream changes.
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -42,6 +43,13 @@ enum Command_ {
         #[arg(long)]
         tag: String,
     },
+    /// Validate the DuckDB C API capability ledger against documentation and
+    /// compiled production Rust sources.
+    AuditCapabilities {
+        /// Rewrite evidence paths for entries already marked production-used.
+        #[arg(long)]
+        refresh_evidence: bool,
+    },
 }
 
 /// This crate's own manifest schema, written into the vendored archive for
@@ -61,6 +69,9 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command_::UpgradeDuckdb { tag } => upgrade_duckdb(&tag),
+        Command_::AuditCapabilities { refresh_evidence } => {
+            audit_capabilities(&workspace_root()?, refresh_evidence)
+        },
     }
 }
 
@@ -69,6 +80,488 @@ fn workspace_root() -> Result<PathBuf> {
     manifest_dir.parent().map(Path::to_path_buf).context(
         "xtask's CARGO_MANIFEST_DIR has no parent — expected xtask/ under the workspace root",
     )
+}
+
+fn audit_capabilities(
+    root: &Path,
+    refresh_evidence: bool,
+) -> Result<()> {
+    let catalog = ApiCatalog::parse(&fs::read_to_string(root.join("api.md"))?)?;
+    let ledger_path = root.join("api-capabilities.json");
+    let mut ledger: CapabilityLedger = serde_json::from_str(&fs::read_to_string(&ledger_path)?)?;
+    let production = production_symbols(root)?;
+    if refresh_evidence {
+        ledger.refresh_evidence(&production)?;
+        fs::write(&ledger_path, format!("{}\n", serde_json::to_string_pretty(&ledger)?))?;
+    }
+    let bindings = fs::read_to_string(
+        root.join("crates").join("better-duck-sys").join("src").join("bindings.rs"),
+    )?;
+    let binding_functions = binding_function_symbols(&bindings)?;
+    let report = ledger.validate(&catalog, &production, &binding_functions)?;
+    println!(
+        "capability audit passed: {} retained = {} production-used + {} pending + {} safe alternatives + {} infrastructure",
+        report.total,
+        report.production_used,
+        report.pending,
+        report.safe_alternatives,
+        report.infrastructure
+    );
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ApiMethod {
+    category: String,
+    symbol: String,
+}
+
+#[derive(Debug)]
+struct ApiCatalog {
+    methods: Vec<ApiMethod>,
+}
+
+impl ApiCatalog {
+    fn parse(markdown: &str) -> Result<Self> {
+        let lowercase = markdown.to_ascii_lowercase();
+        if lowercase.contains("deprecated") {
+            bail!("api.md still contains deprecated API documentation");
+        }
+        if lowercase.contains("arrow") {
+            bail!("api.md still contains Arrow API documentation");
+        }
+        let first_detail = markdown
+            .find("\n#### `duckdb_")
+            .context("api.md has no detailed duckdb method headings")?;
+        let overview = &markdown[..first_detail];
+
+        let mut methods = Vec::new();
+        let mut category = None;
+        for line in overview.lines() {
+            if let Some(value) = line.strip_prefix("### ") {
+                category = Some(value.trim().to_owned());
+                continue;
+            }
+            let Some(anchor) = line.find("<a href=\"#duckdb_") else {
+                continue;
+            };
+            let rest = &line[anchor + "<a href=\"#".len()..];
+            let end = rest.find('\"').context("unterminated API overview anchor")?;
+            let symbol = &rest[..end];
+            let category = category.as_ref().context("API method appears before a category")?;
+            methods.push(ApiMethod { category: category.clone(), symbol: symbol.to_owned() });
+        }
+
+        let details: Vec<String> = markdown
+            .lines()
+            .filter_map(|line| {
+                line.strip_prefix("#### `duckdb_")
+                    .and_then(|rest| rest.strip_suffix('`'))
+                    .map(|rest| format!("duckdb_{rest}"))
+            })
+            .collect();
+        let overview_symbols: Vec<&str> =
+            methods.iter().map(|method| method.symbol.as_str()).collect();
+        let detail_symbols: Vec<&str> = details.iter().map(String::as_str).collect();
+        if overview_symbols != detail_symbols {
+            bail!("api.md overview and detail methods differ or are out of order");
+        }
+        let unique: BTreeSet<&str> = overview_symbols.iter().copied().collect();
+        if unique.len() != methods.len() {
+            bail!("api.md contains duplicate method symbols");
+        }
+        for method in &methods {
+            if method.symbol.to_ascii_lowercase().contains("arrow") {
+                bail!("api.md contains excluded Arrow method {}", method.symbol);
+            }
+        }
+        Ok(Self { methods })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapabilityLedger {
+    schema_version: u32,
+    api_version: String,
+    expected_total: usize,
+    expected_production_used: usize,
+    expected_pending: usize,
+    methods: Vec<CapabilityEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapabilityEntry {
+    category: String,
+    symbol: String,
+    current_state: CapabilityState,
+    target_disposition: TargetDisposition,
+    owner_task: Option<String>,
+    evidence: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum CapabilityState {
+    ProductionUsed,
+    Pending,
+    SafeAlternative,
+    Infrastructure,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum TargetDisposition {
+    ProductionUsed,
+    SafeAlternative,
+    Infrastructure,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct AuditReport {
+    total: usize,
+    production_used: usize,
+    pending: usize,
+    safe_alternatives: usize,
+    infrastructure: usize,
+}
+
+impl CapabilityLedger {
+    fn refresh_evidence(
+        &mut self,
+        production: &BTreeMap<String, BTreeSet<String>>,
+    ) -> Result<()> {
+        for entry in &mut self.methods {
+            if entry.current_state == CapabilityState::ProductionUsed {
+                entry.evidence = production
+                    .get(&entry.symbol)
+                    .filter(|paths| !paths.is_empty())
+                    .with_context(|| {
+                        format!(
+                            "{} is marked production_used without a source reference",
+                            entry.symbol
+                        )
+                    })?
+                    .iter()
+                    .cloned()
+                    .collect();
+            }
+        }
+        Ok(())
+    }
+
+    fn validate(
+        &self,
+        catalog: &ApiCatalog,
+        production: &BTreeMap<String, BTreeSet<String>>,
+        binding_functions: &BTreeSet<String>,
+    ) -> Result<AuditReport> {
+        if self.schema_version != 1 {
+            bail!("unsupported capability ledger schema version {}", self.schema_version);
+        }
+        if self.api_version != "1.5.5" {
+            bail!("capability ledger targets DuckDB {}, expected 1.5.5", self.api_version);
+        }
+        if self.expected_total != catalog.methods.len() {
+            bail!(
+                "ledger expected_total is {}, but api.md contains {} methods",
+                self.expected_total,
+                catalog.methods.len()
+            );
+        }
+        if self.methods.len() != catalog.methods.len() {
+            bail!(
+                "ledger contains {} entries, but api.md contains {} methods",
+                self.methods.len(),
+                catalog.methods.len()
+            );
+        }
+
+        let mut report = AuditReport { total: self.methods.len(), ..AuditReport::default() };
+        let mut seen = BTreeSet::new();
+        for (documented, entry) in catalog.methods.iter().zip(&self.methods) {
+            if !seen.insert(entry.symbol.as_str()) {
+                bail!("duplicate capability entry for {}", entry.symbol);
+            }
+            if documented.symbol != entry.symbol || documented.category != entry.category {
+                bail!(
+                    "capability entry {} / {} does not match api.md {} / {}",
+                    entry.category,
+                    entry.symbol,
+                    documented.category,
+                    documented.symbol
+                );
+            }
+            if !binding_functions.contains(&entry.symbol) {
+                bail!("{} is absent from generated binding functions", entry.symbol);
+            }
+            let references = production.get(&entry.symbol);
+            match entry.current_state {
+                CapabilityState::ProductionUsed => {
+                    let references =
+                        references.filter(|paths| !paths.is_empty()).with_context(|| {
+                            format!(
+                                "{} is marked production_used without a source reference",
+                                entry.symbol
+                            )
+                        })?;
+                    if entry.target_disposition != TargetDisposition::ProductionUsed {
+                        bail!(
+                            "{} production state disagrees with target disposition",
+                            entry.symbol
+                        );
+                    }
+                    if entry.owner_task.is_some() {
+                        bail!("{} is implemented but still has an owner task", entry.symbol);
+                    }
+                    if entry.evidence.is_empty() {
+                        bail!("{} has no production evidence", entry.symbol);
+                    }
+                    let evidence: BTreeSet<&str> =
+                        entry.evidence.iter().map(String::as_str).collect();
+                    if evidence.len() != entry.evidence.len() {
+                        bail!("{} contains duplicate evidence paths", entry.symbol);
+                    }
+                    if !entry.evidence.iter().all(|path| references.contains(path)) {
+                        bail!("{} contains stale production evidence", entry.symbol);
+                    }
+                    report.production_used += 1;
+                },
+                CapabilityState::Pending => {
+                    if references.is_some_and(|paths| !paths.is_empty()) {
+                        bail!(
+                            "{} is pending but already referenced by production code",
+                            entry.symbol
+                        );
+                    }
+                    let task = entry.owner_task.as_deref().unwrap_or_default();
+                    if task.is_empty() {
+                        bail!("{} is pending without an owner task", entry.symbol);
+                    }
+                    if !entry.evidence.is_empty() {
+                        bail!("{} is pending but has production evidence", entry.symbol);
+                    }
+                    report.pending += 1;
+                },
+                CapabilityState::SafeAlternative => {
+                    if references.is_some_and(|paths| !paths.is_empty()) {
+                        bail!("{} is a safe alternative but is directly referenced", entry.symbol);
+                    }
+                    if entry.target_disposition != TargetDisposition::SafeAlternative {
+                        bail!(
+                            "{} safe-alternative state disagrees with target disposition",
+                            entry.symbol
+                        );
+                    }
+                    if entry.evidence.is_empty() {
+                        bail!("{} has no safe-alternative evidence", entry.symbol);
+                    }
+                    report.safe_alternatives += 1;
+                },
+                CapabilityState::Infrastructure => {
+                    if references.is_some_and(|paths| !paths.is_empty()) {
+                        bail!("{} is infrastructure but is directly referenced", entry.symbol);
+                    }
+                    if entry.target_disposition != TargetDisposition::Infrastructure {
+                        bail!(
+                            "{} infrastructure state disagrees with target disposition",
+                            entry.symbol
+                        );
+                    }
+                    if entry.evidence.is_empty() {
+                        bail!("{} has no infrastructure rationale", entry.symbol);
+                    }
+                    report.infrastructure += 1;
+                },
+            }
+        }
+        if report.production_used != self.expected_production_used {
+            bail!(
+                "ledger production-used count is {}, expected {}",
+                report.production_used,
+                self.expected_production_used
+            );
+        }
+        if report.pending != self.expected_pending {
+            bail!("ledger pending count is {}, expected {}", report.pending, self.expected_pending);
+        }
+        Ok(report)
+    }
+}
+
+fn production_symbols(root: &Path) -> Result<BTreeMap<String, BTreeSet<String>>> {
+    let crates = root.join("crates");
+    let mut symbols: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for entry in walkdir::WalkDir::new(&crates) {
+        let entry = entry?;
+        let path = entry.path();
+        if !entry.file_type().is_file()
+            || path.extension().and_then(|ext| ext.to_str()) != Some("rs")
+        {
+            continue;
+        }
+        let relative = path.strip_prefix(root)?.to_string_lossy().replace('\\', "/");
+        if relative.ends_with("/better-duck-sys/src/bindings.rs")
+            || relative.contains("/tests/")
+            || relative.contains("/benches/")
+            || relative.contains("/examples/")
+        {
+            continue;
+        }
+        let source = fs::read_to_string(path)?;
+        let syntax = syn::parse_file(&source)
+            .with_context(|| format!("failed to parse production source {relative}"))?;
+        let mut visitor = ProductionSymbolVisitor::default();
+        // Comments and string literals are not syntax-tree identifiers, so they
+        // cannot make documentation examples look like production calls.
+        syn::visit::Visit::visit_file(&mut visitor, &syntax);
+        for symbol in visitor.symbols {
+            symbols.entry(symbol).or_default().insert(relative.clone());
+        }
+    }
+    Ok(symbols)
+}
+
+#[derive(Default)]
+struct ProductionSymbolVisitor {
+    test_depth: usize,
+    symbols: BTreeSet<String>,
+}
+
+impl ProductionSymbolVisitor {
+    fn is_test_only(attrs: &[syn::Attribute]) -> bool {
+        attrs.iter().any(|attr| {
+            attr.path().is_ident("test")
+                || (attr.path().is_ident("cfg") && cfg_is_test_only(&attr.meta))
+        })
+    }
+
+    fn record_ident(
+        &mut self,
+        ident: &syn::Ident,
+    ) {
+        if self.test_depth == 0 {
+            let value = ident.to_string();
+            if value.starts_with("duckdb_") {
+                self.symbols.insert(value);
+            }
+        }
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for ProductionSymbolVisitor {
+    fn visit_item(
+        &mut self,
+        item: &'ast syn::Item,
+    ) {
+        let test_only = match item {
+            syn::Item::Const(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Enum(value) => Self::is_test_only(&value.attrs),
+            syn::Item::ExternCrate(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Fn(value) => Self::is_test_only(&value.attrs),
+            syn::Item::ForeignMod(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Impl(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Macro(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Mod(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Static(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Struct(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Trait(value) => Self::is_test_only(&value.attrs),
+            syn::Item::TraitAlias(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Type(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Union(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Use(value) => Self::is_test_only(&value.attrs),
+            syn::Item::Verbatim(_) | _ => false,
+        };
+        self.test_depth += usize::from(test_only);
+        syn::visit::visit_item(self, item);
+        self.test_depth -= usize::from(test_only);
+    }
+
+    fn visit_ident(
+        &mut self,
+        ident: &'ast syn::Ident,
+    ) {
+        self.record_ident(ident);
+        syn::visit::visit_ident(self, ident);
+    }
+
+    fn visit_macro(
+        &mut self,
+        mac: &'ast syn::Macro,
+    ) {
+        if self.test_depth == 0 {
+            record_token_identifiers(&mac.tokens, &mut self.symbols);
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+fn record_token_identifiers(
+    tokens: &proc_macro2::TokenStream,
+    symbols: &mut BTreeSet<String>,
+) {
+    for token in tokens.clone() {
+        match token {
+            proc_macro2::TokenTree::Ident(ident) => {
+                let symbol = ident.to_string();
+                if symbol.starts_with("duckdb_") {
+                    symbols.insert(symbol);
+                }
+            },
+            proc_macro2::TokenTree::Group(group) => {
+                record_token_identifiers(&group.stream(), symbols);
+            },
+            proc_macro2::TokenTree::Punct(_) | proc_macro2::TokenTree::Literal(_) => {},
+        }
+    }
+}
+
+fn cfg_is_test_only(meta: &syn::Meta) -> bool {
+    let syn::Meta::List(cfg) = meta else {
+        return false;
+    };
+    let Ok(predicate) = syn::parse2::<syn::Meta>(cfg.tokens.clone()) else {
+        return false;
+    };
+    predicate_is_test_only(&predicate)
+}
+
+fn predicate_is_test_only(meta: &syn::Meta) -> bool {
+    match meta {
+        syn::Meta::Path(path) => path.is_ident("test"),
+        syn::Meta::List(list) if list.path.is_ident("all") => {
+            parse_meta_list(list).is_some_and(|items| items.iter().any(predicate_is_test_only))
+        },
+        syn::Meta::List(list) if list.path.is_ident("any") => parse_meta_list(list)
+            .is_some_and(|items| !items.is_empty() && items.iter().all(predicate_is_test_only)),
+        syn::Meta::List(list) if list.path.is_ident("not") => false,
+        syn::Meta::List(_) | syn::Meta::NameValue(_) => false,
+    }
+}
+
+fn parse_meta_list(list: &syn::MetaList) -> Option<Vec<syn::Meta>> {
+    use syn::parse::Parser as _;
+    let parser = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated;
+    parser.parse2(list.tokens.clone()).ok().map(IntoIterator::into_iter).map(Iterator::collect)
+}
+
+fn binding_function_symbols(source: &str) -> Result<BTreeSet<String>> {
+    let syntax = syn::parse_file(source).context("failed to parse generated bindings")?;
+    let mut symbols = BTreeSet::new();
+    for item in syntax.items {
+        if let syn::Item::ForeignMod(foreign) = item {
+            for item in foreign.items {
+                if let syn::ForeignItem::Fn(function) = item {
+                    let symbol = function.sig.ident.to_string();
+                    if symbol.starts_with("duckdb_") {
+                        symbols.insert(symbol);
+                    }
+                }
+            }
+        }
+    }
+    Ok(symbols)
 }
 
 fn upgrade_duckdb(tag: &str) -> Result<()> {
@@ -334,3 +827,160 @@ result = {
 with output_json.open("w") as f:
     json.dump(result, f, indent=2, sort_keys=True)
 "#;
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    const API: &str = r##"## API Reference Overview
+
+### Open Connect
+<div><a href="#duckdb_open"><span>duckdb_open</span></a>();
+<a href="#duckdb_interrupt"><span>duckdb_interrupt</span></a>();</div>
+
+#### `duckdb_open`
+
+Open.
+
+#### `duckdb_interrupt`
+
+Interrupt.
+"##;
+
+    fn ledger(methods: Vec<CapabilityEntry>) -> CapabilityLedger {
+        CapabilityLedger {
+            schema_version: 1,
+            api_version: "1.5.5".to_owned(),
+            expected_total: methods.len(),
+            expected_production_used: 1,
+            expected_pending: 1,
+            methods,
+        }
+    }
+
+    fn used_entry() -> CapabilityEntry {
+        CapabilityEntry {
+            category: "Open Connect".to_owned(),
+            symbol: "duckdb_open".to_owned(),
+            current_state: CapabilityState::ProductionUsed,
+            target_disposition: TargetDisposition::ProductionUsed,
+            owner_task: None,
+            evidence: vec!["crates/core/src/open.rs".to_owned()],
+        }
+    }
+
+    fn pending_entry() -> CapabilityEntry {
+        CapabilityEntry {
+            category: "Open Connect".to_owned(),
+            symbol: "duckdb_interrupt".to_owned(),
+            current_state: CapabilityState::Pending,
+            target_disposition: TargetDisposition::ProductionUsed,
+            owner_task: Some("E5".to_owned()),
+            evidence: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn api_catalog_requires_matching_unique_overview_and_details() {
+        let catalog = ApiCatalog::parse(API).unwrap();
+        assert_eq!(catalog.methods.len(), 2);
+        assert_eq!(catalog.methods[1].symbol, "duckdb_interrupt");
+
+        let duplicate = API.replace("#### `duckdb_interrupt`", "#### `duckdb_open`");
+        assert!(ApiCatalog::parse(&duplicate).is_err());
+        assert!(ApiCatalog::parse(&API.replace("Interrupt.", "Arrow interface.")).is_err());
+        assert!(ApiCatalog::parse(&API.replace("Interrupt.", "Deprecated method.")).is_err());
+    }
+
+    #[test]
+    fn ledger_reconciles_current_and_pending_capabilities() {
+        let catalog = ApiCatalog::parse(API).unwrap();
+        let ledger = ledger(vec![used_entry(), pending_entry()]);
+        let production = BTreeMap::from([(
+            "duckdb_open".to_owned(),
+            BTreeSet::from(["crates/core/src/open.rs".to_owned()]),
+        )]);
+        let bindings = BTreeSet::from(["duckdb_open".to_owned(), "duckdb_interrupt".to_owned()]);
+        let report = ledger.validate(&catalog, &production, &bindings).unwrap();
+        assert_eq!(
+            report,
+            AuditReport {
+                total: 2,
+                production_used: 1,
+                pending: 1,
+                safe_alternatives: 0,
+                infrastructure: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn ledger_rejects_stale_states_evidence_and_bindings() {
+        let catalog = ApiCatalog::parse(API).unwrap();
+        let production = BTreeMap::from([(
+            "duckdb_open".to_owned(),
+            BTreeSet::from(["crates/core/src/open.rs".to_owned()]),
+        )]);
+
+        let bindings = BTreeSet::from(["duckdb_open".to_owned(), "duckdb_interrupt".to_owned()]);
+
+        let mut entries = vec![used_entry(), pending_entry()];
+        entries[0].evidence.clear();
+        assert!(ledger(entries).validate(&catalog, &production, &bindings).is_err());
+
+        let mut entries = vec![used_entry(), pending_entry()];
+        entries[0].evidence = vec!["crates/core/src/stale.rs".to_owned()];
+        assert!(ledger(entries).validate(&catalog, &production, &bindings).is_err());
+
+        let mut entries = vec![used_entry(), pending_entry()];
+        entries[1].owner_task = None;
+        assert!(ledger(entries).validate(&catalog, &production, &bindings).is_err());
+
+        let incomplete_bindings = BTreeSet::from(["duckdb_open".to_owned()]);
+        assert!(ledger(vec![used_entry(), pending_entry()])
+            .validate(&catalog, &production, &incomplete_bindings)
+            .is_err());
+    }
+
+    #[test]
+    fn production_visitor_excludes_only_provably_test_only_items_and_reads_macros() {
+        let file = syn::parse_file(
+            r#"
+            use ffi::duckdb_open;
+            #[cfg(test)]
+            mod tests { use ffi::duckdb_interrupt; }
+            #[test]
+            fn test_function() { ffi::duckdb_free(); }
+            #[cfg(any(test, feature = "udf"))]
+            fn maybe_production() { ffi::duckdb_query(); }
+            #[cfg(all(test, feature = "udf"))]
+            fn test_only_all() { ffi::duckdb_connect(); }
+            bind_function!(duckdb_bind_int32);
+            "#,
+        )
+        .unwrap();
+        let mut visitor = ProductionSymbolVisitor::default();
+        syn::visit::Visit::visit_file(&mut visitor, &file);
+        assert_eq!(
+            visitor.symbols,
+            BTreeSet::from([
+                "duckdb_bind_int32".to_owned(),
+                "duckdb_open".to_owned(),
+                "duckdb_query".to_owned(),
+            ])
+        );
+    }
+
+    #[test]
+    fn binding_parser_requires_foreign_functions() {
+        let bindings = binding_function_symbols(
+            r#"
+            // duckdb_comment_only
+            pub type duckdb_type_only = *mut ::std::os::raw::c_void;
+            unsafe extern "C" { pub fn duckdb_open(); }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(bindings, BTreeSet::from(["duckdb_open".to_owned()]));
+    }
+}

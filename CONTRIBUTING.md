@@ -81,6 +81,9 @@ These are the commands CI runs; make sure they all pass before opening a PR:
 # Format (uses nightly options when available; stable silently skips them)
 cargo fmt --all
 
+# Audit the filtered DuckDB v1.5.5 API catalog against production Rust usage
+cargo run --locked -p xtask -- audit-capabilities
+
 # Lint — zero warnings allowed
 cargo clippy --workspace --all-targets --features "chrono,decimal,json,parquet,async,pool,udf,better-duck-diesel/r2d2" -- -D warnings
 
@@ -101,6 +104,8 @@ cargo llvm-cov report --lcov --output-path lcov.info --ignore-filename-regex '(^
 # Build docs (doc warnings are errors in CI)
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --features "chrono,decimal"
 ```
+
+`api-capabilities.json` is the executable support ledger for the filtered `api.md` catalog. Do not hand-edit production evidence paths: after implementing a pending capability and updating its state, run `cargo run --locked -p xtask -- audit-capabilities --refresh-evidence`, review the JSON diff, then rerun the audit without the refresh flag.
 
 For a quick sanity check before pushing:
 ```sh

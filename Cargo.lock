@@ -1656,8 +1656,10 @@ dependencies = [
  "bindgen",
  "clap",
  "flate2",
+ "proc-macro2",
  "serde",
  "serde_json",
+ "syn 2.0.119",
  "tar",
  "walkdir",
 ]

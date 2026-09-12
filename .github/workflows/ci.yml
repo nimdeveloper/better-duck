@@ -40,6 +40,8 @@ jobs:
         run: cargo fmt --all --check
       - name: Validate locked workspace metadata
         run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
+      - name: Audit DuckDB API capabilities
+        run: cargo run --quiet --locked -p xtask -- audit-capabilities
 
   lint:
     name: Clippy
