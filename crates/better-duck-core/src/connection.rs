@@ -189,15 +189,15 @@ impl Connection {
 impl Connection {
     /// Closes the connection explicitly.
     ///
-    /// The connection is also closed automatically on drop.
+    /// This consumes the connection so it cannot be used after closing. The
+    /// connection is also closed automatically on drop.
     ///
     /// # Errors
     ///
-    /// Always returns `Ok(())`.
+    /// Returns an error if closing the underlying connection fails.
     #[must_use = "close result should be checked"]
     #[inline]
-    #[allow(unused)]
-    pub fn close(&mut self) -> Result<()> {
+    pub fn close(mut self) -> Result<()> {
         self.0.close()
     }
 
@@ -260,19 +260,17 @@ mod connection_tests {
 
     #[test]
     fn test_open_in_memory() {
-        let mut conn = Connection::open_in_memory().unwrap();
+        let conn = Connection::open_in_memory().unwrap();
         assert!(conn.is_open());
         conn.close().unwrap();
-        assert!(!conn.is_open());
     }
 
     #[test]
     fn test_open_with_flags() {
         let config = Config::default().with("duckdb_api", "rust").unwrap();
-        let mut conn = Connection::open_with_flags(":memory:", config).unwrap();
+        let conn = Connection::open_with_flags(":memory:", config).unwrap();
         assert!(conn.is_open());
         conn.close().unwrap();
-        assert!(!conn.is_open());
     }
 
     #[test]
@@ -286,11 +284,9 @@ mod connection_tests {
     }
 
     #[test]
-    fn close_is_idempotent() {
-        let mut conn = Connection::open_in_memory().unwrap();
+    fn close_consumes_the_connection() {
+        let conn = Connection::open_in_memory().unwrap();
         conn.close().unwrap();
-        conn.close().unwrap();
-        assert!(!conn.is_open());
     }
 
     #[test]

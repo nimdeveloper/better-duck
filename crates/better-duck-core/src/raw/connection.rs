@@ -367,13 +367,8 @@ impl Clone for RawConnection {
 impl Drop for RawConnection {
     #[inline]
     fn drop(&mut self) {
-        use std::thread::panicking;
-        if let Err(e) = self.close() {
-            if panicking() {
-                eprintln!("Error while closing DuckDB connection: {e:?}");
-            } else {
-                panic!("Error while closing DuckDB connection: {e:?}");
-            }
+        if let Err(error) = self.close() {
+            log::error!("failed to close DuckDB connection during drop: {error}");
         }
     }
 }

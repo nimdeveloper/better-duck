@@ -184,12 +184,15 @@ impl Drop for Statement<'_> {
 
 /// A prepared statement that can be reset and re-executed with different bindings.
 ///
-/// Unlike `Statement`, `CachedStatement` is not tied to a connection's lifetime.
-/// It remains valid as long as the underlying database is open.
+/// The statement owns a cloned connection to the same database. This keeps its
+/// originating database alive and ensures the prepared handle is destroyed
+/// before the retained connection disconnects.
 ///
 /// This type is used by Diesel statement cache
 /// (`StatementCache<DuckDb, CachedStatement>`).
 pub struct CachedStatement {
+    /// Retained connection that owns the prepared statement's connection context.
+    connection: RawConnection,
     /// SQL source retained for statement-cache key comparisons.
     ///
     /// Not read within `better-duck-core` itself; consumed by
@@ -212,14 +215,15 @@ impl CachedStatement {
         sql: impl AsRef<str>,
     ) -> Result<Self> {
         let sql_str = sql.as_ref();
+        let connection = conn.try_clone()?;
         let mut stmt: ffi::duckdb_prepared_statement = ptr::null_mut();
         let c_str = CString::new(sql_str)?;
-        // SAFETY: `conn.con` is a valid open duckdb_connection. `c_str` is a
-        // valid null-terminated CString that outlives this call. `&mut stmt` is a
-        // valid output pointer. `duckdb_prepare` does not retain either pointer.
-        let r = unsafe { ffi::duckdb_prepare(conn.con, c_str.as_ptr(), &mut stmt) };
+        // SAFETY: `connection.con` is a valid open duckdb_connection retained by
+        // the returned statement. `c_str` is a valid null-terminated CString that
+        // outlives this call. `&mut stmt` is a valid output pointer.
+        let r = unsafe { ffi::duckdb_prepare(connection.con, c_str.as_ptr(), &mut stmt) };
         result_from_duckdb_prepare(r, stmt)?;
-        Ok(CachedStatement { sql: sql_str.into(), stmt })
+        Ok(CachedStatement { connection, sql: sql_str.into(), stmt })
     }
 
     /// Resets all parameter bindings so the statement can be re-executed.
@@ -288,9 +292,9 @@ impl Drop for CachedStatement {
     }
 }
 
-// SAFETY: A prepared statement is tied to its database, not to a thread.
-// The database handle is reference-counted via Arc<RawDatabase>, making it
-// safe to move a CachedStatement to another thread.
+// SAFETY: `CachedStatement` exclusively owns both the prepared handle and its
+// retained `RawConnection`. DuckDB permits moving a connection between threads
+// when it is not used concurrently; the type is not `Sync`.
 unsafe impl Send for CachedStatement {}
 
 #[cfg(test)]
