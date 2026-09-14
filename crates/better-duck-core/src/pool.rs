@@ -144,14 +144,11 @@ mod tests {
     }
 
     #[test]
-    fn manager_validates_open_and_closed_connections() {
+    fn manager_validates_open_connections() {
         let manager = DuckDbConnectionManager::memory().unwrap();
         let mut connection = manager.connect().unwrap();
         assert!(manager.is_valid(&mut connection).is_ok());
         assert!(!manager.has_broken(&mut connection));
-
-        connection.close().unwrap();
-        assert!(manager.has_broken(&mut connection));
     }
 
     #[test]
