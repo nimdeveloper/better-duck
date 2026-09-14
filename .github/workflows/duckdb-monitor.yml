@@ -1,0 +1,1743 @@
+name: DuckDB Upstream Monitor
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: >-
+          Initialize state without creating historical release/API issues.
+        required: false
+        default: false
+        type: boolean
+
+      dry_run:
+        description: >-
+          Detect and analyze changes, but do not create issues or publish state.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: duckdb-upstream-monitor
+  cancel-in-progress: false
+
+env:
+  DUCKDB_REPO: duckdb/duckdb
+  DUCKDB_WEB_REPO: duckdb/duckdb-web
+
+  # Upstream "current" C API definition.
+  API_CURRENT_PATH: docs/current/clients/c/api.md
+
+  # The artifact is immutable in Actions v4+.
+  # Every successful run publishes a new artifact with this logical name.
+  STATE_ARTIFACT_NAME: duckdb-monitor-state
+
+  # 90 is the maximum artifact retention configured by GitHub Actions for
+  # normal repositories unless the repository has a lower setting.
+  STATE_RETENTION_DAYS: 90
+
+  # Stable model. Override from repository variable GEMINI_MODEL if desired.
+  GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+
+  # DuckDB introduced its every-other-version LTS cadence at 1.4:
+  # 1.4 = LTS, 1.5 = current, 1.6 = LTS, etc.
+  LTS_MIN_MINOR: 4
+
+jobs:
+  monitor:
+    name: Monitor DuckDB releases and C API
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      # -----------------------------------------------------------------------
+      # Common tools
+      # -----------------------------------------------------------------------
+
+      - name: Verify required tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          command -v bash
+          command -v curl
+          command -v jq
+          command -v gh
+          command -v sha256sum
+          command -v diff
+
+      # -----------------------------------------------------------------------
+      # Persistent state: download latest surviving artifact
+      # -----------------------------------------------------------------------
+
+      - name: Restore previous monitor state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          STATE_ROOT="$RUNNER_TEMP/duckdb-monitor-state"
+          mkdir -p "$STATE_ROOT"
+
+          rm -rf "$STATE_ROOT"/*
+
+          echo "Searching for previous state artifact..."
+
+          artifacts_json="$(
+            gh api \
+              --paginate \
+              --slurp \
+              "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${STATE_ARTIFACT_NAME}&per_page=100" |
+            jq 'add'
+          )"
+
+          latest_artifact="$(
+            jq -c '
+              map(
+                select(.expired == false)
+              )
+              | sort_by(.created_at)
+              | reverse
+              | .[0] // empty
+            ' <<<"$artifacts_json"
+          )"
+
+          if [ -z "$latest_artifact" ]; then
+            echo "No previous state artifact found."
+            echo "STATE_BOOTSTRAP=true" >> "$GITHUB_ENV"
+
+            mkdir -p "$STATE_ROOT/snapshots"
+
+            cat > "$STATE_ROOT/state.json" <<'JSON'
+          {
+            "schemaVersion": 1,
+            "initialized": false,
+            "createdAt": null,
+            "updatedAt": null,
+            "current": null,
+            "lts": null,
+            "api": {},
+            "releases": {}
+          }
+          JSON
+          else
+            artifact_id="$(
+              jq -r '.id' <<<"$latest_artifact"
+            )"
+
+            artifact_name="$(
+              jq -r '.name' <<<"$latest_artifact"
+            )"
+
+            artifact_created_at="$(
+              jq -r '.created_at' <<<"$latest_artifact"
+            )"
+
+            artifact_expired="$(
+              jq -r '.expired' <<<"$latest_artifact"
+            )"
+
+            echo "Using artifact:"
+            echo "  ID:      $artifact_id"
+            echo "  Name:    $artifact_name"
+            echo "  Created: $artifact_created_at"
+            echo "  Expired: $artifact_expired"
+
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+              > "$RUNNER_TEMP/state.zip"
+
+            unzip \
+              -q \
+              "$RUNNER_TEMP/state.zip" \
+              -d "$STATE_ROOT"
+
+            if [ ! -f "$STATE_ROOT/state.json" ]; then
+              echo "::error::State artifact does not contain state.json"
+              exit 1
+            fi
+
+            if ! jq empty "$STATE_ROOT/state.json"; then
+              echo "::error::state.json is not valid JSON"
+              exit 1
+            fi
+
+            echo "STATE_BOOTSTRAP=false" >> "$GITHUB_ENV"
+          fi
+
+          echo "STATE_ROOT=$STATE_ROOT" >> "$GITHUB_ENV"
+
+          echo "Current persisted state:"
+          jq '.' "$STATE_ROOT/state.json"
+
+      - name: Discover DuckDB releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "Fetching DuckDB releases..."
+
+          releases="$(
+            gh api \
+              --paginate \
+              --slurp \
+              "repos/${DUCKDB_REPO}/releases?per_page=100" |
+            jq 'add'
+          )"
+
+          stable_releases="$(
+            jq '
+              map(
+                select(
+                  .draft == false and
+                  .prerelease == false and
+                  (.tag_name | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                )
+              )
+              | sort_by(
+                  (
+                    .tag_name
+                    | sub("^v"; "")
+                    | split(".")
+                    | map(tonumber)
+                  )
+                )
+                | reverse
+            ' <<<"$releases"
+          )"
+
+          if [ "$(jq 'length' <<<"$stable_releases")" -eq 0 ]; then
+            echo "::error::No stable semantic-version DuckDB releases found."
+            exit 1
+          fi
+
+          latest_release="$(
+            jq -c '.[0]' <<<"$stable_releases"
+          )"
+
+          latest_tag="$(
+            jq -r '.tag_name' <<<"$latest_release"
+          )"
+
+          latest_version="${latest_tag#v}"
+
+          latest_major="$(
+            cut -d. -f1 <<<"$latest_version"
+          )"
+
+          latest_minor="$(
+            cut -d. -f2 <<<"$latest_version"
+          )"
+
+          current_line="${latest_major}.${latest_minor}"
+
+          # DuckDB's support policy says that beginning with v1.4,
+          # every other version is LTS. Therefore, find the newest stable
+          # release on an even minor line >= 4.
+          lts_release="$(
+            jq -c \
+              --argjson minMinor "$LTS_MIN_MINOR" '
+                [
+                  .[]
+                  | .version = (
+                      .tag_name
+                      | sub("^v"; "")
+                  )
+                  | .major = (
+                      .version
+                      | split(".")
+                      | .[0]
+                      | tonumber
+                  )
+                  | .minor = (
+                      .version
+                      | split(".")
+                      | .[1]
+                      | tonumber
+                  )
+                  | select(
+                      .minor >= $minMinor and
+                      (.minor % 2 == 0)
+                  )
+                ]
+                | .[0] // empty
+              ' <<<"$stable_releases"
+          )"
+
+          if [ -z "$lts_release" ]; then
+            echo "::error::Unable to determine LTS release."
+            exit 1
+          fi
+
+          lts_tag="$(
+            jq -r '.tag_name' <<<"$lts_release"
+          )"
+
+          lts_version="${lts_tag#v}"
+
+          lts_major="$(
+            cut -d. -f1 <<<"$lts_version"
+          )"
+
+          lts_minor="$(
+            cut -d. -f2 <<<"$lts_version"
+          )"
+
+          lts_line="${lts_major}.${lts_minor}"
+
+          latest_url="$(
+            jq -r '.html_url' <<<"$latest_release"
+          )"
+
+          latest_published="$(
+            jq -r '.published_at // .created_at' <<<"$latest_release"
+          )"
+
+          lts_url="$(
+            jq -r '.html_url' <<<"$lts_release"
+          )"
+
+          lts_published="$(
+            jq -r '.published_at // .created_at' <<<"$lts_release"
+          )"
+
+          jq -n \
+            --arg latestTag "$latest_tag" \
+            --arg latestVersion "$latest_version" \
+            --arg currentLine "$current_line" \
+            --arg latestUrl "$latest_url" \
+            --arg latestPublished "$latest_published" \
+            --arg ltsTag "$lts_tag" \
+            --arg ltsVersion "$lts_version" \
+            --arg ltsLine "$lts_line" \
+            --arg ltsUrl "$lts_url" \
+            --arg ltsPublished "$lts_published" \
+            '{
+              current: {
+                tag: $latestTag,
+                version: $latestVersion,
+                line: $currentLine,
+                url: $latestUrl,
+                publishedAt: $latestPublished
+              },
+              lts: {
+                tag: $ltsTag,
+                version: $ltsVersion,
+                line: $ltsLine,
+                url: $ltsUrl,
+                publishedAt: $ltsPublished
+              }
+            }' > "$RUNNER_TEMP/releases-context.json"
+
+          echo "RELEASE_CONTEXT=$RUNNER_TEMP/releases-context.json" >> "$GITHUB_ENV"
+
+          echo "Discovered versions:"
+          jq '.' "$RUNNER_TEMP/releases-context.json"
+
+          printf '%s\n' "$stable_releases" > "$RUNNER_TEMP/stable-releases.json"
+
+      - name: Discover versioned documentation directories
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          docs_listing="$(
+            gh api \
+              --paginate \
+              --slurp \
+              "repos/${DUCKDB_WEB_REPO}/contents/docs?ref=main" |
+            jq 'add'
+          )"
+
+          version_dirs="$(
+            jq '
+              [
+                .[]
+                | select(.type == "dir")
+                | .name
+                | select(test("^v?[0-9]+\\.[0-9]+$"))
+              ]
+              | unique
+              | sort_by(
+                  ltrimstr("v")
+                  | split(".")
+                  | map(tonumber)
+                )
+            ' <<<"$docs_listing"
+          )"
+
+          if [ "$(jq 'length' <<<"$version_dirs")" -eq 0 ]; then
+            echo "::error::No versioned documentation directories were found."
+            exit 1
+          fi
+
+          echo "Versioned documentation directories:"
+          jq '.' <<<"$version_dirs"
+
+          current_line="$(
+            jq -r '.current.line' "$RELEASE_CONTEXT"
+          )"
+
+          lts_line="$(
+            jq -r '.lts.line' "$RELEASE_CONTEXT"
+          )"
+
+          find_doc_dir() {
+            local target_line="$1"
+
+            jq -r \
+              --arg target "$target_line" '
+                .[]
+                | select(
+                    (
+                      ltrimstr("v")
+                    ) == $target
+                  )
+              ' <<<"$version_dirs" |
+              head -n 1
+          }
+
+          current_doc_dir="$(
+            find_doc_dir "$current_line"
+          )"
+
+          lts_doc_dir="$(
+            find_doc_dir "$lts_line"
+          )"
+
+          # A missing exact version directory is meaningful: the release may
+          # have happened before the corresponding docs snapshot was created.
+          current_exists=false
+          lts_exists=false
+
+          if [ -n "$current_doc_dir" ]; then
+            current_exists=true
+          fi
+
+          if [ -n "$lts_doc_dir" ]; then
+            lts_exists=true
+          fi
+
+          current_path=""
+          lts_path=""
+
+          if [ "$current_exists" = "true" ]; then
+            current_path="docs/${current_doc_dir}/clients/c/api.md"
+          fi
+
+          if [ "$lts_exists" = "true" ]; then
+            lts_path="docs/${lts_doc_dir}/clients/c/api.md"
+          fi
+
+          jq -n \
+            --arg currentLine "$current_line" \
+            --arg currentDocDir "$current_doc_dir" \
+            --arg currentPath "$current_path" \
+            --argjson currentExists "$current_exists" \
+            --arg ltsLine "$lts_line" \
+            --arg ltsDocDir "$lts_doc_dir" \
+            --arg ltsPath "$lts_path" \
+            --argjson ltsExists "$lts_exists" \
+            '{
+              current: {
+                line: $currentLine,
+                directory: (if $currentDocDir == "" then null else $currentDocDir end),
+                path: (if $currentPath == "" then null else $currentPath end),
+                exists: $currentExists
+              },
+              lts: {
+                line: $ltsLine,
+                directory: (if $ltsDocDir == "" then null else $ltsDocDir end),
+                path: (if $ltsPath == "" then null else $ltsPath end),
+                exists: $ltsExists
+              },
+              availableDirectories: []
+            }' > "$RUNNER_TEMP/versioned-doc-context.json"
+
+          jq \
+            --argjson dirs "$version_dirs" \
+            '.availableDirectories = $dirs' \
+            "$RUNNER_TEMP/versioned-doc-context.json" \
+            > "$RUNNER_TEMP/versioned-doc-context.updated.json"
+
+          mv \
+            "$RUNNER_TEMP/versioned-doc-context.updated.json" \
+            "$RUNNER_TEMP/versioned-doc-context.json"
+
+          echo "VERSIONED_DOC_CONTEXT=$RUNNER_TEMP/versioned-doc-context.json" >> "$GITHUB_ENV"
+
+          jq '.' "$RUNNER_TEMP/versioned-doc-context.json"
+
+      - name: Fetch DuckDB C API documents
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          fetch_raw() {
+            local path="$1"
+            local output="$2"
+
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --retry 4 \
+              --retry-delay 2 \
+              "https://raw.githubusercontent.com/${DUCKDB_WEB_REPO}/main/${path}" \
+              -o "$output"
+          }
+
+          fetch_raw \
+            "$API_CURRENT_PATH" \
+            "$RUNNER_TEMP/current-api.md"
+
+          current_exists="$(
+            jq -r '.current.exists' "$VERSIONED_DOC_CONTEXT"
+          )"
+
+          lts_exists="$(
+            jq -r '.lts.exists' "$VERSIONED_DOC_CONTEXT"
+          )"
+
+          if [ "$current_exists" = "true" ]; then
+            current_path="$(
+              jq -r '.current.path' "$VERSIONED_DOC_CONTEXT"
+            )"
+
+            fetch_raw \
+              "$current_path" \
+              "$RUNNER_TEMP/current-versioned-api.md"
+          else
+            : > "$RUNNER_TEMP/current-versioned-api.md"
+          fi
+
+          if [ "$lts_exists" = "true" ]; then
+            lts_path="$(
+              jq -r '.lts.path' "$VERSIONED_DOC_CONTEXT"
+            )"
+
+            fetch_raw \
+              "$lts_path" \
+              "$RUNNER_TEMP/lts-versioned-api.md"
+          else
+            : > "$RUNNER_TEMP/lts-versioned-api.md"
+          fi
+
+          current_hash="$(
+            sha256sum "$RUNNER_TEMP/current-api.md" |
+            cut -d' ' -f1
+          )"
+
+          current_versioned_hash="$(
+            sha256sum "$RUNNER_TEMP/current-versioned-api.md" |
+            cut -d' ' -f1
+          )"
+
+          lts_hash="$(
+            sha256sum "$RUNNER_TEMP/lts-versioned-api.md" |
+            cut -d' ' -f1
+          )"
+
+          jq -n \
+            --arg currentHash "$current_hash" \
+            --arg currentVersionedHash "$current_versioned_hash" \
+            --arg ltsHash "$lts_hash" \
+            '{
+              current: $currentHash,
+              currentVersioned: $currentVersionedHash,
+              ltsVersioned: $ltsHash
+            }' > "$RUNNER_TEMP/api-hashes.json"
+
+          echo "API hashes:"
+          jq '.' "$RUNNER_TEMP/api-hashes.json"
+
+      - name: Compare API snapshots
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p "$RUNNER_TEMP/diffs"
+
+          api_changed=false
+          versioned_api_changed=false
+          lts_api_changed=false
+
+          compare() {
+            local new_file="$1"
+            local old_file="$2"
+            local diff_file="$3"
+
+            if [ ! -f "$old_file" ]; then
+              return 0
+            fi
+
+            if cmp -s "$new_file" "$old_file"; then
+              return 0
+            fi
+
+            diff -u \
+              "$old_file" \
+              "$new_file" \
+              > "$diff_file" || true
+
+            return 1
+          }
+
+          # A versioned snapshot is only comparable when it was captured from the
+          # same documentation line. When DuckDB rolls the current/LTS line over
+          # (for example 1.4 -> 1.6), the stored snapshot describes a different
+          # release series, so diffing it would report the entire delta between
+          # two versions as an "API change". Treat a line rollover as a fresh
+          # baseline instead.
+          previous_current_line="$(
+            jq -r '.current.line // empty' "$STATE_ROOT/state.json"
+          )"
+
+          previous_lts_line="$(
+            jq -r '.lts.line // empty' "$STATE_ROOT/state.json"
+          )"
+
+          current_line="$(
+            jq -r '.current.line' "$RELEASE_CONTEXT"
+          )"
+
+          lts_line="$(
+            jq -r '.lts.line' "$RELEASE_CONTEXT"
+          )"
+
+          if ! compare \
+            "$RUNNER_TEMP/current-api.md" \
+            "$STATE_ROOT/snapshots/current-api.md" \
+            "$RUNNER_TEMP/diffs/current-api.diff"; then
+            api_changed=true
+          fi
+
+          if [ -n "$previous_current_line" ] && [ "$previous_current_line" != "$current_line" ]; then
+            echo "::notice::Current line moved ${previous_current_line} -> ${current_line}; rebaselining versioned snapshot."
+          elif ! compare \
+            "$RUNNER_TEMP/current-versioned-api.md" \
+            "$STATE_ROOT/snapshots/current-versioned-api.md" \
+            "$RUNNER_TEMP/diffs/current-versioned-api.diff"; then
+            versioned_api_changed=true
+          fi
+
+          if [ -n "$previous_lts_line" ] && [ "$previous_lts_line" != "$lts_line" ]; then
+            echo "::notice::LTS line moved ${previous_lts_line} -> ${lts_line}; rebaselining versioned snapshot."
+          elif ! compare \
+            "$RUNNER_TEMP/lts-versioned-api.md" \
+            "$STATE_ROOT/snapshots/lts-api.md" \
+            "$RUNNER_TEMP/diffs/lts-api.diff"; then
+            lts_api_changed=true
+          fi
+
+          echo "API_CHANGED=$api_changed" >> "$GITHUB_ENV"
+          echo "VERSIONED_API_CHANGED=$versioned_api_changed" >> "$GITHUB_ENV"
+          echo "LTS_API_CHANGED=$lts_api_changed" >> "$GITHUB_ENV"
+
+          jq -n \
+            --argjson currentChanged "$api_changed" \
+            --argjson currentVersionedChanged "$versioned_api_changed" \
+            --argjson ltsChanged "$lts_api_changed" \
+            '{
+              current: $currentChanged,
+              currentVersioned: $currentVersionedChanged,
+              ltsVersioned: $ltsChanged
+            }' > "$RUNNER_TEMP/api-change-state.json"
+
+          jq '.' "$RUNNER_TEMP/api-change-state.json"
+
+      - name: Detect unseen DuckDB releases
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          new_releases="[]"
+
+          while IFS= read -r release; do
+            tag="$(
+              jq -r '.tag_name' <<<"$release"
+            )"
+
+            known="$(
+              jq -r \
+                --arg tag "$tag" \
+                '.releases[$tag] != null' \
+                "$STATE_ROOT/state.json"
+            )"
+
+            if [ "$known" != "true" ]; then
+              normalized="$(
+                jq -c '{
+                  tag: .tag_name,
+                  version: (.tag_name | sub("^v"; "")),
+                  name: (.name // .tag_name),
+                  url: .html_url,
+                  publishedAt: (.published_at // .created_at),
+                  body: (.body // "")
+                }' <<<"$release"
+              )"
+
+              new_releases="$(
+                jq \
+                  --argjson release "$normalized" \
+                  '. + [$release]' \
+                  <<<"$new_releases"
+              )"
+            fi
+          done < <(
+            jq -c '.[]' "$RUNNER_TEMP/stable-releases.json"
+          )
+
+          if [ "${STATE_BOOTSTRAP:-false}" = "true" ] || \
+             [ "${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap || false }}" = "true" ]; then
+            echo "Bootstrap requested; suppressing historical release issues."
+            new_releases="[]"
+            echo "BOOTSTRAP_EFFECTIVE=true" >> "$GITHUB_ENV"
+          else
+            echo "BOOTSTRAP_EFFECTIVE=false" >> "$GITHUB_ENV"
+          fi
+
+          jq '.' <<<"$new_releases" > "$RUNNER_TEMP/new-releases.json"
+
+          echo "NEW_RELEASES_JSON<<EOF" >> "$GITHUB_ENV"
+          jq -c '.' "$RUNNER_TEMP/new-releases.json" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+          echo "New releases:"
+          jq '.' "$RUNNER_TEMP/new-releases.json"
+
+      # -----------------------------------------------------------------------
+      # Prepare API AI context
+      # -----------------------------------------------------------------------
+
+      - name: Prepare API analysis context
+        if: >-
+          (env.API_CHANGED == 'true' ||
+           env.VERSIONED_API_CHANGED == 'true' ||
+           env.LTS_API_CHANGED == 'true') &&
+          env.BOOTSTRAP_EFFECTIVE != 'true' &&
+          env.STATE_BOOTSTRAP != 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          current_version="$(
+            jq -r '.current.version' "$RELEASE_CONTEXT"
+          )"
+
+          current_line="$(
+            jq -r '.current.line' "$RELEASE_CONTEXT"
+          )"
+
+          lts_version="$(
+            jq -r '.lts.version' "$RELEASE_CONTEXT"
+          )"
+
+          lts_line="$(
+            jq -r '.lts.line' "$RELEASE_CONTEXT"
+          )"
+
+          current_path="$(
+            jq -r '.current.path // empty' "$VERSIONED_DOC_CONTEXT"
+          )"
+
+          lts_path="$(
+            jq -r '.lts.path // empty' "$VERSIONED_DOC_CONTEXT"
+          )"
+
+          {
+            echo "# DuckDB C API change analysis"
+            echo
+            echo "Repository: https://github.com/${DUCKDB_WEB_REPO}"
+            echo
+            echo "Current DuckDB release: ${current_version}"
+            echo "Current line: ${current_line}"
+            echo "LTS DuckDB release: ${lts_version}"
+            echo "LTS line: ${lts_line}"
+            echo
+            echo "Current API source:"
+            echo "https://github.com/${DUCKDB_WEB_REPO}/blob/main/${API_CURRENT_PATH}"
+            echo
+            echo "Current versioned API source:"
+            if [ -n "$current_path" ]; then
+              echo "https://github.com/${DUCKDB_WEB_REPO}/blob/main/${current_path}"
+            else
+              echo "NOT FOUND"
+            fi
+            echo
+            echo "LTS versioned API source:"
+            if [ -n "$lts_path" ]; then
+              echo "https://github.com/${DUCKDB_WEB_REPO}/blob/main/${lts_path}"
+            else
+              echo "NOT FOUND"
+            fi
+            echo
+
+            echo "## Current API diff"
+            echo
+            echo '```diff'
+            if [ -s "$RUNNER_TEMP/diffs/current-api.diff" ]; then
+              cat "$RUNNER_TEMP/diffs/current-api.diff"
+            else
+              echo "(no direct change detected)"
+            fi
+            echo '```'
+            echo
+
+            echo "## Current versioned API diff"
+            echo
+            echo '```diff'
+            if [ -s "$RUNNER_TEMP/diffs/current-versioned-api.diff" ]; then
+              cat "$RUNNER_TEMP/diffs/current-versioned-api.diff"
+            else
+              echo "(no change detected)"
+            fi
+            echo '```'
+            echo
+
+            echo "## LTS versioned API diff"
+            echo
+            echo '```diff'
+            if [ -s "$RUNNER_TEMP/diffs/lts-api.diff" ]; then
+              cat "$RUNNER_TEMP/diffs/lts-api.diff"
+            else
+              echo "(no change detected)"
+            fi
+            echo '```'
+          } > "$RUNNER_TEMP/api-ai-context.md"
+
+          # Safety limit against unexpectedly huge prompts.
+          max_bytes=140000
+
+          if [ "$(wc -c < "$RUNNER_TEMP/api-ai-context.md")" -gt "$max_bytes" ]; then
+            echo "::warning::API analysis context exceeds ${max_bytes} bytes; truncating."
+
+            head -c "$max_bytes" \
+              "$RUNNER_TEMP/api-ai-context.md" \
+              > "$RUNNER_TEMP/api-ai-context.truncated.md"
+
+            mv \
+              "$RUNNER_TEMP/api-ai-context.truncated.md" \
+              "$RUNNER_TEMP/api-ai-context.md"
+          fi
+
+          echo "API_AI_CONTEXT=$RUNNER_TEMP/api-ai-context.md" >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # Gemini helper
+      # -----------------------------------------------------------------------
+
+      - name: Create Gemini API helper
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          cat > "$RUNNER_TEMP/gemini.sh" <<'BASH'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+
+          prompt_file="$1"
+          output_file="$2"
+
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo "::error::GEMINI_API_KEY is not configured."
+            exit 1
+          fi
+
+          prompt="$(
+            cat "$prompt_file"
+          )"
+
+          payload="$(
+            jq -n \
+              --arg prompt "$prompt" '
+                {
+                  contents: [
+                    {
+                      role: "user",
+                      parts: [
+                        {
+                          text: $prompt
+                        }
+                      ]
+                    }
+                  ],
+                  generationConfig: {
+                    temperature: 0.1,
+                    responseMimeType: "application/json"
+                  }
+                }
+              '
+          )"
+
+          response="$(
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --retry 4 \
+              --retry-delay 2 \
+              --request POST \
+              "https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}" \
+              -H "Content-Type: application/json" \
+              --data "$payload"
+          )"
+
+          text="$(
+            jq -r '
+              [
+                .candidates[0].content.parts[]?
+                | select(.text != null)
+                | .text
+              ]
+              | join("")
+            ' <<<"$response"
+          )"
+
+          if [ -z "$text" ]; then
+            echo "::error::Gemini returned no generated content."
+            jq '.' <<<"$response" >&2
+            exit 1
+          fi
+
+          text="$(
+            sed \
+              -e 's/^```json[[:space:]]*$//' \
+              -e 's/^```[[:space:]]*$//' \
+              <<<"$text"
+          )"
+
+          jq -e '.' <<<"$text" > "$output_file"
+          BASH
+
+          chmod +x "$RUNNER_TEMP/gemini.sh"
+
+      # -----------------------------------------------------------------------
+      # AI: API change analysis
+      # -----------------------------------------------------------------------
+
+      - name: Analyze C API changes with Gemini
+        # `BOOTSTRAP_EFFECTIVE` is excluded because a bootstrap run discards the
+        # analysis without opening an issue; calling Gemini would waste quota.
+        if: >-
+          (env.API_CHANGED == 'true' ||
+           env.VERSIONED_API_CHANGED == 'true' ||
+           env.LTS_API_CHANGED == 'true') &&
+          env.BOOTSTRAP_EFFECTIVE != 'true' &&
+          env.STATE_BOOTSTRAP != 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          {
+            cat <<'PROMPT'
+          You are the upstream compatibility analyst for `better-duck`,
+          an open-source Rust driver for DuckDB's C API.
+
+          Repository:
+          https://github.com/nimdeveloper/better-duck
+
+          DuckDB upstream repositories:
+          https://github.com/duckdb/duckdb
+          https://github.com/duckdb/duckdb-web
+
+          Analyze ONLY the supplied Markdown/API diff.
+
+          Focus specifically on implications for a Rust driver using DuckDB's
+          C API through FFI.
+
+          Identify:
+
+          - added C functions
+          - removed C functions
+          - renamed C functions
+          - changed signatures
+          - changed parameter types
+          - changed return types
+          - changed structs
+          - changed enums
+          - changed constants
+          - changed opaque handles
+          - deprecated APIs
+          - ABI-sensitive changes
+          - behavioral API changes explicitly documented in the diff
+
+          Distinguish these from:
+          - documentation wording changes
+          - examples changes
+          - formatting changes
+          - unrelated engine features
+
+          Be conservative. Never invent an API or ABI change that is not
+          supported by the supplied diff.
+
+          A "breaking" classification should only be used when there is
+          credible evidence that an existing Rust FFI binding or safe wrapper
+          may stop compiling, link differently, become ABI-incompatible, or
+          require semantic migration.
+
+          Return VALID JSON ONLY:
+
+          {
+            "summary": "one concise technical summary",
+            "severity": "none|low|medium|high|critical",
+            "hasActionableApiChanges": true,
+            "changes": [
+              {
+                "symbol": "duckdb_xxx",
+                "kind": "added|removed|modified|deprecated|documentation",
+                "classification": "breaking|requires_update|optional|none",
+                "impact": "technical impact",
+                "rustDriverAction": "specific recommended action or null"
+              }
+            ],
+            "rustDriverAssessment": "overall assessment for better-duck",
+            "recommendedIssueTitle": "concise GitHub issue title"
+          }
+          PROMPT
+
+            echo
+            cat "$API_AI_CONTEXT"
+          } > "$RUNNER_TEMP/api-prompt.txt"
+
+          "$RUNNER_TEMP/gemini.sh" \
+            "$RUNNER_TEMP/api-prompt.txt" \
+            "$RUNNER_TEMP/api-analysis.json"
+
+          echo "API analysis:"
+          jq '.' "$RUNNER_TEMP/api-analysis.json"
+
+      # -----------------------------------------------------------------------
+      # Create API issue
+      # -----------------------------------------------------------------------
+
+      - name: Create issue for C API changes
+        if: env.API_CHANGED == 'true' || env.VERSIONED_API_CHANGED == 'true' || env.LTS_API_CHANGED == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}" = "true" ]; then
+            echo "Dry run enabled; not creating an issue."
+            exit 0
+          fi
+
+          # A bootstrap run establishes the baseline and intentionally does not
+          # generate a historical API issue. Both flags are defaulted so this
+          # step stays correct under `set -u` even if an earlier step is
+          # skipped or reordered.
+          if [ "${STATE_BOOTSTRAP:-false}" = "true" ] || [ "${BOOTSTRAP_EFFECTIVE:-false}" = "true" ]; then
+            echo "Bootstrap mode; API baseline will be recorded without creating an issue."
+            exit 0
+          fi
+
+          api_fingerprint="$(
+            jq -c '.' "$RUNNER_TEMP/api-hashes.json" |
+            sha256sum |
+            cut -d' ' -f1
+          )"
+
+          marker="duckdb-api-monitor:${api_fingerprint}"
+
+          existing="$(
+            gh issue list \
+              --state all \
+              --limit 100 \
+              --search "\"${marker}\" in:body" \
+              --json number \
+              --jq '.[0].number // empty' || true
+          )"
+
+          if [ -n "$existing" ]; then
+            echo "An issue already exists for this API state: #$existing"
+            exit 0
+          fi
+
+          # Gemini is instructed to return these fields, but a model response is
+          # untrusted input: fall back rather than publishing a literal "null".
+          title="$(
+            jq -r '.recommendedIssueTitle // empty' \
+              "$RUNNER_TEMP/api-analysis.json"
+          )"
+
+          if [ -z "$title" ]; then
+            title="DuckDB C API changes detected upstream"
+          fi
+
+          severity="$(
+            jq -r '.severity // "unknown"' \
+              "$RUNNER_TEMP/api-analysis.json"
+          )"
+
+          summary="$(
+            jq -r '.summary // "No summary was returned by the analysis model."' \
+              "$RUNNER_TEMP/api-analysis.json"
+          )"
+
+          assessment="$(
+            jq -r '.rustDriverAssessment // "No assessment was returned by the analysis model."' \
+              "$RUNNER_TEMP/api-analysis.json"
+          )"
+
+          current_version="$(
+            jq -r '.current.version' "$RELEASE_CONTEXT"
+          )"
+
+          current_line="$(
+            jq -r '.current.line' "$RELEASE_CONTEXT"
+          )"
+
+          lts_version="$(
+            jq -r '.lts.version' "$RELEASE_CONTEXT"
+          )"
+
+          lts_line="$(
+            jq -r '.lts.line' "$RELEASE_CONTEXT"
+          )"
+
+          current_path="$(
+            jq -r '.current.path // "NOT FOUND"' "$VERSIONED_DOC_CONTEXT"
+          )"
+
+          lts_path="$(
+            jq -r '.lts.path // "NOT FOUND"' "$VERSIONED_DOC_CONTEXT"
+          )"
+
+          {
+            echo "<!-- ${marker} -->"
+            echo
+            echo "# DuckDB C API changes detected"
+            echo
+            echo "**Severity:** \`${severity}\`"
+            echo
+            echo "$summary"
+            echo
+            echo "## DuckDB versions"
+            echo
+            echo "| Channel | Release | Line |"
+            echo "|---|---|---|"
+            echo "| Current | \`${current_version}\` | \`${current_line}\` |"
+            echo "| LTS | \`${lts_version}\` | \`${lts_line}\` |"
+            echo
+            echo "## Rust driver assessment"
+            echo
+            echo "$assessment"
+            echo
+            echo "## API changes"
+            echo
+            jq -r '
+              if (.changes | length) == 0 then
+                "No actionable C API changes were identified."
+              else
+                .changes[] |
+                "### \(.symbol)\n\n" +
+                "- Kind: `\(.kind)`\n" +
+                "- Classification: `\(.classification)`\n" +
+                "- Impact: \(.impact)\n" +
+                "- Rust action: " +
+                (if .rustDriverAction == null then "None stated." else .rustDriverAction end) +
+                "\n"
+              end
+            ' "$RUNNER_TEMP/api-analysis.json"
+
+            echo "## Documentation"
+            echo
+            echo "- Current: https://github.com/${DUCKDB_WEB_REPO}/blob/main/${API_CURRENT_PATH}"
+            echo "- Current versioned: \`${current_path}\`"
+            echo "- LTS versioned: \`${lts_path}\`"
+            echo
+            echo "## Raw diff"
+            echo
+            echo "<details>"
+            echo "<summary>Show raw diff</summary>"
+            echo
+            echo '```diff'
+            cat "$API_AI_CONTEXT"
+            echo '```'
+            echo
+            echo "</details>"
+            echo
+            echo "---"
+            echo
+            echo "Generated automatically by \`DuckDB Upstream Monitor\`."
+          } > "$RUNNER_TEMP/api-issue.md"
+
+          gh label create \
+            "duckdb-api" \
+            --description "Upstream DuckDB C API changes" \
+            --color "5319E7" \
+            >/dev/null 2>&1 || true
+
+          gh label create \
+            "upstream" \
+            --description "Upstream dependency changes" \
+            --color "0366D6" \
+            >/dev/null 2>&1 || true
+
+          gh issue create \
+            --title "$title" \
+            --body-file "$RUNNER_TEMP/api-issue.md" \
+            --label "duckdb-api" \
+            --label "upstream"
+
+      # -----------------------------------------------------------------------
+      # AI: release analysis
+      # -----------------------------------------------------------------------
+
+      - name: Analyze new DuckDB releases with Gemini
+        if: env.NEW_RELEASES_JSON != '[]'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p "$RUNNER_TEMP/release-analysis"
+
+          while IFS= read -r release; do
+            tag="$(
+              jq -r '.tag' <<<"$release"
+            )"
+
+            version="$(
+              jq -r '.version' <<<"$release"
+            )"
+
+            body="$(
+              jq -r '.body' <<<"$release"
+            )"
+
+            {
+              cat <<'PROMPT'
+          You are the release analyst for `better-duck`, an open-source Rust
+          driver for DuckDB's C API.
+
+          Repository:
+          https://github.com/nimdeveloper/better-duck
+
+          Analyze the supplied DuckDB release notes.
+
+          Focus ONLY on information relevant to maintaining a Rust driver that
+          uses DuckDB's C API through FFI.
+
+          Identify:
+
+          - C API additions
+          - C API removals
+          - C API signature changes
+          - ABI-sensitive changes
+          - C API behavioral changes
+          - deprecated APIs
+          - major/minor release implications
+          - changes that require updating Rust FFI bindings
+          - changes that may require updating safe Rust wrappers
+
+          Ignore ordinary SQL/engine features unless the release notes
+          explicitly connect them to the C API.
+
+          Be conservative. Do not invent API changes.
+
+          Return valid JSON only:
+
+          {
+            "summary": "concise technical summary",
+            "apiImpact": "none|low|medium|high|critical",
+            "rustDriverAction": "none|review|update_required",
+            "relevantChanges": [
+              {
+                "title": "short title",
+                "details": "technical details"
+              }
+            ],
+            "recommendedIssueTitle": "GitHub issue title"
+          }
+          PROMPT
+
+              echo
+              echo "DuckDB release: ${tag}"
+              echo "Version: ${version}"
+              echo
+              echo "$body"
+            } > "$RUNNER_TEMP/release-prompt.txt"
+
+            "$RUNNER_TEMP/gemini.sh" \
+              "$RUNNER_TEMP/release-prompt.txt" \
+              "$RUNNER_TEMP/release-analysis/${tag}.json"
+          done < <(
+            jq -c '.[]' "$RUNNER_TEMP/new-releases.json"
+          )
+
+      # -----------------------------------------------------------------------
+      # Create release issues
+      # -----------------------------------------------------------------------
+
+      - name: Create issues for new DuckDB releases
+        if: env.NEW_RELEASES_JSON != '[]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}" = "true" ]; then
+            echo "Dry run enabled; release issues will not be created."
+            exit 0
+          fi
+
+          while IFS= read -r release; do
+            tag="$(
+              jq -r '.tag' <<<"$release"
+            )"
+
+            version="$(
+              jq -r '.version' <<<"$release"
+            )"
+
+            name="$(
+              jq -r '.name' <<<"$release"
+            )"
+
+            release_url="$(
+              jq -r '.url' <<<"$release"
+            )"
+
+            published_at="$(
+              jq -r '.publishedAt' <<<"$release"
+            )"
+
+            analysis="$RUNNER_TEMP/release-analysis/${tag}.json"
+
+            marker="duckdb-release-monitor:${tag}"
+
+            existing="$(
+              gh issue list \
+                --state all \
+                --limit 100 \
+                --search "\"${marker}\" in:body" \
+                --json number \
+                --jq '.[0].number // empty' || true
+            )"
+
+            if [ -n "$existing" ]; then
+              echo "Release issue already exists for ${tag}: #${existing}"
+              continue
+            fi
+
+            # Model output is untrusted: fall back rather than publishing
+            # a literal "null" title or body field.
+            title="$(
+              jq -r '.recommendedIssueTitle // empty' "$analysis"
+            )"
+
+            if [ -z "$title" ]; then
+              title="DuckDB ${tag} released"
+            fi
+
+            api_impact="$(
+              jq -r '.apiImpact // "unknown"' "$analysis"
+            )"
+
+            rust_action="$(
+              jq -r '.rustDriverAction // "review"' "$analysis"
+            )"
+
+            summary="$(
+              jq -r '.summary // "No summary was returned by the analysis model."' "$analysis"
+            )"
+
+            current_version="$(
+              jq -r '.current.version' "$RELEASE_CONTEXT"
+            )"
+
+            current_line="$(
+              jq -r '.current.line' "$RELEASE_CONTEXT"
+            )"
+
+            lts_version="$(
+              jq -r '.lts.version' "$RELEASE_CONTEXT"
+            )"
+
+            lts_line="$(
+              jq -r '.lts.line' "$RELEASE_CONTEXT"
+            )"
+
+            current_path="$(
+              jq -r '.current.path // "NOT FOUND"' "$VERSIONED_DOC_CONTEXT"
+            )"
+
+            lts_path="$(
+              jq -r '.lts.path // "NOT FOUND"' "$VERSIONED_DOC_CONTEXT"
+            )"
+
+            current_exists="$(
+              jq -r '.current.exists' "$VERSIONED_DOC_CONTEXT"
+            )"
+
+            lts_exists="$(
+              jq -r '.lts.exists' "$VERSIONED_DOC_CONTEXT"
+            )"
+
+            {
+              echo "<!-- ${marker} -->"
+              echo
+              echo "# DuckDB ${tag} released"
+              echo
+              echo "**Published:** ${published_at}"
+              echo
+              echo "$summary"
+              echo
+              echo "## Release impact"
+              echo
+              echo "- C API impact: \`${api_impact}\`"
+              echo "- Rust driver action: \`${rust_action}\`"
+              echo
+              echo "## Relevant changes"
+              echo
+              jq -r '
+                if (.relevantChanges | length) == 0 then
+                  "No release-note changes were identified as directly relevant to the DuckDB C API."
+                else
+                  .relevantChanges[] |
+                  "### \(.title)\n\n\(.details)\n"
+                end
+              ' "$analysis"
+
+              echo "## Version tracking"
+              echo
+              echo "| Channel | Release | Line |"
+              echo "|---|---|---|"
+              echo "| Current | \`${current_version}\` | \`${current_line}\` |"
+              echo "| LTS | \`${lts_version}\` | \`${lts_line}\` |"
+              echo
+              echo "## Versioned C API documentation"
+              echo
+              echo "- Current path: \`${current_path}\`"
+              echo "- Current path exists: \`${current_exists}\`"
+              echo "- LTS path: \`${lts_path}\`"
+              echo "- LTS path exists: \`${lts_exists}\`"
+              echo
+              echo "## Upstream release"
+              echo
+              echo "- [${name}](${release_url})"
+              echo
+              echo "---"
+              echo
+              echo "Generated automatically by \`DuckDB Upstream Monitor\`."
+            } > "$RUNNER_TEMP/release-issue.md"
+
+            gh label create \
+              "duckdb-release" \
+              --description "DuckDB upstream release tracking" \
+              --color "1D76DB" \
+              >/dev/null 2>&1 || true
+
+            gh label create \
+              "upstream" \
+              --description "Upstream dependency changes" \
+              --color "0366D6" \
+              >/dev/null 2>&1 || true
+
+            gh issue create \
+              --title "$title" \
+              --body-file "$RUNNER_TEMP/release-issue.md" \
+              --label "duckdb-release" \
+              --label "upstream"
+          done < <(
+            jq -c '.[]' "$RUNNER_TEMP/new-releases.json"
+          )
+
+      # -----------------------------------------------------------------------
+      # Update local state
+      # -----------------------------------------------------------------------
+
+      - name: Build next persistent state
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          now="$(
+            date -u +"%Y-%m-%dT%H:%M:%SZ"
+          )"
+
+          current_version="$(
+            jq -r '.current.version' "$RELEASE_CONTEXT"
+          )"
+
+          current_tag="$(
+            jq -r '.current.tag' "$RELEASE_CONTEXT"
+          )"
+
+          current_line="$(
+            jq -r '.current.line' "$RELEASE_CONTEXT"
+          )"
+
+          current_url="$(
+            jq -r '.current.url' "$RELEASE_CONTEXT"
+          )"
+
+          current_published="$(
+            jq -r '.current.publishedAt' "$RELEASE_CONTEXT"
+          )"
+
+          lts_version="$(
+            jq -r '.lts.version' "$RELEASE_CONTEXT"
+          )"
+
+          lts_tag="$(
+            jq -r '.lts.tag' "$RELEASE_CONTEXT"
+          )"
+
+          lts_line="$(
+            jq -r '.lts.line' "$RELEASE_CONTEXT"
+          )"
+
+          lts_url="$(
+            jq -r '.lts.url' "$RELEASE_CONTEXT"
+          )"
+
+          lts_published="$(
+            jq -r '.lts.publishedAt' "$RELEASE_CONTEXT"
+          )"
+
+          current_hash="$(
+            jq -r '.current' "$RUNNER_TEMP/api-hashes.json"
+          )"
+
+          current_versioned_hash="$(
+            jq -r '.currentVersioned' "$RUNNER_TEMP/api-hashes.json"
+          )"
+
+          lts_hash="$(
+            jq -r '.ltsVersioned' "$RUNNER_TEMP/api-hashes.json"
+          )"
+
+          current_path="$(
+            jq -r '.current.path // empty' "$VERSIONED_DOC_CONTEXT"
+          )"
+
+          lts_path="$(
+            jq -r '.lts.path // empty' "$VERSIONED_DOC_CONTEXT"
+          )"
+
+          current_exists="$(
+            jq -r '.current.exists' "$VERSIONED_DOC_CONTEXT"
+          )"
+
+          lts_exists="$(
+            jq -r '.lts.exists' "$VERSIONED_DOC_CONTEXT"
+          )"
+
+          jq \
+            --arg now "$now" \
+            --arg currentVersion "$current_version" \
+            --arg currentTag "$current_tag" \
+            --arg currentLine "$current_line" \
+            --arg currentUrl "$current_url" \
+            --arg currentPublished "$current_published" \
+            --arg ltsVersion "$lts_version" \
+            --arg ltsTag "$lts_tag" \
+            --arg ltsLine "$lts_line" \
+            --arg ltsUrl "$lts_url" \
+            --arg ltsPublished "$lts_published" \
+            --arg currentHash "$current_hash" \
+            --arg currentVersionedHash "$current_versioned_hash" \
+            --arg ltsHash "$lts_hash" \
+            --arg currentPath "$current_path" \
+            --arg ltsPath "$lts_path" \
+            --argjson currentExists "$current_exists" \
+            --argjson ltsExists "$lts_exists" \
+            '
+            .schemaVersion = 1 |
+            .createdAt = (
+              if .createdAt == null then $now else .createdAt end
+            ) |
+            .updatedAt = $now |
+            .initialized = true |
+
+            .current = {
+              version: $currentVersion,
+              tag: $currentTag,
+              line: $currentLine,
+              url: $currentUrl,
+              publishedAt: $currentPublished
+            } |
+
+            .lts = {
+              version: $ltsVersion,
+              tag: $ltsTag,
+              line: $ltsLine,
+              url: $ltsUrl,
+              publishedAt: $ltsPublished
+            } |
+
+            .api = {
+              current: {
+                path: "docs/current/clients/c/api.md",
+                sha256: $currentHash
+              },
+              currentVersioned: {
+                path: (
+                  if $currentPath == ""
+                  then null
+                  else $currentPath
+                  end
+                ),
+                exists: $currentExists,
+                sha256: $currentVersionedHash
+              },
+              ltsVersioned: {
+                path: (
+                  if $ltsPath == ""
+                  then null
+                  else $ltsPath
+                  end
+                ),
+                exists: $ltsExists,
+                sha256: $ltsHash
+              }
+            }
+            ' \
+            "$STATE_ROOT/state.json" \
+            > "$RUNNER_TEMP/state.updated.json"
+
+          mv \
+            "$RUNNER_TEMP/state.updated.json" \
+            "$STATE_ROOT/state.json"
+
+          # Record every currently known stable release.
+          while IFS= read -r release; do
+            tag="$(
+              jq -r '.tag_name' <<<"$release"
+            )"
+
+            name="$(
+              jq -r '.name // .tag_name' <<<"$release"
+            )"
+
+            url="$(
+              jq -r '.html_url' <<<"$release"
+            )"
+
+            published="$(
+              jq -r '.published_at // .created_at' <<<"$release"
+            )"
+
+            jq \
+              --arg tag "$tag" \
+              --arg name "$name" \
+              --arg url "$url" \
+              --arg published "$published" \
+              '
+              .releases[$tag] = {
+                name: $name,
+                url: $url,
+                publishedAt: $published
+              }
+              ' \
+              "$STATE_ROOT/state.json" \
+              > "$RUNNER_TEMP/state.release.json"
+
+            mv \
+              "$RUNNER_TEMP/state.release.json" \
+              "$STATE_ROOT/state.json"
+          done < <(
+            jq -c '.[]' "$RUNNER_TEMP/stable-releases.json"
+          )
+
+          mkdir -p "$STATE_ROOT/snapshots"
+
+          cp \
+            "$RUNNER_TEMP/current-api.md" \
+            "$STATE_ROOT/snapshots/current-api.md"
+
+          cp \
+            "$RUNNER_TEMP/current-versioned-api.md" \
+            "$STATE_ROOT/snapshots/current-versioned-api.md"
+
+          cp \
+            "$RUNNER_TEMP/lts-versioned-api.md" \
+            "$STATE_ROOT/snapshots/lts-api.md"
+
+          echo "Final state:"
+          jq '.' "$STATE_ROOT/state.json"
+
+      # -----------------------------------------------------------------------
+      # Upload NEW immutable state artifact
+      # -----------------------------------------------------------------------
+
+      - name: Publish monitor state artifact
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: duckdb-monitor-state
+          path: ${{ env.STATE_ROOT }}/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+          overwrite: true
+
+      # -----------------------------------------------------------------------
+      # Summary
+      # -----------------------------------------------------------------------
+
+      - name: Write workflow summary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          {
+            echo "# DuckDB Upstream Monitor"
+            echo
+            echo "## Release tracking"
+            echo
+            echo "- Current: \`$(jq -r '.current.tag' "$RELEASE_CONTEXT")\`"
+            echo "- Current line: \`$(jq -r '.current.line' "$RELEASE_CONTEXT")\`"
+            echo "- LTS: \`$(jq -r '.lts.tag' "$RELEASE_CONTEXT")\`"
+            echo "- LTS line: \`$(jq -r '.lts.line' "$RELEASE_CONTEXT")\`"
+            echo
+            echo "## API tracking"
+            echo
+            echo "- Current API changed: \`$API_CHANGED\`"
+            echo "- Current versioned API changed: \`$VERSIONED_API_CHANGED\`"
+            echo "- LTS API changed: \`$LTS_API_CHANGED\`"
+            echo
+            echo "## Versioned documentation"
+            echo
+            jq -r '
+              "- Current: `\(.current.path // "NOT FOUND")` — exists: `\(.current.exists)`",
+              "- LTS: `\(.lts.path // "NOT FOUND")` — exists: `\(.lts.exists)`"
+            ' "$VERSIONED_DOC_CONTEXT"
+            echo
+            echo "## Persistent state"
+            echo
+            echo "- Storage: GitHub Actions artifact \`$STATE_ARTIFACT_NAME\`"
+            echo "- Bootstrap mode: \`${STATE_BOOTSTRAP:-false}\`"
+            echo
+            echo "Artifact state is intentionally kept outside the repository source tree."
+          } >> "$GITHUB_STEP_SUMMARY"
