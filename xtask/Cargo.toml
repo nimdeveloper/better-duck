@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 anyhow     = "1.0"
-bindgen    = "0.72"
+bindgen    = "0.73"
 clap       = { version = "4.5", features = ["derive"] }
 flate2     = "1.1"
 proc-macro2 = "1.0.107"
