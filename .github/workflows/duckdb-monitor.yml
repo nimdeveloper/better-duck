@@ -90,10 +90,12 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          STATE_ROOT="$RUNNER_TEMP/duckdb-monitor-state"
+          # `:?` aborts instead of expanding to `/*` if RUNNER_TEMP is ever unset
+          # or empty, so this can never widen into a destructive delete.
+          STATE_ROOT="${RUNNER_TEMP:?RUNNER_TEMP must be set}/duckdb-monitor-state"
           mkdir -p "$STATE_ROOT"
 
-          rm -rf "$STATE_ROOT"/*
+          rm -rf "${STATE_ROOT:?}"/*
 
           echo "Searching for previous state artifact..."
 
@@ -1312,10 +1314,6 @@ jobs:
           while IFS= read -r release; do
             tag="$(
               jq -r '.tag' <<<"$release"
-            )"
-
-            version="$(
-              jq -r '.version' <<<"$release"
             )"
 
             name="$(
