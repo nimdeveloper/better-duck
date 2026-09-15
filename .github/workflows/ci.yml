@@ -42,6 +42,17 @@ jobs:
         run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
       - name: Audit DuckDB API capabilities
         run: cargo run --quiet --locked -p xtask -- audit-capabilities
+      # `docs/current/` upstream is a moving target, so retain the exact
+      # reference this run validated against once it advances past the
+      # vendored DuckDB version.
+      - name: Upload validated C API snapshot
+        if: always() && hashFiles('target/xtask/api-snapshot/api.md') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: duckdb-c-api-snapshot-${{ github.run_id }}
+          path: target/xtask/api-snapshot/
+          if-no-files-found: error
+          retention-days: 90
 
   lint:
     name: Clippy

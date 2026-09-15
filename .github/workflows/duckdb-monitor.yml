@@ -99,12 +99,16 @@ jobs:
 
           echo "Searching for previous state artifact..."
 
+          # `--slurp` yields one array element per page, and each page of this
+          # endpoint is an object (`{total_count, artifacts: [...]}`) rather than
+          # a bare array. Concatenate the inner `artifacts` lists; `jq 'add'`
+          # would instead sum `total_count` into a number.
           artifacts_json="$(
             gh api \
               --paginate \
               --slurp \
               "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${STATE_ARTIFACT_NAME}&per_page=100" |
-            jq 'add'
+            jq '[.[].artifacts[]?]'
           )"
 
           latest_artifact="$(

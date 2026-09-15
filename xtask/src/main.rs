@@ -45,10 +45,21 @@ enum Command_ {
     },
     /// Validate the DuckDB C API capability ledger against documentation and
     /// compiled production Rust sources.
+    ///
+    /// The upstream C API reference is fetched from `duckdb/duckdb-web` and
+    /// filtered in-process, so no copy of it is committed to this repository.
     AuditCapabilities {
         /// Rewrite evidence paths for entries already marked production-used.
         #[arg(long)]
         refresh_evidence: bool,
+
+        /// Re-download the upstream reference even if a local cache exists.
+        #[arg(long)]
+        refresh_api: bool,
+
+        /// Use a local filtered reference instead of fetching upstream.
+        #[arg(long, value_name = "PATH")]
+        api_document: Option<PathBuf>,
     },
 }
 
@@ -69,8 +80,13 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command_::UpgradeDuckdb { tag } => upgrade_duckdb(&tag),
-        Command_::AuditCapabilities { refresh_evidence } => {
-            audit_capabilities(&workspace_root()?, refresh_evidence)
+        Command_::AuditCapabilities { refresh_evidence, refresh_api, api_document } => {
+            audit_capabilities(
+                &workspace_root()?,
+                refresh_evidence,
+                refresh_api,
+                api_document.as_deref(),
+            )
         },
     }
 }
@@ -82,13 +98,217 @@ fn workspace_root() -> Result<PathBuf> {
     )
 }
 
+/// Upstream C API reference, fetched rather than vendored.
+///
+/// `docs/current/` is the only path `duckdb/duckdb-web` publishes for the
+/// in-development reference; the per-version directories (`docs/1.5/...`) do
+/// not exist on `main`.
+const UPSTREAM_API_URL: &str =
+    "https://raw.githubusercontent.com/duckdb/duckdb-web/main/docs/current/clients/c/api.md";
+
+/// Where the raw upstream document is cached between runs. Lives under
+/// `target/` so it is already git-ignored and removed by `cargo clean`.
+fn api_cache_path(root: &Path) -> PathBuf {
+    root.join("target").join("xtask").join("upstream-c-api.md")
+}
+
+/// Directory holding the exact API reference an audit validated against.
+///
+/// `docs/current/` is a moving target: once DuckDB's in-development docs
+/// advance past the vendored version, the upstream document no longer describes
+/// the release this driver targets. CI uploads this directory so every passing
+/// run keeps a durable copy of the reference it actually used.
+fn api_snapshot_dir(root: &Path) -> PathBuf {
+    root.join("target").join("xtask").join("api-snapshot")
+}
+
+/// Records the filtered reference, the unfiltered upstream document when one
+/// was fetched, and machine-readable provenance for both.
+fn write_api_snapshot(
+    root: &Path,
+    filtered: &str,
+    upstream: Option<&str>,
+    source: &str,
+    api_version: &str,
+    retained: usize,
+) -> Result<PathBuf> {
+    let dir = api_snapshot_dir(root);
+    fs::create_dir_all(&dir)?;
+
+    fs::write(dir.join("api.md"), filtered)?;
+    if let Some(upstream) = upstream {
+        fs::write(dir.join("upstream-c-api.md"), upstream)?;
+    }
+
+    let retrieved_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or_default();
+
+    let provenance = serde_json::json!({
+        "source": source,
+        "retrievedAtUnix": retrieved_at,
+        "targetDuckdbVersion": api_version,
+        "retainedMethods": retained,
+        "filteredDocument": "api.md",
+        "upstreamDocument": upstream.map(|_| "upstream-c-api.md"),
+        "note": "Deprecated and Arrow methods are removed from the upstream \
+                 reference; `api.md` here is the catalog the audit validated.",
+    });
+    fs::write(
+        dir.join("provenance.json"),
+        format!("{}\n", serde_json::to_string_pretty(&provenance)?),
+    )?;
+
+    Ok(dir)
+}
+
+/// Fetches the upstream reference, falling back to the on-disk cache when the
+/// network is unavailable so local runs and offline CI retries still work.
+fn load_upstream_api(
+    root: &Path,
+    refresh: bool,
+) -> Result<String> {
+    let cache = api_cache_path(root);
+
+    if !refresh {
+        if let Ok(cached) = fs::read_to_string(&cache) {
+            if !cached.trim().is_empty() {
+                return Ok(cached);
+            }
+        }
+    }
+
+    match fetch_url(UPSTREAM_API_URL) {
+        Ok(body) => {
+            if let Some(parent) = cache.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&cache, &body)?;
+            Ok(body)
+        },
+        Err(error) => {
+            let cached = fs::read_to_string(&cache).map_err(|_| error)?;
+            eprintln!(
+                "warning: could not fetch {UPSTREAM_API_URL}; using cached copy at {}",
+                cache.display()
+            );
+            Ok(cached)
+        },
+    }
+}
+
+/// Downloads a document with `curl`, which every supported CI image and the
+/// documented local toolchain already provide (`upgrade-duckdb` likewise shells
+/// out to `git`/`python3` rather than vendoring equivalents).
+fn fetch_url(url: &str) -> Result<String> {
+    let output = Command::new("curl")
+        .args(["--fail", "--silent", "--show-error", "--location", "--retry", "3", url])
+        .output()
+        .context("failed to run `curl` — is it installed and on PATH?")?;
+
+    if !output.status.success() {
+        bail!(
+            "downloading {url} failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    String::from_utf8(output.stdout).context("upstream API document is not valid UTF-8")
+}
+
+/// Removes every deprecated and Arrow method from the upstream reference,
+/// producing the catalog this driver actually targets.
+///
+/// Both the linked overview prototype and the detailed section are removed for
+/// each excluded method, so the surviving document stays internally consistent.
+fn filter_upstream_api(markdown: &str) -> Result<String> {
+    let headings: Vec<usize> =
+        markdown.match_indices("\n#### `duckdb_").map(|(index, _)| index + 1).collect();
+    let first = *headings.first().context("upstream API document has no method headings")?;
+
+    let mut excluded = BTreeSet::new();
+    let mut retained_details = String::new();
+    for (position, &start) in headings.iter().enumerate() {
+        let end = headings.get(position + 1).copied().unwrap_or(markdown.len());
+        let block = &markdown[start..end];
+        let symbol = block
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("#### `"))
+            .and_then(|line| line.strip_suffix('`'))
+            .context("malformed method heading in upstream API document")?;
+
+        let deprecated = block.lines().any(|line| {
+            line.starts_with("> Warning Deprecation notice") || line.starts_with("> Deprecated")
+        });
+        let arrow = symbol.to_ascii_lowercase().contains("arrow");
+
+        if deprecated || arrow {
+            excluded.insert(symbol.to_owned());
+        } else {
+            retained_details.push_str(block);
+        }
+    }
+
+    let mut overview = String::new();
+    for line in markdown[..first].lines() {
+        let anchors: Vec<&str> = line
+            .match_indices("<a href=\"#duckdb_")
+            .filter_map(|(index, _)| {
+                let rest = &line[index + "<a href=\"#".len()..];
+                rest.find('"').map(|end| &rest[..end])
+            })
+            .collect();
+
+        // The generated overview lists exactly one prototype per physical line,
+        // so a line can be dropped wholesale without losing a retained method.
+        if !anchors.is_empty() && anchors.iter().any(|symbol| excluded.contains(*symbol)) {
+            if anchors.len() != 1 {
+                bail!("unexpected multi-method overview line: {line}");
+            }
+            continue;
+        }
+
+        overview.push_str(line);
+        overview.push('\n');
+    }
+
+    // The page-level deprecation policy and the now-empty Arrow category would
+    // otherwise leave excluded terminology in an otherwise filtered document.
+    let overview = overview
+        .lines()
+        .filter(|line| !line.starts_with("> The reference contains several deprecation notices."))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let overview = overview.replace("### Arrow Interface\n\n</code></pre></div></div>\n\n", "");
+
+    Ok(format!("{overview}{retained_details}"))
+}
+
 fn audit_capabilities(
     root: &Path,
     refresh_evidence: bool,
+    refresh_api: bool,
+    api_document: Option<&Path>,
 ) -> Result<()> {
-    let catalog = ApiCatalog::parse(&fs::read_to_string(root.join("api.md"))?)?;
-    let ledger_path = root.join("api-capabilities.json");
-    let mut ledger: CapabilityLedger = serde_json::from_str(&fs::read_to_string(&ledger_path)?)?;
+    let (markdown, upstream, source) = match api_document {
+        Some(path) => {
+            let body = fs::read_to_string(path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            (body, None, path.display().to_string())
+        },
+        None => {
+            let upstream = load_upstream_api(root, refresh_api)?;
+            let filtered = filter_upstream_api(&upstream)?;
+            (filtered, Some(upstream), UPSTREAM_API_URL.to_owned())
+        },
+    };
+    let catalog = ApiCatalog::parse(&markdown)?;
+    let ledger_path = root.join("xtask").join("api-capabilities.json");
+    let mut ledger: CapabilityLedger = serde_json::from_str(&fs::read_to_string(&ledger_path)?)
+        .with_context(|| format!("failed to parse {}", ledger_path.display()))?;
     let production = production_symbols(root)?;
     if refresh_evidence {
         ledger.refresh_evidence(&production)?;
@@ -99,6 +319,18 @@ fn audit_capabilities(
     )?;
     let binding_functions = binding_function_symbols(&bindings)?;
     let report = ledger.validate(&catalog, &production, &binding_functions)?;
+
+    // Written only after validation succeeds, so the snapshot always describes a
+    // reference that genuinely reconciled against the ledger.
+    let snapshot = write_api_snapshot(
+        root,
+        &markdown,
+        upstream.as_deref(),
+        &source,
+        &ledger.api_version,
+        report.total,
+    )?;
+
     println!(
         "capability audit passed: {} retained = {} production-used + {} pending + {} safe alternatives + {} infrastructure",
         report.total,
@@ -107,6 +339,7 @@ fn audit_capabilities(
         report.safe_alternatives,
         report.infrastructure
     );
+    println!("API snapshot written to {}", snapshot.display());
     Ok(())
 }
 

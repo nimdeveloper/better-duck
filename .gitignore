@@ -1,5 +1,9 @@
 /target
-
+/lcov.info
+# The DuckDB C API reference is fetched from duckdb/duckdb-web and filtered
+# in-process by `cargo run -p xtask -- audit-capabilities`; a local copy is a
+# convenience artifact, never a source of truth.
+/api.md
 # Intermediate handoff between core-bench/reference-bench and run-all — not a
 # deliverable itself (docs/benchmarks/{results.json,REPORT.md,*.svg} are).
 /docs/benchmarks/_raw_core.json
