@@ -28,14 +28,20 @@ use crate::{
 /// Open with [`diesel::Connection::establish`], passing either `":memory:"` or a
 /// file path (with an optional `"duckdb://"` prefix).
 pub struct DuckDbConnection {
+    /// Prepared-statement cache — keyed by SQL text so each unique query is
+    /// parsed and planned by DuckDB at most once per connection.
+    ///
+    /// Declared **before** `inner` on purpose: struct fields drop in declaration
+    /// order, and every cached `CachedStatement` borrows `inner`'s DuckDB
+    /// connection. Dropping the cache first destroys those prepared handles
+    /// while the connection is still open. Moving this field below `inner`
+    /// would destroy them after `duckdb_disconnect`.
+    statement_cache: StatementCache<DuckDb, CachedStatement>,
     pub(crate) inner: better_duck_core::connection::Connection,
     transaction_manager: AnsiTransactionManager,
     /// `get_default_instrumentation()` returns `Option<Box<dyn Instrumentation>>`.
     /// `Option` itself implements `Instrumentation`, so we store it directly.
     instrumentation: Option<Box<dyn Instrumentation>>,
-    /// Prepared-statement cache — keyed by SQL text so each unique query is
-    /// parsed and planned by DuckDB at most once per connection.
-    statement_cache: StatementCache<DuckDb, CachedStatement>,
 }
 
 /// Strips an optional `"duckdb://"` URL scheme prefix.

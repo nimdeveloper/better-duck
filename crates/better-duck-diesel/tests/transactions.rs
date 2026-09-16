@@ -69,7 +69,35 @@ fn transaction_error_aborts() {
     assert_eq!(count(&mut conn), 0);
 }
 
-// Nested savepoints
+/// Cached prepared statements must execute on the connection that opened the
+/// transaction. Preparing them on a separate DuckDB connection auto-commits the
+/// write, so the rollback below would silently keep the row.
+///
+/// The repeated SQL is deliberate: the first execution populates Diesel's
+/// statement cache, and the second reuses the cached prepared statement. The
+/// cached path is the one that regressed.
+#[test]
+fn cached_statements_share_the_transaction_that_prepared_them() {
+    let mut conn = mem_conn();
+
+    // Prime the statement cache outside any transaction.
+    diesel::insert_into(tx_items::table)
+        .values((tx_items::id.eq(1), tx_items::val.eq("primed")))
+        .execute(&mut conn)
+        .unwrap();
+    assert_eq!(count(&mut conn), 1);
+
+    let _ = conn.transaction(|conn| -> QueryResult<()> {
+        // Same statement shape as above, so this reuses the cached handle.
+        diesel::insert_into(tx_items::table)
+            .values((tx_items::id.eq(2), tx_items::val.eq("rolled_back")))
+            .execute(conn)?;
+        assert_eq!(count(conn), 2, "insert must be visible inside its transaction");
+        Err(diesel::result::Error::RollbackTransaction)
+    });
+
+    assert_eq!(count(&mut conn), 1, "rolled-back cached insert must not persist");
+}
 
 #[test]
 fn nested_inner_rollback_outer_commits() {

@@ -1,4 +1,4 @@
-use std::{ffi::CString, mem, ptr};
+use std::{ffi::CString, mem, ptr, sync::Arc};
 
 use crate::ffi::{
     duckdb_clear_bindings, duckdb_destroy_prepare, duckdb_execute_prepared, duckdb_nparams,
@@ -10,7 +10,10 @@ use crate::{
     ffi,
     ffi::duckdb_prepared_statement,
     helpers::duck_result::{result_from_duckdb_prepare, result_from_duckdb_result},
-    raw::{connection::RawConnection, result::DuckResult},
+    raw::{
+        connection::{RawConnection, RawDatabase},
+        result::DuckResult,
+    },
     types::appendable::AppendAble,
 };
 
@@ -184,15 +187,25 @@ impl Drop for Statement<'_> {
 
 /// A prepared statement that can be reset and re-executed with different bindings.
 ///
-/// The statement owns a cloned connection to the same database. This keeps its
-/// originating database alive and ensures the prepared handle is destroyed
-/// before the retained connection disconnects.
+/// The statement is prepared on — and therefore belongs to — the connection
+/// passed to [`prepare`](CachedStatement::prepare). DuckDB scopes transactions
+/// to a connection, so the statement must never be prepared on a different one:
+/// doing so would execute outside any `BEGIN`/`ROLLBACK` the caller has open.
+///
+/// Because the handle borrows its connection without a Rust lifetime, the owner
+/// is responsible for destroying the statement before disconnecting. The Diesel
+/// `DuckDbConnection` guarantees this by declaring its statement cache before
+/// the connection, so the cache drops first.
 ///
 /// This type is used by Diesel statement cache
 /// (`StatementCache<DuckDb, CachedStatement>`).
 pub struct CachedStatement {
-    /// Retained connection that owns the prepared statement's connection context.
-    connection: RawConnection,
+    /// Keeps the backing database open for at least as long as this statement.
+    ///
+    /// This is deliberately the shared database handle rather than a cloned
+    /// connection: cloning opens a *separate* DuckDB connection, which would
+    /// silently run cached statements outside the caller's transaction.
+    _database: Arc<RawDatabase>,
     /// SQL source retained for statement-cache key comparisons.
     ///
     /// Not read within `better-duck-core` itself; consumed by
@@ -206,6 +219,8 @@ pub struct CachedStatement {
 impl CachedStatement {
     /// Prepares `sql` against the given connection.
     ///
+    /// The statement is bound to `conn` and shares its transaction state.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::DuckDBFailure`] if DuckDB cannot parse or plan the query,
@@ -215,15 +230,16 @@ impl CachedStatement {
         sql: impl AsRef<str>,
     ) -> Result<Self> {
         let sql_str = sql.as_ref();
-        let connection = conn.try_clone()?;
         let mut stmt: ffi::duckdb_prepared_statement = ptr::null_mut();
         let c_str = CString::new(sql_str)?;
-        // SAFETY: `connection.con` is a valid open duckdb_connection retained by
-        // the returned statement. `c_str` is a valid null-terminated CString that
-        // outlives this call. `&mut stmt` is a valid output pointer.
-        let r = unsafe { ffi::duckdb_prepare(connection.con, c_str.as_ptr(), &mut stmt) };
+        // SAFETY: `conn.con` is a valid open duckdb_connection owned by the
+        // caller. `c_str` is a valid null-terminated CString that outlives this
+        // call, and `&mut stmt` is a valid output pointer. Preparing on the
+        // caller's own connection keeps the statement inside that connection's
+        // transaction scope.
+        let r = unsafe { ffi::duckdb_prepare(conn.con, c_str.as_ptr(), &mut stmt) };
         result_from_duckdb_prepare(r, stmt)?;
-        Ok(CachedStatement { connection, sql: sql_str.into(), stmt })
+        Ok(CachedStatement { _database: Arc::clone(&conn.db), sql: sql_str.into(), stmt })
     }
 
     /// Resets all parameter bindings so the statement can be re-executed.
@@ -292,9 +308,9 @@ impl Drop for CachedStatement {
     }
 }
 
-// SAFETY: `CachedStatement` exclusively owns both the prepared handle and its
-// retained `RawConnection`. DuckDB permits moving a connection between threads
-// when it is not used concurrently; the type is not `Sync`.
+// SAFETY: `CachedStatement` exclusively owns its prepared handle and an
+// `Arc<RawDatabase>`. DuckDB permits moving a prepared statement between threads
+// as long as it is not used concurrently, so the type is `Send` but not `Sync`.
 unsafe impl Send for CachedStatement {}
 
 #[cfg(test)]
