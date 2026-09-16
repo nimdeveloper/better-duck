@@ -57,6 +57,13 @@ enum Command_ {
         #[arg(long)]
         refresh_api: bool,
 
+        /// Upstream `duckdb/duckdb-web` ref to read the reference from.
+        ///
+        /// Defaults to a pinned commit so the audit is reproducible; pass
+        /// `main` to check against the latest published documentation.
+        #[arg(long, value_name = "REF", default_value = UPSTREAM_API_COMMIT)]
+        api_ref: String,
+
         /// Use a local filtered reference instead of fetching upstream.
         #[arg(long, value_name = "PATH")]
         api_document: Option<PathBuf>,
@@ -80,11 +87,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command_::UpgradeDuckdb { tag } => upgrade_duckdb(&tag),
-        Command_::AuditCapabilities { refresh_evidence, refresh_api, api_document } => {
+        Command_::AuditCapabilities { refresh_evidence, refresh_api, api_ref, api_document } => {
             audit_capabilities(
                 &workspace_root()?,
                 refresh_evidence,
                 refresh_api,
+                &api_ref,
                 api_document.as_deref(),
             )
         },
@@ -103,13 +111,35 @@ fn workspace_root() -> Result<PathBuf> {
 /// `docs/current/` is the only path `duckdb/duckdb-web` publishes for the
 /// in-development reference; the per-version directories (`docs/1.5/...`) do
 /// not exist on `main`.
-const UPSTREAM_API_URL: &str =
-    "https://raw.githubusercontent.com/duckdb/duckdb-web/main/docs/current/clients/c/api.md";
+const UPSTREAM_API_PATH: &str = "docs/current/clients/c/api.md";
+
+/// Immutable commit the audit reads by default.
+///
+/// `main` is a moving target: once DuckDB's in-development docs describe the
+/// next release, the filtered catalog stops matching this repository's ledger
+/// and CI would fail without anything here having changed. Pinning keeps the
+/// audit reproducible and makes adopting a newer reference a deliberate,
+/// reviewable commit. `duckdb-monitor.yml` watches `main` for drift and opens
+/// an issue, so pinning does not hide upstream changes.
+const UPSTREAM_API_COMMIT: &str = "49b7052be2f03f39fe8a7783fa16865d52e49136";
+
+fn upstream_api_url(reference: &str) -> String {
+    format!("https://raw.githubusercontent.com/duckdb/duckdb-web/{reference}/{UPSTREAM_API_PATH}")
+}
 
 /// Where the raw upstream document is cached between runs. Lives under
-/// `target/` so it is already git-ignored and removed by `cargo clean`.
-fn api_cache_path(root: &Path) -> PathBuf {
-    root.join("target").join("xtask").join("upstream-c-api.md")
+/// `target/` so it is already git-ignored and removed by `cargo clean`. The
+/// reference is part of the name so distinct refs cannot reuse each other's
+/// cached bytes.
+fn api_cache_path(
+    root: &Path,
+    reference: &str,
+) -> PathBuf {
+    let slug: String = reference
+        .chars()
+        .map(|value| if value.is_ascii_alphanumeric() { value } else { '-' })
+        .collect();
+    root.join("target").join("xtask").join(format!("upstream-c-api-{slug}.md"))
 }
 
 /// Directory holding the exact API reference an audit validated against.
@@ -167,9 +197,11 @@ fn write_api_snapshot(
 /// network is unavailable so local runs and offline CI retries still work.
 fn load_upstream_api(
     root: &Path,
+    reference: &str,
     refresh: bool,
 ) -> Result<String> {
-    let cache = api_cache_path(root);
+    let cache = api_cache_path(root, reference);
+    let url = upstream_api_url(reference);
 
     if !refresh {
         if let Ok(cached) = fs::read_to_string(&cache) {
@@ -179,7 +211,7 @@ fn load_upstream_api(
         }
     }
 
-    match fetch_url(UPSTREAM_API_URL) {
+    match fetch_url(&url) {
         Ok(body) => {
             if let Some(parent) = cache.parent() {
                 fs::create_dir_all(parent)?;
@@ -189,10 +221,7 @@ fn load_upstream_api(
         },
         Err(error) => {
             let cached = fs::read_to_string(&cache).map_err(|_| error)?;
-            eprintln!(
-                "warning: could not fetch {UPSTREAM_API_URL}; using cached copy at {}",
-                cache.display()
-            );
+            eprintln!("warning: could not fetch {url}; using cached copy at {}", cache.display());
             Ok(cached)
         },
     }
@@ -291,6 +320,7 @@ fn audit_capabilities(
     root: &Path,
     refresh_evidence: bool,
     refresh_api: bool,
+    api_ref: &str,
     api_document: Option<&Path>,
 ) -> Result<()> {
     let (markdown, upstream, source) = match api_document {
@@ -300,9 +330,9 @@ fn audit_capabilities(
             (body, None, path.display().to_string())
         },
         None => {
-            let upstream = load_upstream_api(root, refresh_api)?;
+            let upstream = load_upstream_api(root, api_ref, refresh_api)?;
             let filtered = filter_upstream_api(&upstream)?;
-            (filtered, Some(upstream), UPSTREAM_API_URL.to_owned())
+            (filtered, Some(upstream), upstream_api_url(api_ref))
         },
     };
     let catalog = ApiCatalog::parse(&markdown)?;
