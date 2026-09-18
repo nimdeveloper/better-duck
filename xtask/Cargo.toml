@@ -6,6 +6,24 @@ publish = false
 
 [dependencies]
 anyhow     = "1.0"
+# bindgen and prettyplease MUST resolve to the same `syn` major.
+#
+# bindgen declares wide ranges (`syn >=2, <4`, `prettyplease >=0.2.7, <0.4`) and
+# hands its `syn::File` straight to prettyplease for formatting -- but Cargo has
+# no way to express "these two must agree". Cargo max-selects `syn 3` for
+# bindgen while prettyplease 0.2.x pins `syn ^2`, and xtask fails to build:
+#
+#     error[E0277]: the trait bound `syn::File: ParseQuote` is not satisfied
+#     = note: there are multiple different versions of crate `syn`
+#
+# So any lockfile change moving one without the other breaks the build; a
+# single-crate Dependabot bump is the usual culprit, but a plain `cargo update`
+# can do it too. Fix by moving the pair together -- bindgen 0.73 +
+# prettyplease 0.3 (syn 3), or bindgen 0.72 + prettyplease 0.2 (syn 2) -- and
+# confirm with `cargo tree -p bindgen --depth 1`.
+#
+# The `syn = "2"` below is unrelated: it is the capability-audit parser in
+# src/main.rs. Two `syn` majors coexisting in the graph is expected.
 bindgen    = "0.73"
 clap       = { version = "4.5", features = ["derive"] }
 flate2     = "1.1"
