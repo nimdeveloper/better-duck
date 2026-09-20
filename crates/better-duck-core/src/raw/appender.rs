@@ -13,17 +13,44 @@ use crate::raw::connection::ConnectionInner;
 use crate::raw::error_data::ErrorData;
 use crate::types::appendable::AppendAble;
 
+/// Lifecycle state of an [`Appender`].
+///
+/// DuckDB invalidates an appender the moment a flush, `end_row`, or close fails:
+/// its docs say "all data is invalidated ... it is not possible to append more
+/// values", and the only legal follow-up is `duckdb_appender_error_data` then
+/// `duckdb_appender_destroy`. Re-flushing an invalidated appender — which the
+/// previous `Drop` did — can *deadlock* DuckDB when the target table carries an
+/// ART index (e.g. `PRIMARY KEY`). This state machine makes that unrepresentable:
+/// once `Poisoned`, no further flush/close is ever issued.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppenderState {
+    /// Accepting rows; flush/close are legal.
+    Ready,
+    /// A DuckDB operation failed and invalidated the appender. No further
+    /// append/flush/close may run; the handle may only be destroyed.
+    Poisoned,
+    /// Explicitly finished via [`Appender::finish`]; the handle has been closed
+    /// and only awaits destruction. `Drop` is a bare destroy.
+    Closed,
+}
+
 /// A DuckDB appender for bulk-inserting rows into a table without going through
 /// the SQL parser.
 ///
-/// Call [`append`](Appender::append) for each row and [`save`](Appender::save)
-/// to flush the data to the database. Rows are also flushed automatically on drop
-/// (errors during the implicit flush are logged to stderr).
+/// # Lifecycle
+///
+/// Call [`append`](Appender::append) for each row, then either [`finish`](Appender::finish)
+/// (consuming, reports flush errors) or let the appender drop (best-effort flush,
+/// errors logged). A failed [`append`](Appender::append)/[`save`](Appender::save)
+/// *poisons* the appender: DuckDB has invalidated all buffered data, so subsequent
+/// calls fail fast without touching the C handle, and drop skips the flush entirely
+/// (re-flushing an invalidated appender can deadlock DuckDB on indexed tables).
 pub struct Appender {
     /// Keeps the connection this appender was created on open for at least as long
     /// as the appender, and ties appended rows to that connection's transaction.
     _connection: Arc<ConnectionInner>,
     inn: duckdb_appender,
+    state: AppenderState,
 }
 
 impl Appender {
@@ -59,59 +86,105 @@ impl Appender {
                 &mut appender,
             )
         };
-        result_from_duckdb_appender(res, &mut appender)
-            .map(|_| Appender { _connection: connection, inn: appender })
+        result_from_duckdb_appender(res, &mut appender).map(|_| Appender {
+            _connection: connection,
+            inn: appender,
+            state: AppenderState::Ready,
+        })
     }
 
     /// Appends a row to the table.
     ///
-    /// Calls `duckdb_appender_begin_row`, then the value appender, then
-    /// `duckdb_appender_end_row`.
+    /// Opens a row (`duckdb_appender_begin_row`), appends the value, then closes it
+    /// (`duckdb_appender_end_row`). A [`RowGuard`] closes the row even if appending
+    /// the value returns early or panics, so a half-written row can never bleed into
+    /// the next call.
     ///
     /// # Errors
     ///
-    /// Returns an error if the row cannot be appended. Engine-side failures carry
-    /// DuckDB's typed classification via [`Error::Engine`].
+    /// Returns an error if the appender is poisoned or closed, or if the row cannot
+    /// be appended. Engine-side failures carry DuckDB's typed classification via
+    /// [`Error::Engine`]; any failure poisons the appender.
     #[must_use = "append result should be checked"]
     #[allow(dead_code)]
     pub fn append<T: AppendAble>(
         &mut self,
         row: &mut T,
     ) -> Result<()> {
+        self.ensure_ready()?;
+
         // SAFETY: `self.inn` is a valid duckdb_appender created in `new`.
-        let _ = unsafe { duckdb_appender_begin_row(self.inn) };
-        row.appender_append(self.inn)?;
-        // SAFETY: `self.inn` is a valid duckdb_appender; `begin_row` was called above.
-        let rc = unsafe { duckdb_appender_end_row(self.inn) };
-        self.check(rc)
+        let begin = unsafe { duckdb_appender_begin_row(self.inn) };
+        self.check(begin)?;
+
+        // The guard ends the row on every exit path — including an early `?` return
+        // or a panic inside `appender_append` — so DuckDB is never left mid-row.
+        let guard = RowGuard { appender: self, ended: false };
+        guard.appender.row_result(row.appender_append(guard.appender.inn))?;
+        guard.end()
     }
 
     /// Flushes all buffered rows to the database.
     ///
     /// # Errors
     ///
-    /// Returns an error if the flush fails.
+    /// Returns an error if the appender is poisoned or closed, or if the flush
+    /// fails (which additionally poisons the appender).
     #[must_use = "save result should be checked"]
     #[allow(dead_code)]
     pub fn save(&mut self) -> Result<()> {
-        // SAFETY: `self.inn` is a valid duckdb_appender.
+        self.ensure_ready()?;
         self.flush()
     }
 
-    /// Flushes the appender's internal buffer.
+    /// Flushes and closes the appender, consuming it and reporting any error.
+    ///
+    /// Unlike dropping, this surfaces a flush/close failure to the caller. On
+    /// success the handle is closed and its `Drop` becomes a bare destroy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the appender is already poisoned, or if the final
+    /// flush/close fails (which poisons it).
+    #[allow(dead_code)]
+    pub fn finish(mut self) -> Result<()> {
+        self.ensure_ready()?;
+        // SAFETY: `self.inn` is a valid, non-null duckdb_appender in the Ready state.
+        let rc = unsafe { duckdb_appender_close(self.inn) };
+        self.check(rc)?;
+        self.state = AppenderState::Closed;
+        Ok(())
+    }
+
+    /// Flushes the appender's internal buffer, poisoning it on failure.
     fn flush(&mut self) -> Result<()> {
         // SAFETY: `self.inn` is a valid, non-null duckdb_appender (upheld by the
-        // constructor and the Drop null-guard).
+        // constructor and the Drop null-guard) and is Ready (checked by callers).
         let res = unsafe { duckdb_appender_flush(self.inn) };
         self.check(res)
     }
 
-    /// Maps a DuckDB appender status into a typed `Result`.
+    /// Returns `Ok(())` only if the appender can still accept operations.
+    fn ensure_ready(&self) -> Result<()> {
+        match self.state {
+            AppenderState::Ready => Ok(()),
+            AppenderState::Poisoned => Err(Error::Engine(EngineError::unavailable(Some(
+                "appender was invalidated by an earlier failure".to_owned(),
+            )))),
+            AppenderState::Closed => Err(Error::Engine(EngineError::unavailable(Some(
+                "appender has been closed".to_owned(),
+            )))),
+        }
+    }
+
+    /// Maps a DuckDB appender status into a typed `Result`, poisoning the appender
+    /// on failure.
     ///
     /// On failure this reads the appender's [`ErrorData`], which carries DuckDB's
     /// own error classification, instead of the deprecated bare-string
-    /// `duckdb_appender_error`. The handle stays valid so the caller can recover
-    /// or destroy it on drop.
+    /// `duckdb_appender_error`. The handle stays valid (for destruction) but the
+    /// appender is marked [`Poisoned`](AppenderState::Poisoned) so no further
+    /// flush/close is ever issued against invalidated data.
     fn check(
         &mut self,
         code: crate::ffi::duckdb_state,
@@ -119,11 +192,27 @@ impl Appender {
         if code == DuckDBSuccess {
             return Ok(());
         }
-        Err(Error::Engine(self.error_data().unwrap_or_else(|| {
+        let engine = self.error_data().unwrap_or_else(|| {
             EngineError::unavailable(Some(
                 "appender reported failure without error data".to_owned(),
             ))
-        })))
+        });
+        self.state = AppenderState::Poisoned;
+        Err(Error::Engine(engine))
+    }
+
+    /// Poisons the appender and returns the original Rust-side error unchanged.
+    ///
+    /// Used when a value fails to append *before* reaching DuckDB (e.g. a
+    /// conversion error): the row is abandoned, so the appender must not be reused.
+    fn row_result(
+        &mut self,
+        result: Result<()>,
+    ) -> Result<()> {
+        if result.is_err() {
+            self.state = AppenderState::Poisoned;
+        }
+        result
     }
 
     /// Reads DuckDB's typed error for this appender, if any is set.
@@ -140,23 +229,63 @@ impl Appender {
     }
 }
 
+/// Ends the currently open appender row when it goes out of scope.
+///
+/// Guarantees `duckdb_appender_end_row` runs even if the value append returns
+/// early or unwinds, so DuckDB is never left with a half-open row. If the guard
+/// is dropped without an explicit [`end`](RowGuard::end) (i.e. via `?` or a
+/// panic), it ends the row on a best-effort basis and poisons the appender,
+/// since the row's contents are indeterminate.
+struct RowGuard<'a> {
+    appender: &'a mut Appender,
+    ended: bool,
+}
+
+impl RowGuard<'_> {
+    /// Ends the row explicitly, propagating any DuckDB error (which poisons).
+    fn end(mut self) -> Result<()> {
+        self.ended = true;
+        // SAFETY: `self.appender.inn` is a valid duckdb_appender with a row open.
+        let rc = unsafe { duckdb_appender_end_row(self.appender.inn) };
+        self.appender.check(rc)
+    }
+}
+
+impl Drop for RowGuard<'_> {
+    fn drop(&mut self) {
+        if self.ended {
+            return;
+        }
+        // Early return or panic mid-row: close the row so DuckDB is not left
+        // mid-row, and poison the appender because the row is incomplete.
+        // SAFETY: `self.appender.inn` is a valid duckdb_appender with a row open.
+        unsafe { duckdb_appender_end_row(self.appender.inn) };
+        self.appender.state = AppenderState::Poisoned;
+    }
+}
+
 impl Drop for Appender {
     fn drop(&mut self) {
         if self.inn.is_null() {
             return;
         }
-        // [err-result-over-panic] — log on flush failure; never panic in Drop.
-        // SAFETY: `self.inn` is non-null (checked above); it is a valid duckdb_appender
-        // created in `new`. After close and destroy it is invalidated. The null guard
-        // above ensures this runs at most once.
-        if let Err(e) = self.flush() {
-            eprintln!("[better-duck] appender flush on drop failed: {e}");
+
+        // A poisoned appender has been invalidated by DuckDB: re-flushing it is
+        // illegal and can deadlock on indexed tables, so go straight to destroy.
+        // A Closed appender was already flushed+closed by `finish`. Only a Ready
+        // appender still owns unflushed rows worth a best-effort flush.
+        if self.state == AppenderState::Ready {
+            // [err-result-over-panic] — log on flush failure; never panic in Drop.
+            if let Err(e) = self.flush() {
+                eprintln!("[better-duck] appender flush on drop failed: {e}");
+            }
         }
+
         // SAFETY: `self.inn` is a valid, non-null duckdb_appender (null guard above).
-        // Close and destroy are safe to call in sequence; after destroy the handle is
-        // invalid and will not be used again.
+        // `duckdb_appender_destroy` de-allocates the handle regardless of state and
+        // is the documented cleanup for an invalidated appender. After destroy the
+        // handle is invalid and will not be used again.
         unsafe {
-            duckdb_appender_close(self.inn);
             duckdb_appender_destroy(&mut self.inn);
         }
     }
@@ -397,18 +526,13 @@ mod appender_tests {
         assert_row_exists(&con, "failed_rows", 13);
     }
 
-    /// An engine-side append failure (here a NOT NULL violation, raised at flush)
-    /// surfaces as a typed [`Error::Engine`] carrying DuckDB's classification and
-    /// message, read via `duckdb_appender_error_data` — not the deprecated
-    /// bare-string path.
+    /// An engine-side append failure surfaces as a typed [`Error::Engine`] carrying
+    /// DuckDB's classification and message, read via `duckdb_appender_error_data`.
     #[test]
     fn engine_append_failure_surfaces_typed_error_data() {
         use crate::error::EngineErrorKind;
 
         let mut con = get_test_connection();
-        // A CHECK constraint (unlike PRIMARY KEY) builds no index, so the appender
-        // does not deadlock when dropped after the failed flush. Poisoned-appender
-        // recovery is E4's concern; here we only assert the typed error surfaces.
         con.query("CREATE TABLE typed_fail (id INTEGER CHECK (id > 0))").unwrap();
         let mut appender = con.appender("typed_fail", "main").unwrap();
 
@@ -425,5 +549,85 @@ mod appender_tests {
         // reports that classification instead of parsing the message text.
         assert_ne!(engine.kind, EngineErrorKind::Unavailable, "kind should be typed by DuckDB");
         assert!(engine.message.is_some(), "DuckDB should supply a message");
+    }
+
+    // NOTE: a regression test for a failed flush on a `PRIMARY KEY` (ART-indexed)
+    // table is deliberately *not* included here. That scenario deadlocks inside
+    // DuckDB's own `duckdb_appender_destroy`, reproduced with a pure-FFI probe (no
+    // wrapper code): two identical raw-FFI runs gave one clean completion and one
+    // hang at `destroy`. It is an upstream, nondeterministic C++ race, not a
+    // wrapper defect, and no Rust-side ordering avoids it — the probe already
+    // deadlocked on DuckDB's own documented cleanup path. E4's own fix (never
+    // re-flushing a poisoned appender) is covered below with `CHECK`-constraint
+    // failures, which poison identically but build no index and so tear down
+    // deterministically. The upstream defect is documented above.
+
+    /// Once poisoned, every further operation fails fast without touching the C
+    /// handle, and does not re-enter DuckDB.
+    #[test]
+    fn poisoned_appender_rejects_further_operations() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE reuse_fail (id INTEGER CHECK (id > 0))").unwrap();
+        let mut appender = con.appender("reuse_fail", "main").unwrap();
+
+        appender.append(&mut DuckValue::Int(-1)).unwrap();
+        appender.save().unwrap_err(); // poisons
+
+        // Subsequent append and save both fail fast with the poisoned error.
+        let err = appender.append(&mut DuckValue::Int(5)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Engine(ref e) if e.message.as_deref() == Some("appender was invalidated by an earlier failure")
+            ),
+            "unexpected error: {err:?}"
+        );
+        assert!(appender.save().is_err());
+    }
+
+    /// A Rust-side value failure mid-row poisons the appender rather than leaving a
+    /// row open for the next append to corrupt.
+    #[test]
+    fn row_side_failure_poisons_and_leaves_connection_usable() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE row_poison (id INTEGER, name VARCHAR)").unwrap();
+        let mut appender = con.appender("row_poison", "main").unwrap();
+
+        appender.append(&mut FailingRow).unwrap_err();
+        // The appender is poisoned; a following append is rejected.
+        assert!(appender.append(&mut Row(1, "later")).is_err());
+        drop(appender);
+
+        // The connection itself is unharmed.
+        con.query("INSERT INTO row_poison VALUES (7, 'ok')").unwrap();
+        assert_row_exists(&con, "row_poison", 7);
+    }
+
+    /// `finish` flushes, closes, and reports success; the rows are visible and the
+    /// consumed appender's drop is a bare destroy.
+    #[test]
+    fn finish_commits_rows_and_reports_success() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE finished (id INTEGER, name VARCHAR)").unwrap();
+        let reader = con.try_clone().unwrap();
+
+        let mut appender = con.appender("finished", "main").unwrap();
+        appender.append(&mut Row(21, "done")).unwrap();
+        appender.finish().unwrap();
+
+        assert_row_exists(&reader, "finished", 21);
+    }
+
+    /// `finish` surfaces a flush/close failure to the caller instead of only
+    /// logging it as drop does.
+    #[test]
+    fn finish_reports_flush_failure() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE finish_fail (id INTEGER CHECK (id > 0))").unwrap();
+        let mut appender = con.appender("finish_fail", "main").unwrap();
+
+        appender.append(&mut DuckValue::Int(-5)).unwrap();
+        let error = appender.finish().unwrap_err();
+        assert!(matches!(error, Error::Engine(_)), "expected typed engine error, got {error:?}");
     }
 }
