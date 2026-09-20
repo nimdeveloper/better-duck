@@ -250,6 +250,13 @@ impl Connection {
         self.0.query_control()
     }
 
+    /// Returns the shared connection owner, for building a mutex-free
+    /// [`QueryControl`] source (used by the async layer).
+    #[inline]
+    pub(crate) fn inner(&self) -> &std::sync::Arc<crate::raw::connection::ConnectionInner> {
+        self.0.inner()
+    }
+
     /// Returns a shareable handle to the database backing this connection.
     ///
     /// Use [`Database::connect`] to open further connections to the same database —

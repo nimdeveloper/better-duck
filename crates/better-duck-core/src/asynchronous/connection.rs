@@ -5,6 +5,7 @@ use parking_lot::Mutex;
 use crate::{
     connection::Connection,
     error::{Error, Result},
+    raw::connection::{ConnectionInner, QueryControl},
     result_set::ResultSet,
     types::{appendable::AppendAble, value::DuckValue},
     Appender,
@@ -16,6 +17,20 @@ use crate::{
 /// never blocks the async executor. The handle is cheap to clone; clones share
 /// one connection, serialized by an internal mutex.
 ///
+/// # Cancellation
+///
+/// Query control ([`query_control`](AsyncConnection::query_control),
+/// [`interrupt`](AsyncConnection::interrupt)) goes through a separate
+/// [`QueryControl`] source that does **not** take the connection mutex, so it
+/// works *while* a native query holds that mutex on a blocking thread.
+///
+/// The query-executing futures are cancel-on-drop: dropping one requests
+/// interruption of the native query via that control. Note the honest limitation
+/// — `tokio::task::spawn_blocking` tasks cannot be aborted, so dropping the
+/// future does not instantly stop native work; it signals DuckDB to interrupt
+/// and lets the blocking task wind down. The connection becomes usable again once
+/// that task releases the mutex.
+///
 /// # Panics
 ///
 /// These methods panic if called outside a Tokio runtime context, matching
@@ -23,21 +38,46 @@ use crate::{
 #[derive(Clone)]
 pub struct AsyncConnection {
     inner: Arc<Mutex<Connection>>,
+    /// A mutex-free handle to the same underlying connection, used only to mint
+    /// [`QueryControl`]s for interrupt/progress. Points at the *same*
+    /// `ConnectionInner` as `inner`'s `Connection`, so it observes the generation
+    /// that query execution advances.
+    control_src: Arc<ConnectionInner>,
 }
 
 impl AsyncConnection {
     /// Wraps an existing [`Connection`] for async use.
     pub fn new(conn: Connection) -> AsyncConnection {
-        AsyncConnection { inner: Arc::new(Mutex::new(conn)) }
+        let control_src = Arc::clone(conn.inner());
+        AsyncConnection { inner: Arc::new(Mutex::new(conn)), control_src }
     }
 
     /// Recovers the inner [`Connection`] if this is the last handle.
     ///
     /// Returns `self` unchanged (as `Err`) if other clones of this handle exist.
     pub fn try_into_inner(self) -> std::result::Result<Connection, AsyncConnection> {
+        let control_src = Arc::clone(&self.control_src);
         Arc::try_unwrap(self.inner)
             .map(Mutex::into_inner)
-            .map_err(|inner| AsyncConnection { inner })
+            .map_err(|inner| AsyncConnection { inner, control_src })
+    }
+
+    /// Returns a [`QueryControl`] for the query currently running (or next to run)
+    /// on this connection.
+    ///
+    /// Does not take the connection mutex, so it can be called — and used to
+    /// interrupt — while a query holds that mutex on a blocking thread.
+    #[must_use]
+    pub fn query_control(&self) -> QueryControl {
+        QueryControl::from_inner(Arc::clone(&self.control_src))
+    }
+
+    /// Requests interruption of the query currently running on this connection.
+    ///
+    /// Returns `true` if an interrupt was signalled to DuckDB. Non-blocking and
+    /// safe to call from any thread while a query runs.
+    pub fn interrupt(&self) -> bool {
+        self.query_control().interrupt()
     }
 
     /// Opens a connection to a DuckDB database at the given file path.
@@ -85,12 +125,20 @@ impl AsyncConnection {
         T: Send + 'static,
     {
         let inner = Arc::clone(&self.inner);
-        tokio::task::spawn_blocking(move || {
+        let handle = tokio::task::spawn_blocking(move || {
             let mut guard = inner.lock();
             f(&mut guard)
-        })
-        .await
-        .map_err(|e| Error::BackgroundTaskFailed(e.to_string()))?
+        });
+
+        // Interrupt the native query if this future is dropped before the blocking
+        // task finishes. `spawn_blocking` tasks cannot be aborted, so this does not
+        // stop the task instantly; it signals DuckDB to interrupt, letting the task
+        // wind down and release the connection. The guard is disarmed on normal
+        // completion so a finished query is never spuriously interrupted.
+        let mut interrupt_on_drop = InterruptOnDrop::new(self.query_control());
+        let result = handle.await.map_err(|e| Error::BackgroundTaskFailed(e.to_string()));
+        interrupt_on_drop.disarm();
+        result?
     }
 
     /// Executes one or more SQL statements separated by semicolons.
@@ -175,6 +223,48 @@ impl AsyncConnection {
             f(&mut appender)
         })
         .await
+    }
+
+    /// Reads the progress of the query currently running on this connection.
+    ///
+    /// Returns `None` if no query is running. Non-blocking — reads through the
+    /// mutex-free control source.
+    #[must_use]
+    pub fn progress(&self) -> Option<crate::raw::connection::QueryProgress> {
+        self.query_control().progress()
+    }
+}
+
+/// Requests interruption of the running query when dropped, unless disarmed.
+///
+/// Used to make the async query futures cancel-on-drop: if the caller drops the
+/// future (or it is cancelled) before the blocking task completes, the guard
+/// signals DuckDB to interrupt the native query. On normal completion the guard
+/// is [`disarm`](InterruptOnDrop::disarm)ed so no interrupt is sent.
+///
+/// Generation scoping in [`QueryControl`] makes a late interrupt safe: if the
+/// query already finished, the control is stale and `interrupt` is a no-op, so a
+/// subsequent query on the same connection is never hit.
+struct InterruptOnDrop {
+    control: QueryControl,
+    armed: bool,
+}
+
+impl InterruptOnDrop {
+    fn new(control: QueryControl) -> InterruptOnDrop {
+        InterruptOnDrop { control, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for InterruptOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            self.control.interrupt();
+        }
     }
 }
 
@@ -265,6 +355,111 @@ mod tests {
         match result.rows()[0].get("c").unwrap() {
             DuckValue::BigInt(n) => assert_eq!(*n, 100),
             other => panic!("expected BigInt, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn interrupt_is_a_noop_when_idle_and_control_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<QueryControl>();
+
+        let conn = AsyncConnection::open_in_memory().await.unwrap();
+        // A fresh control targets the *next* query to run, so it is active and its
+        // interrupt signals DuckDB (which harmlessly no-ops with no query running).
+        // After a query completes, that control goes stale.
+        let control = conn.query_control();
+        assert!(control.is_active(), "a fresh control targets the next query");
+        conn.execute_batch("CREATE TABLE t (id INTEGER)").await.unwrap();
+        assert!(!control.is_active(), "control is stale once a query has run");
+        assert!(!control.interrupt(), "stale interrupt is a no-op");
+    }
+
+    /// The core guarantee: control (interrupt/progress) never waits on the
+    /// mutex a running native query holds. A query runs on one task while the main
+    /// task calls `interrupt()`/`progress()` — those must return *promptly*, not
+    /// block until the query releases the connection.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn control_does_not_block_on_the_running_query() {
+        use std::time::Duration;
+
+        let conn = AsyncConnection::open_in_memory().await.unwrap();
+        conn.execute_batch("CREATE TABLE t (id INTEGER)").await.unwrap();
+
+        // Run a query that takes a little while on a background task holding the
+        // connection mutex.
+        let runner = conn.clone();
+        let query = tokio::spawn(async move {
+            runner
+                .execute_batch(
+                    "CREATE TABLE big AS \
+                     SELECT t1.range AS a FROM range(200000) t1, range(200) t2",
+                )
+                .await
+        });
+
+        // Give the query time to acquire the mutex and start.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Control calls must return promptly even though the mutex is held. If they
+        // took the mutex, this would block until the query finished.
+        let control_calls = tokio::time::timeout(Duration::from_secs(5), async {
+            let _ = conn.interrupt();
+            let _ = conn.progress();
+        });
+        control_calls.await.expect("interrupt/progress must not block on the running query");
+
+        // Let the query task finish (interrupted or completed) so the connection is
+        // released; the test's point is already proven above.
+        let _ = query.await.unwrap();
+    }
+
+    /// Dropping a query future does not wedge the connection: a subsequent query on
+    /// the same `AsyncConnection` still succeeds. The dropped future requests
+    /// interruption; whether DuckDB stops the query early or it completes on its
+    /// own, the mutex is released and the connection recovers.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dropped_query_future_leaves_connection_usable() {
+        use std::time::Duration;
+
+        let conn = AsyncConnection::open_in_memory().await.unwrap();
+
+        // A quick query. We drop its future under a 1ms timeout: the future may or
+        // may not have finished, but either way the blocking task completes on its
+        // own and releases the connection. This exercises the drop path (which arms
+        // interrupt-on-drop) without depending on interrupt latency.
+        let work = conn.execute_batch("CREATE TABLE small AS SELECT range AS a FROM range(1000)");
+        let _ = tokio::time::timeout(Duration::from_millis(1), work).await;
+
+        // The connection recovers within a generous bound.
+        let followup =
+            tokio::time::timeout(Duration::from_secs(30), conn.execute("SELECT 42 AS v"));
+        let result = followup.await.expect("connection must recover within 30s").unwrap();
+        match result.rows()[0].get("v").unwrap() {
+            DuckValue::Int(n) => assert_eq!(*n, 42),
+            other => panic!("expected Int(42), got {other:?}"),
+        }
+    }
+
+    /// A control minted before a query can observe its progress while it runs, and
+    /// a stale control from a finished query reports nothing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn stale_control_does_not_observe_a_later_query() {
+        let conn = AsyncConnection::open_in_memory().await.unwrap();
+        conn.execute_batch("CREATE TABLE t (id INTEGER)").await.unwrap();
+
+        // Mint a control, run a query to completion so the control goes stale.
+        let stale = conn.query_control();
+        conn.execute("INSERT INTO t VALUES (1)").await.unwrap();
+
+        assert!(!stale.is_active(), "control is stale after its query completed");
+        assert!(!stale.interrupt(), "stale interrupt is a no-op");
+        assert!(stale.progress().is_none(), "stale control observes no later query");
+
+        // The connection still works normally.
+        let result = conn.execute("SELECT count(*) AS c FROM t").await.unwrap();
+        match result.rows()[0].get("c").unwrap() {
+            DuckValue::BigInt(n) => assert_eq!(*n, 1),
+            other => panic!("expected BigInt(1), got {other:?}"),
         }
     }
 

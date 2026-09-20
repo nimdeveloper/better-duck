@@ -261,6 +261,19 @@ pub struct QueryControl {
 }
 
 impl QueryControl {
+    /// Mints a control from the shared connection owner, capturing the current
+    /// generation.
+    ///
+    /// Crate-internal: lets the async layer obtain a control from its retained
+    /// `Arc<ConnectionInner>` *without* locking the mutex that guards the
+    /// `Connection` — which is the whole point, since that mutex is held by the
+    /// running native query the control needs to interrupt.
+    #[inline]
+    pub(crate) fn from_inner(inner: Arc<ConnectionInner>) -> QueryControl {
+        let generation = inner.generation();
+        QueryControl { inner, generation }
+    }
+
     /// Requests interruption of the query this control was minted for.
     ///
     /// Idempotent, and a no-op once that query has finished (the generation has
