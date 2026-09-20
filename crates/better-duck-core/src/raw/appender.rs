@@ -2,13 +2,15 @@ use std::ffi::{c_char, CString};
 use std::ptr;
 use std::sync::Arc;
 
-use crate::error::Result;
+use crate::error::{EngineError, Error, Result};
 use crate::ffi::{
     duckdb_appender, duckdb_appender_begin_row, duckdb_appender_close, duckdb_appender_create,
-    duckdb_appender_destroy, duckdb_appender_end_row, duckdb_appender_flush,
+    duckdb_appender_destroy, duckdb_appender_end_row, duckdb_appender_error_data,
+    duckdb_appender_flush, DuckDBSuccess,
 };
 use crate::helpers::duck_result::result_from_duckdb_appender;
 use crate::raw::connection::ConnectionInner;
+use crate::raw::error_data::ErrorData;
 use crate::types::appendable::AppendAble;
 
 /// A DuckDB appender for bulk-inserting rows into a table without going through
@@ -68,7 +70,8 @@ impl Appender {
     ///
     /// # Errors
     ///
-    /// Returns an error if the row cannot be appended.
+    /// Returns an error if the row cannot be appended. Engine-side failures carry
+    /// DuckDB's typed classification via [`Error::Engine`].
     #[must_use = "append result should be checked"]
     #[allow(dead_code)]
     pub fn append<T: AppendAble>(
@@ -80,7 +83,7 @@ impl Appender {
         row.appender_append(self.inn)?;
         // SAFETY: `self.inn` is a valid duckdb_appender; `begin_row` was called above.
         let rc = unsafe { duckdb_appender_end_row(self.inn) };
-        result_from_duckdb_appender(rc, &mut self.inn)
+        self.check(rc)
     }
 
     /// Flushes all buffered rows to the database.
@@ -96,14 +99,44 @@ impl Appender {
     }
 
     /// Flushes the appender's internal buffer.
-    ///
-    /// # Safety
-    ///
-    /// `self.inn` must be a valid, non-null `duckdb_appender`.
     fn flush(&mut self) -> Result<()> {
-        // SAFETY: `self.inn` is a valid duckdb_appender (enforced by the caller).
+        // SAFETY: `self.inn` is a valid, non-null duckdb_appender (upheld by the
+        // constructor and the Drop null-guard).
         let res = unsafe { duckdb_appender_flush(self.inn) };
-        result_from_duckdb_appender(res, &mut self.inn)
+        self.check(res)
+    }
+
+    /// Maps a DuckDB appender status into a typed `Result`.
+    ///
+    /// On failure this reads the appender's [`ErrorData`], which carries DuckDB's
+    /// own error classification, instead of the deprecated bare-string
+    /// `duckdb_appender_error`. The handle stays valid so the caller can recover
+    /// or destroy it on drop.
+    fn check(
+        &mut self,
+        code: crate::ffi::duckdb_state,
+    ) -> Result<()> {
+        if code == DuckDBSuccess {
+            return Ok(());
+        }
+        Err(Error::Engine(self.error_data().unwrap_or_else(|| {
+            EngineError::unavailable(Some(
+                "appender reported failure without error data".to_owned(),
+            ))
+        })))
+    }
+
+    /// Reads DuckDB's typed error for this appender, if any is set.
+    ///
+    /// Returns `None` when the appender is not in an error state. The returned
+    /// error is fully owned: the underlying `duckdb_error_data` handle is
+    /// destroyed before this returns.
+    fn error_data(&mut self) -> Option<EngineError> {
+        // SAFETY: `self.inn` is a valid, non-null duckdb_appender. DuckDB returns an
+        // owned `duckdb_error_data` handle (or null); `ErrorData` takes ownership and
+        // destroys it, and `to_engine_error` copies every field out first.
+        let data = unsafe { ErrorData::from_raw(duckdb_appender_error_data(self.inn)) }?;
+        data.has_error().then(|| data.to_engine_error())
     }
 }
 
@@ -362,5 +395,35 @@ mod appender_tests {
 
         con.query("INSERT INTO failed_rows VALUES (13, 'usable')").unwrap();
         assert_row_exists(&con, "failed_rows", 13);
+    }
+
+    /// An engine-side append failure (here a NOT NULL violation, raised at flush)
+    /// surfaces as a typed [`Error::Engine`] carrying DuckDB's classification and
+    /// message, read via `duckdb_appender_error_data` — not the deprecated
+    /// bare-string path.
+    #[test]
+    fn engine_append_failure_surfaces_typed_error_data() {
+        use crate::error::EngineErrorKind;
+
+        let mut con = get_test_connection();
+        // A CHECK constraint (unlike PRIMARY KEY) builds no index, so the appender
+        // does not deadlock when dropped after the failed flush. Poisoned-appender
+        // recovery is E4's concern; here we only assert the typed error surfaces.
+        con.query("CREATE TABLE typed_fail (id INTEGER CHECK (id > 0))").unwrap();
+        let mut appender = con.appender("typed_fail", "main").unwrap();
+
+        // Append a value the CHECK rejects. DuckDB defers the constraint check, so
+        // the failure appears when the buffered row is flushed.
+        appender.append(&mut DuckValue::Int(-1)).unwrap();
+        let error = appender.save().unwrap_err();
+
+        let engine = match error {
+            Error::Engine(engine) => engine,
+            other => panic!("expected a typed engine error, got {other:?}"),
+        };
+        // DuckDB classifies this rather than leaving it Unavailable, and the driver
+        // reports that classification instead of parsing the message text.
+        assert_ne!(engine.kind, EngineErrorKind::Unavailable, "kind should be typed by DuckDB");
+        assert!(engine.message.is_some(), "DuckDB should supply a message");
     }
 }

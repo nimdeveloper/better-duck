@@ -48,12 +48,43 @@ impl From<DuckDbError> for diesel::result::Error {
             CE::InvalidColumnName(n) => {
                 DE::DeserializationError(format!("unknown column '{n}'").into())
             },
+            CE::Engine(engine) => {
+                let kind = database_error_kind(engine.kind);
+                let message = engine.message.unwrap_or_else(|| engine.kind.to_string());
+                DE::DatabaseError(kind, Box::new(message))
+            },
             CE::DuckDBFailure(_, msg) => {
                 let msg = msg.unwrap_or_else(|| "duckdb error".to_owned());
                 DE::DatabaseError(K::Unknown, Box::new(msg))
             },
             other => DE::DatabaseError(K::Unknown, Box::new(format!("{other}"))),
         }
+    }
+}
+
+/// Maps DuckDB's own error classification onto Diesel's.
+///
+/// Driven entirely by [`EngineErrorKind`], never by inspecting the message text —
+/// message formats are not a stable interface and differ across DuckDB releases.
+///
+/// Most kinds deliberately stay [`DatabaseErrorKind::Unknown`]. In particular
+/// `Constraint` is *not* mapped to `UniqueViolation`: DuckDB reports a single
+/// `DUCKDB_ERROR_CONSTRAINT` type for unique, foreign-key, not-null and check
+/// violations alike, so picking one would be a guess dressed up as a fact. A
+/// caller that needs the distinction still has the full message.
+fn database_error_kind(
+    kind: better_duck_core::error::EngineErrorKind
+) -> diesel::result::DatabaseErrorKind {
+    use better_duck_core::error::EngineErrorKind as EK;
+    use diesel::result::DatabaseErrorKind as K;
+
+    match kind {
+        // A transaction conflict is what Diesel means by a serialization failure:
+        // the caller should retry the transaction.
+        EK::Serialization | EK::Transaction => K::SerializationFailure,
+        // DuckDB raises CONNECTION when the connection is no longer usable.
+        EK::Connection => K::ClosedConnection,
+        _ => K::Unknown,
     }
 }
 
@@ -141,6 +172,57 @@ mod tests {
         assert_eq!(
             message(DuckDbError::new(CoreError::InvalidParameterCount(1, 2)).into()),
             "Wrong number of parameters passed to query. Got 1, needed 2"
+        );
+    }
+
+    #[test]
+    fn engine_errors_map_by_kind_not_by_message_text() {
+        use better_duck_core::error::{EngineError, EngineErrorKind as EK};
+
+        let classify = |kind: EK, text: &str| -> DatabaseErrorKind {
+            let engine = EngineError { kind, message: Some(text.to_owned()) };
+            match DieselError::from(DuckDbError::new(CoreError::Engine(engine))) {
+                DieselError::DatabaseError(kind, _) => kind,
+                other => panic!("expected a database error, got {other:?}"),
+            }
+        };
+
+        // A message that *looks* like a unique violation must not change the kind:
+        // classification comes from DuckDB's typed error, never from the text.
+        assert!(matches!(
+            classify(EK::Constraint, "Duplicate key violates unique constraint"),
+            DatabaseErrorKind::Unknown
+        ));
+        assert!(matches!(
+            classify(EK::Serialization, "write-write conflict"),
+            DatabaseErrorKind::SerializationFailure
+        ));
+        assert!(matches!(
+            classify(EK::Transaction, "conflict"),
+            DatabaseErrorKind::SerializationFailure
+        ));
+        assert!(matches!(
+            classify(EK::Connection, "connection closed"),
+            DatabaseErrorKind::ClosedConnection
+        ));
+        // An error type newer than this build still maps, rather than panicking.
+        assert!(matches!(
+            classify(EK::Unknown(9_999), "from the future"),
+            DatabaseErrorKind::Unknown
+        ));
+    }
+
+    #[test]
+    fn engine_error_without_message_falls_back_to_the_kind() {
+        use better_duck_core::error::{EngineError, EngineErrorKind as EK};
+
+        let engine = EngineError { kind: EK::Catalog, message: None };
+        assert_eq!(message(DuckDbError::new(CoreError::Engine(engine)).into()), "Catalog");
+
+        let engine = EngineError::unavailable(None);
+        assert_eq!(
+            message(DuckDbError::new(CoreError::Engine(engine)).into()),
+            "unclassified engine error"
         );
     }
 }
