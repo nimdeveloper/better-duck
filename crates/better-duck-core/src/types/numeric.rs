@@ -23,7 +23,7 @@ use crate::{
 };
 
 #[cfg(feature = "decimal")]
-use crate::error::Error;
+use crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL;
 use crate::ffi::{
     duckdb_append_double, duckdb_append_float, duckdb_append_hugeint, duckdb_append_int16,
     duckdb_append_int32, duckdb_append_int64, duckdb_append_int8, duckdb_append_uhugeint,
@@ -31,10 +31,6 @@ use crate::ffi::{
     duckdb_bind_double, duckdb_bind_float, duckdb_bind_hugeint, duckdb_bind_int16,
     duckdb_bind_int32, duckdb_bind_int64, duckdb_bind_int8, duckdb_bind_uhugeint,
     duckdb_bind_uint16, duckdb_bind_uint32, duckdb_bind_uint64, duckdb_bind_uint8,
-};
-#[cfg(feature = "decimal")]
-use crate::ffi::{
-    duckdb_create_decimal, duckdb_decimal, duckdb_get_decimal, DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
 };
 #[cfg(feature = "decimal")]
 use rust_decimal::Decimal;
@@ -161,7 +157,9 @@ impl DuckLogicalType for Decimal {
 #[cfg(feature = "decimal")]
 impl From<Decimal> for DuckValue {
     fn from(v: Decimal) -> Self {
-        DuckValue::Decimal(v)
+        // Route through the metadata-preserving `DuckDecimal`, computing the
+        // declared width from the value.
+        DuckValue::Decimal(crate::types::decimal::DuckDecimal::from(v))
     }
 }
 
@@ -272,42 +270,17 @@ impl DuckDialect for Decimal {
     where
         Self: Sized,
     {
-        // SAFETY: `value` is a valid duckdb_value of type DECIMAL.
-        let decimal_value = unsafe { duckdb_get_decimal(value) };
-
-        let scale = decimal_value.scale;
-        // TODO: surface decimal_value.width (precision) for callers that need it
-
-        let decimal =
-            Decimal::from_i128_with_scale(i128_from_hugeint(decimal_value.value), scale as u32);
-        Ok(decimal)
+        // Read via `DuckDecimal` (which preserves width/scale), then convert to
+        // rust_decimal. A DuckDB scale beyond rust_decimal's 28 surfaces as a
+        // checked `PrecisionLoss` rather than a silent truncation.
+        let duck = crate::types::decimal::DuckDecimal::from_duck(value)?;
+        Decimal::try_from(duck)
     }
 
     fn to_duck(&self) -> Result<duckdb_value, super::DuckDBConversionError> {
-        let scale = self.scale();
-        if scale > u8::MAX as u32 {
-            return Err(super::DuckDBConversionError::PrecisionLoss(
-                "Decimal scale exceeds maximum value of u8".to_string(),
-            ));
-        }
-        let scale = scale as u8;
-        let value = self.mantissa();
-
-        // Digit count of `value` including a leading `-` for negatives, matching
-        // `format!("{value}").len()` but without allocating a `String` on every call
-        // (this runs once per appended/bound row).
-        let digits = value.unsigned_abs().checked_ilog10().map_or(1, |d| d as usize + 1);
-        let mut num_width = if value < 0 { digits + 1 } else { digits };
-        if scale as usize >= num_width {
-            num_width += scale as usize - num_width + 1;
-        }
-        if value < 0 {
-            num_width -= 1;
-        }
-
-        let val = duckdb_decimal { scale, width: num_width as u8, value: hugeint_from_i128(value) };
-        // SAFETY: `val` is a fully initialized `duckdb_decimal` with valid scale/width.
-        Ok(unsafe { duckdb_create_decimal(val) })
+        // Delegate to `DuckDecimal`, whose width is computed from the value and
+        // whose bounds are validated.
+        crate::types::decimal::DuckDecimal::from(*self).to_duck()
     }
 }
 
@@ -317,10 +290,7 @@ impl AppendAble for Decimal {
         &mut self,
         appender: crate::ffi::duckdb_appender,
     ) -> Result<()> {
-        use crate::types::DuckDialect as _;
-        let dv = self.to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `appender` is valid; `dv` is an owned value appended and destroyed here.
-        unsafe { crate::types::appendable::append_owned_value(appender, dv) }
+        crate::types::decimal::DuckDecimal::from(*self).appender_append(appender)
     }
 
     fn stmt_append(
@@ -328,10 +298,7 @@ impl AppendAble for Decimal {
         idx: u64,
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
-        use crate::types::DuckDialect as _;
-        let dv = self.to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `stmt`/`idx` are valid; `dv` is an owned value bound and destroyed here.
-        unsafe { crate::types::appendable::bind_owned_value(stmt, idx, dv) }
+        crate::types::decimal::DuckDecimal::from(*self).stmt_append(idx, stmt)
     }
 }
 
@@ -366,7 +333,14 @@ mod test_numeric_conversion {
         let mut actual: Vec<Decimal> = Vec::with_capacity(expected.len());
         for row in result {
             match row.unwrap().get("v").unwrap() {
-                DuckValue::Decimal(got) => actual.push(*got),
+                DuckValue::Decimal(got) => {
+                    // The column is DECLARED DECIMAL(18,4): the read preserves that
+                    // declared width and scale, not the narrower width the value alone
+                    // would need.
+                    assert_eq!(got.width, 18, "declared column width must be preserved");
+                    assert_eq!(got.scale, 4, "declared column scale must be preserved");
+                    actual.push(Decimal::try_from(*got).unwrap());
+                },
                 other => panic!("expected Decimal, got {other:?}"),
             }
         }

@@ -6,6 +6,9 @@
 pub mod appendable;
 /// LIST and ARRAY read/write helpers + generic `AppendAble` impls.
 pub mod array;
+/// Metadata-preserving DECIMAL value (`DuckDecimal`), always available.
+pub mod decimal;
+pub use decimal::DuckDecimal;
 /// DuckDB `BIGNUM` type — arbitrary-precision integer.
 pub mod bignum;
 pub use bignum::DuckBignum;

@@ -8,8 +8,7 @@ use std::mem;
 #[cfg(not(feature = "chrono"))]
 use std::time::{Duration, SystemTime};
 
-#[cfg(feature = "decimal")]
-use rust_decimal::Decimal;
+use crate::types::decimal::DuckDecimal;
 
 #[cfg(not(feature = "chrono"))]
 use crate::types::date_native;
@@ -124,9 +123,8 @@ pub enum DuckValueRef<'a> {
 
     /// The value is a text string, using Cow for zero-copy when possible
     Text(Cow<'a, str>),
-    #[cfg(feature = "decimal")]
-    /// The value is a Decimal.
-    Decimal(Decimal),
+    /// The value is a `DECIMAL(width, scale)`, preserving its declared precision.
+    Decimal(DuckDecimal),
     /// The value is a blob of data.
     Blob(Blob),
     /// The value is a list
@@ -219,7 +217,6 @@ impl<'a> PartialEq for DuckValueRef<'a> {
             (TimeNs(a), TimeNs(b)) => a == b,
             (Text(a), Text(b)) => a == b,
             (Enum(a), Enum(b)) => a == b,
-            #[cfg(feature = "decimal")]
             (Decimal(a), Decimal(b)) => a == b,
             (Blob(a), Blob(b)) => a == b,
             (List(a), List(b)) => a == b,
@@ -300,7 +297,6 @@ impl<'a> Hash for DuckValueRef<'a> {
             DuckValueRef::TimeNs(t) => t.hash(state),
             DuckValueRef::Text(s) => s.hash(state),
             DuckValueRef::Enum(s) => s.hash(state),
-            #[cfg(feature = "decimal")]
             DuckValueRef::Decimal(d) => d.hash(state),
             DuckValueRef::Blob(b) => b.hash(state),
             DuckValueRef::List(items) => items.hash(state),
@@ -393,7 +389,6 @@ impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
             DuckValue::TimeNs(t) => DuckValueRef::TimeNs(*t),
             // Zero-copy borrows for text/enum; Blob is always cloned (owned).
             DuckValue::Text(s) => DuckValueRef::Text(Cow::Borrowed(s.as_str())),
-            #[cfg(feature = "decimal")]
             DuckValue::Decimal(d) => DuckValueRef::Decimal(*d),
             DuckValue::Blob(b) => DuckValueRef::Blob(b.clone()),
             DuckValue::List(l) => DuckValueRef::List(l.iter().map(DuckValueRef::from).collect()),
@@ -486,7 +481,6 @@ impl<'a> From<DuckValue> for DuckValueRef<'a> {
             DuckValue::Text(s) => DuckValueRef::Text(Cow::Owned(s)),
             DuckValue::Enum(s) => DuckValueRef::Enum(Cow::Owned(s)),
             DuckValue::Blob(b) => DuckValueRef::Blob(b),
-            #[cfg(feature = "decimal")]
             DuckValue::Decimal(d) => DuckValueRef::Decimal(d),
             DuckValue::List(items) => {
                 DuckValueRef::List(items.into_iter().map(DuckValueRef::from).collect())
@@ -650,7 +644,6 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             DuckValueRef::TimeNs(t) => t.stmt_append(idx, stmt),
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::TimeNs(t) => t.stmt_append(idx, stmt),
-            #[cfg(feature = "decimal")]
             DuckValueRef::Decimal(d) => d.stmt_append(idx, stmt),
 
             // Remaining types go through the value path.
@@ -774,7 +767,6 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             | DuckValueRef::Bignum(_) => {
                 append_via_to_duck!();
             },
-            #[cfg(feature = "decimal")]
             DuckValueRef::Decimal(d) => d.appender_append(appender),
         }
     }

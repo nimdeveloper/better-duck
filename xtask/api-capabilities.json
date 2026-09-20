@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 222,
-  "expected_pending": 181,
+  "expected_production_used": 224,
+  "expected_pending": 179,
   "methods": [
     {
       "category": "Open Connect",
@@ -1186,7 +1186,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/numeric.rs"
+        "crates/better-duck-core/src/types/decimal.rs"
       ]
     },
     {
@@ -1468,7 +1468,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/numeric.rs"
+        "crates/better-duck-core/src/types/decimal.rs"
       ]
     },
     {
@@ -1769,6 +1769,7 @@
         "crates/better-duck-core/src/types/blob.rs",
         "crates/better-duck-core/src/types/date_chrono.rs",
         "crates/better-duck-core/src/types/date_native.rs",
+        "crates/better-duck-core/src/types/decimal.rs",
         "crates/better-duck-core/src/types/mod.rs",
         "crates/better-duck-core/src/types/numeric.rs",
         "crates/better-duck-core/src/types/uuid.rs",
@@ -1853,10 +1854,12 @@
     {
       "category": "Logical Type Interface",
       "symbol": "duckdb_create_decimal_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/decimal.rs"
+      ]
     },
     {
       "category": "Logical Type Interface",
@@ -1875,10 +1878,13 @@
     {
       "category": "Logical Type Interface",
       "symbol": "duckdb_decimal_width",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/decimal.rs",
+        "crates/better-duck-core/src/types/value.rs"
+      ]
     },
     {
       "category": "Logical Type Interface",
@@ -1887,6 +1893,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
+        "crates/better-duck-core/src/types/decimal.rs",
         "crates/better-duck-core/src/types/value.rs"
       ]
     },

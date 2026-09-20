@@ -52,5 +52,28 @@ impl_numeric_sql!(u128, DuckUHugeInt, UHugeInt);
 #[cfg(feature = "decimal")]
 use diesel::sql_types::Numeric;
 
+// DECIMAL cannot use `impl_numeric_sql!`: the wire value is a metadata-preserving
+// `DuckDecimal`, not a bare `rust_decimal::Decimal`, so the two directions convert
+// explicitly. A DuckDB scale beyond rust_decimal's 28 surfaces as a deserialization
+// error rather than a silent truncation.
 #[cfg(feature = "decimal")]
-impl_numeric_sql!(Decimal, Numeric, Decimal);
+impl FromSql<Numeric, DuckDb> for Decimal {
+    fn from_sql(val: DuckValueRef<'_>) -> deserialize::Result<Self> {
+        match val {
+            DuckValueRef::Decimal(d) => Decimal::try_from(d)
+                .map_err(|e| better_duck_core::error::Error::ConversionError(e).to_string().into()),
+            _ => Err("Unexpected data for DECIMAL type".into()),
+        }
+    }
+}
+
+#[cfg(feature = "decimal")]
+impl ToSql<Numeric, DuckDb> for Decimal {
+    fn to_sql<'b>(
+        &'b self,
+        out: &mut Output<'b, '_, DuckDb>,
+    ) -> serialize::Result {
+        out.set_value(DuckValueRef::Decimal((*self).into()));
+        Ok(IsNull::No)
+    }
+}

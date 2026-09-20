@@ -9,10 +9,11 @@ use std::mem;
 #[cfg(not(feature = "chrono"))]
 use std::time::{Duration, SystemTime};
 
-#[cfg(feature = "decimal")]
 use crate::ffi::{
-    duckdb_decimal_internal_type, duckdb_decimal_scale, DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
+    duckdb_decimal_internal_type, duckdb_decimal_scale, duckdb_decimal_width,
+    DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
 };
+use crate::types::decimal::DuckDecimal;
 use crate::{
     ffi::{
         duckdb_create_logical_type, duckdb_create_null_value, duckdb_create_uhugeint, duckdb_date,
@@ -42,8 +43,6 @@ use crate::{
     },
     types::value_ref::DuckValueRef,
 };
-#[cfg(feature = "decimal")]
-use rust_decimal::Decimal;
 
 use super::*;
 use crate::types::appendable::AppendAble;
@@ -153,9 +152,8 @@ pub enum DuckValue {
 
     /// The value is a text string.
     Text(String),
-    #[cfg(feature = "decimal")]
-    /// The value is a Decimal.
-    Decimal(Decimal),
+    /// The value is a `DECIMAL(width, scale)`, preserving its declared precision.
+    Decimal(DuckDecimal),
     /// The value is a blob of data (raw byte sequence).
     Blob(Blob),
     /// The value is a list
@@ -253,7 +251,6 @@ impl PartialEq for DuckValue {
             (TimeNs(a), TimeNs(b)) => a == b,
             (Text(a), Text(b)) => a == b,
             (Enum(a), Enum(b)) => a == b,
-            #[cfg(feature = "decimal")]
             (Decimal(a), Decimal(b)) => a == b,
             (Blob(a), Blob(b)) => a == b,
             (List(a), List(b)) => a == b,
@@ -334,7 +331,6 @@ impl Hash for DuckValue {
             DuckValue::TimeNs(t) => t.hash(state),
             DuckValue::Text(s) => s.hash(state),
             DuckValue::Enum(s) => s.hash(state),
-            #[cfg(feature = "decimal")]
             DuckValue::Decimal(d) => d.hash(state),
             DuckValue::Blob(b) => b.hash(state),
             DuckValue::List(items) => items.hash(state),
@@ -416,7 +412,6 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::TimeNs(t) => DuckValue::TimeNs(*t),
             DuckValueRef::Text(s) => DuckValue::Text(s.to_string()),
-            #[cfg(feature = "decimal")]
             DuckValueRef::Decimal(d) => DuckValue::Decimal(*d),
             DuckValueRef::Blob(b) => DuckValue::Blob(b.clone()),
             DuckValueRef::List(l) => DuckValue::List(l.iter().map(DuckValue::from).collect()),
@@ -700,16 +695,18 @@ impl DuckValue {
                 };
                 Ok(DuckValue::Blob(Blob::new(bytes)))
             },
-            #[cfg(feature = "decimal")]
             DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL => {
                 // DECIMAL's physical column storage is a *scaled integer*, packed as the
                 // narrowest of INT16/INT32/INT64/HUGEINT that fits the column's declared
-                // width — never a `duckdb_value` handle. The scale and physical width both
-                // come from the column's logical type, not from any per-row payload.
+                // width — never a `duckdb_value` handle. The declared width and scale, plus
+                // the physical storage type, all come from the column's logical type, not
+                // from any per-row payload.
                 //
                 // SAFETY: `val` is a valid duckdb_vector; `duckdb_vector_get_column_type`
                 // always succeeds for a non-null vector and returns an owned logical type.
                 let mut logical_type = unsafe { duckdb_vector_get_column_type(val) };
+                // SAFETY: `logical_type` is a valid DECIMAL logical type.
+                let width = unsafe { duckdb_decimal_width(logical_type) };
                 // SAFETY: `logical_type` is a valid DECIMAL logical type.
                 let scale = unsafe { duckdb_decimal_scale(logical_type) };
                 // SAFETY: `logical_type` is a valid DECIMAL logical type.
@@ -757,7 +754,7 @@ impl DuckValue {
                         )))
                     },
                 };
-                Ok(DuckValue::Decimal(Decimal::from_i128_with_scale(mantissa, scale as u32)))
+                Ok(DuckValue::Decimal(DuckDecimal::new(mantissa, width, scale)?))
             },
             DUCKDB_TYPE_DUCKDB_TYPE_ENUM => {
                 // SAFETY: `val` is a valid duckdb_vector from an active DuckDB result.
@@ -993,7 +990,6 @@ impl DuckValue {
             DuckValue::Text(s) | DuckValue::Enum(s) => s.to_duck(),
             DuckValue::Blob(b) => b.to_duck(),
 
-            #[cfg(feature = "decimal")]
             DuckValue::Decimal(d) => d.to_duck(),
 
             DuckValue::List(items) => crate::types::array::list_to_duck(items),
@@ -1051,8 +1047,9 @@ impl DuckValue {
             DuckValue::Text(_) | DuckValue::Enum(_) => {
                 scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR)
             },
-            #[cfg(feature = "decimal")]
-            DuckValue::Decimal(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL),
+            // Uses the value's *declared* precision, so a round trip preserves
+            // DECIMAL(width, scale) rather than collapsing to a default.
+            DuckValue::Decimal(d) => d.logical_type(),
             DuckValue::Blob(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_BLOB),
 
             DuckValue::List(items) => crate::types::array::list_logical_type(items),
