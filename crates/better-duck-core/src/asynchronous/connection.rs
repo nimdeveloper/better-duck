@@ -223,7 +223,9 @@ mod tests {
     async fn error_variant_survives_boundary() {
         let conn = AsyncConnection::open_in_memory().await.unwrap();
         let err = conn.execute_batch("NOT VALID SQL").await.unwrap_err();
-        assert!(matches!(err, Error::DuckDBFailure(..)));
+        // A malformed statement is a typed engine error (parser/syntax) that must
+        // survive being moved out of the blocking task and across the await point.
+        assert!(matches!(err, Error::Engine(_)), "unexpected error variant: {err:?}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -7,9 +7,13 @@
 //! The `idx` argument to [`AppendAble::stmt_append`] is **1-based**, matching
 //! the DuckDB C API. The first parameter is `idx = 1`.
 
-use crate::ffi::{duckdb_appender, duckdb_prepared_statement};
+use crate::ffi::{
+    duckdb_append_value, duckdb_appender, duckdb_bind_value, duckdb_destroy_value,
+    duckdb_prepared_statement, duckdb_value,
+};
 
 use crate::error::Result;
+use crate::helpers::duck_result::{check_append, check_state};
 
 /// Trait implemented by types that can be bound to a DuckDB prepared statement
 /// or appended to a DuckDB appender row.
@@ -55,6 +59,49 @@ pub trait AppendAble {
     ) -> Result<()>;
 }
 
+/// Binds an owned `duckdb_value` to a prepared-statement parameter, then destroys
+/// it exactly once and checks the bind status.
+///
+/// Centralises the `bind → destroy → check` dance used by every value-based
+/// [`AppendAble`] implementation so no DuckDB status is silently dropped.
+///
+/// # Safety
+///
+/// `stmt` must be a valid prepared statement, `idx` a 1-based parameter index, and
+/// `value` an owned `duckdb_value` that no one else destroys.
+#[inline]
+pub(crate) unsafe fn bind_owned_value(
+    stmt: duckdb_prepared_statement,
+    idx: u64,
+    mut value: duckdb_value,
+) -> Result<()> {
+    // SAFETY: `stmt`/`idx` are valid per the contract; `value` is a live owned value.
+    let rc = unsafe { duckdb_bind_value(stmt, idx, value) };
+    // SAFETY: `value` was owned by the caller; destroy exactly once, before returning.
+    unsafe { duckdb_destroy_value(&mut value) };
+    check_state(rc)
+}
+
+/// Appends an owned `duckdb_value` to an appender row, then destroys it exactly
+/// once and checks the append status against the appender's typed error data.
+///
+/// # Safety
+///
+/// `appender` must be a valid, non-null appender and `value` an owned
+/// `duckdb_value` that no one else destroys.
+#[inline]
+pub(crate) unsafe fn append_owned_value(
+    appender: duckdb_appender,
+    mut value: duckdb_value,
+) -> Result<()> {
+    // SAFETY: `appender` is valid per the contract; `value` is a live owned value.
+    let rc = unsafe { duckdb_append_value(appender, value) };
+    // SAFETY: `value` was owned by the caller; destroy exactly once, before returning.
+    unsafe { duckdb_destroy_value(&mut value) };
+    // SAFETY: `appender` is valid and non-null per the contract.
+    unsafe { check_append(rc, appender) }
+}
+
 /// Implements [`AppendAble`] for a type that already implements [`crate::types::DuckDialect`]
 /// by going through the `duckdb_value` path: `to_duck()` → `duckdb_bind_value` /
 /// `duckdb_append_value` → `duckdb_destroy_value`.
@@ -71,10 +118,11 @@ macro_rules! impl_appendable_via_to_duck_native {
             ) -> $crate::error::Result<()> {
                 let mut dv = self.to_duck().map_err($crate::error::Error::ConversionError)?;
                 // SAFETY: `appender` is a valid duckdb_appender; `dv` was created by `to_duck()`.
-                unsafe { $crate::ffi::duckdb_append_value(appender, dv) };
-                // SAFETY: `dv` was created above; destroy exactly once.
+                let rc = unsafe { $crate::ffi::duckdb_append_value(appender, dv) };
+                // SAFETY: `dv` was created above; destroy exactly once, before returning any error.
                 unsafe { $crate::ffi::duckdb_destroy_value(&mut dv) };
-                Ok(())
+                // SAFETY: `appender` is valid and non-null.
+                unsafe { $crate::helpers::duck_result::check_append(rc, appender) }
             }
             fn stmt_append(
                 &mut self,
@@ -83,10 +131,10 @@ macro_rules! impl_appendable_via_to_duck_native {
             ) -> $crate::error::Result<()> {
                 let mut dv = self.to_duck().map_err($crate::error::Error::ConversionError)?;
                 // SAFETY: `stmt`/`idx` are valid; `dv` was created by `to_duck()`.
-                unsafe { $crate::ffi::duckdb_bind_value(stmt, idx, dv) };
-                // SAFETY: `dv` was created above; destroy exactly once.
+                let rc = unsafe { $crate::ffi::duckdb_bind_value(stmt, idx, dv) };
+                // SAFETY: `dv` was created above; destroy exactly once, before returning any error.
                 unsafe { $crate::ffi::duckdb_destroy_value(&mut dv) };
-                Ok(())
+                $crate::helpers::duck_result::check_state(rc)
             }
         }
     };

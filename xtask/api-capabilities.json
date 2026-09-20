@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 221,
-  "expected_pending": 182,
+  "expected_production_used": 222,
+  "expected_pending": 181,
   "methods": [
     {
       "category": "Open Connect",
@@ -317,10 +317,12 @@
     {
       "category": "Query Execution",
       "symbol": "duckdb_result_error_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "E3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/helpers/duck_result.rs"
+      ]
     },
     {
       "category": "Result Functions",
@@ -682,12 +684,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/appendable.rs",
-        "crates/better-duck-core/src/types/array.rs",
-        "crates/better-duck-core/src/types/duck_struct.rs",
-        "crates/better-duck-core/src/types/map.rs",
-        "crates/better-duck-core/src/types/numeric.rs",
-        "crates/better-duck-core/src/types/value_ref.rs"
+        "crates/better-duck-core/src/types/appendable.rs"
       ]
     },
     {
@@ -1036,12 +1033,9 @@
       "evidence": [
         "crates/better-duck-core/src/types/appendable.rs",
         "crates/better-duck-core/src/types/array.rs",
-        "crates/better-duck-core/src/types/date_chrono.rs",
         "crates/better-duck-core/src/types/duck_struct.rs",
         "crates/better-duck-core/src/types/map.rs",
-        "crates/better-duck-core/src/types/numeric.rs",
         "crates/better-duck-core/src/types/union.rs",
-        "crates/better-duck-core/src/types/value_ref.rs",
         "crates/better-duck-core/src/udf/replacement.rs",
         "crates/better-duck-core/src/udf/table/function.rs"
       ]
@@ -3186,6 +3180,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
+        "crates/better-duck-core/src/helpers/duck_result.rs",
         "crates/better-duck-core/src/raw/appender.rs"
       ]
     },
@@ -3493,13 +3488,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/appendable.rs",
-        "crates/better-duck-core/src/types/array.rs",
-        "crates/better-duck-core/src/types/date_chrono.rs",
-        "crates/better-duck-core/src/types/duck_struct.rs",
-        "crates/better-duck-core/src/types/map.rs",
-        "crates/better-duck-core/src/types/numeric.rs",
-        "crates/better-duck-core/src/types/value_ref.rs"
+        "crates/better-duck-core/src/types/appendable.rs"
       ]
     },
     {

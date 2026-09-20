@@ -232,8 +232,9 @@ impl AppendAble for DuckDate {
         // SAFETY: `duckdb_to_date` is a pure arithmetic conversion on a valid struct.
         let raw = unsafe { duckdb_to_date(ds) };
         // SAFETY: `raw` is a valid duckdb_date; `appender` is a valid duckdb_appender.
-        unsafe { crate::ffi::duckdb_append_date(appender, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_append_date(appender, raw) };
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
     fn stmt_append(
         &mut self,
@@ -245,8 +246,8 @@ impl AppendAble for DuckDate {
         // SAFETY: `duckdb_to_date` is a pure arithmetic conversion on a valid struct.
         let raw = unsafe { duckdb_to_date(ds) };
         // SAFETY: `raw` is a valid duckdb_date; `stmt`/`idx` are valid.
-        unsafe { crate::ffi::duckdb_bind_date(stmt, idx, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_bind_date(stmt, idx, raw) };
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 
@@ -264,8 +265,9 @@ impl AppendAble for DuckTime {
         // SAFETY: `duckdb_to_time` is a pure arithmetic conversion on a valid struct.
         let raw = unsafe { duckdb_to_time(ts) };
         // SAFETY: `raw` is a valid duckdb_time; `appender` is valid.
-        unsafe { crate::ffi::duckdb_append_time(appender, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_append_time(appender, raw) };
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
     fn stmt_append(
         &mut self,
@@ -281,8 +283,8 @@ impl AppendAble for DuckTime {
         // SAFETY: `duckdb_to_time` is a pure arithmetic conversion on a valid struct.
         let raw = unsafe { duckdb_to_time(ts) };
         // SAFETY: `raw` is a valid duckdb_time; `stmt`/`idx` are valid.
-        unsafe { crate::ffi::duckdb_bind_time(stmt, idx, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_bind_time(stmt, idx, raw) };
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 
@@ -294,8 +296,9 @@ impl AppendAble for StdDuration {
         let micros = self.as_micros().min(i64::MAX as u128) as i64;
         let raw = duckdb_interval { months: 0, days: 0, micros };
         // SAFETY: `raw` is a valid duckdb_interval; `appender` is valid.
-        unsafe { crate::ffi::duckdb_append_interval(appender, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_append_interval(appender, raw) };
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
     fn stmt_append(
         &mut self,
@@ -305,8 +308,8 @@ impl AppendAble for StdDuration {
         let micros = self.as_micros().min(i64::MAX as u128) as i64;
         let raw = duckdb_interval { months: 0, days: 0, micros };
         // SAFETY: `raw` is a valid duckdb_interval; `stmt`/`idx` are valid.
-        unsafe { crate::ffi::duckdb_bind_interval(stmt, idx, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_bind_interval(stmt, idx, raw) };
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 
@@ -322,8 +325,9 @@ impl AppendAble for SystemTime {
         let micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
         let raw = duckdb_timestamp { micros };
         // SAFETY: `raw` is a valid duckdb_timestamp; `appender` is valid.
-        unsafe { crate::ffi::duckdb_append_timestamp(appender, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_append_timestamp(appender, raw) };
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
     fn stmt_append(
         &mut self,
@@ -337,8 +341,8 @@ impl AppendAble for SystemTime {
         let micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
         let raw = duckdb_timestamp { micros };
         // SAFETY: `raw` is a valid duckdb_timestamp; `stmt`/`idx` are valid.
-        unsafe { crate::ffi::duckdb_bind_timestamp(stmt, idx, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_bind_timestamp(stmt, idx, raw) };
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 

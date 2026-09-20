@@ -70,8 +70,9 @@ macro_rules! impl_duck_append_able {
             ) -> Result<()> {
                 // SAFETY: `appender` is a valid duckdb_appender. The value is a copy of
                 // a valid Rust primitive compatible with the DuckDB column type.
-                unsafe { $duck_append_fn(appender, *self) };
-                Ok(())
+                let rc = unsafe { $duck_append_fn(appender, *self) };
+                // SAFETY: `appender` is valid and non-null.
+                unsafe { crate::helpers::duck_result::check_append(rc, appender) }
             }
             fn stmt_append(
                 &mut self,
@@ -81,8 +82,8 @@ macro_rules! impl_duck_append_able {
                 // SAFETY: `stmt` is a valid duckdb_prepared_statement. `idx` is a 1-based
                 // parameter index within the statement's parameter count, as required by
                 // the DuckDB C API. The value is a copy of a valid Rust primitive.
-                unsafe { $duck_bind_fn(stmt, idx, *self) };
-                Ok(())
+                let rc = unsafe { $duck_bind_fn(stmt, idx, *self) };
+                crate::helpers::duck_result::check_state(rc)
             }
         }
     };
@@ -212,8 +213,9 @@ impl AppendAble for i128 {
     ) -> Result<()> {
         // SAFETY: `appender` is a valid duckdb_appender. `hugeint_from_i128` converts the
         // value to a valid duckdb_hugeint.
-        unsafe { duckdb_append_hugeint(appender, hugeint_from_i128(*self)) };
-        Ok(())
+        let rc = unsafe { duckdb_append_hugeint(appender, hugeint_from_i128(*self)) };
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
     fn stmt_append(
         &mut self,
@@ -223,8 +225,8 @@ impl AppendAble for i128 {
         // SAFETY: `stmt` is a valid prepared statement. `idx` is a 1-based parameter index
         // within the statement's parameter count (as required by the DuckDB C API).
         // `hugeint_from_i128` converts the value to a valid duckdb_hugeint.
-        unsafe { duckdb_bind_hugeint(stmt, idx, hugeint_from_i128(*self)) };
-        Ok(())
+        let rc = unsafe { duckdb_bind_hugeint(stmt, idx, hugeint_from_i128(*self)) };
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 
@@ -247,8 +249,9 @@ impl AppendAble for u128 {
     ) -> Result<()> {
         // SAFETY: `appender` is a valid duckdb_appender. `uhugeint_from_u128` converts the
         // value to a valid duckdb_uhugeint.
-        unsafe { duckdb_append_uhugeint(appender, uhugeint_from_u128(*self)) };
-        Ok(())
+        let rc = unsafe { duckdb_append_uhugeint(appender, uhugeint_from_u128(*self)) };
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
     fn stmt_append(
         &mut self,
@@ -258,8 +261,8 @@ impl AppendAble for u128 {
         // SAFETY: `stmt` is a valid prepared statement. `idx` is a 1-based parameter index
         // within the statement's parameter count (as required by the DuckDB C API).
         // `uhugeint_from_u128` converts the value to a valid duckdb_uhugeint.
-        unsafe { duckdb_bind_uhugeint(stmt, idx, uhugeint_from_u128(*self)) };
-        Ok(())
+        let rc = unsafe { duckdb_bind_uhugeint(stmt, idx, uhugeint_from_u128(*self)) };
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 
@@ -315,12 +318,9 @@ impl AppendAble for Decimal {
         appender: crate::ffi::duckdb_appender,
     ) -> Result<()> {
         use crate::types::DuckDialect as _;
-        let mut dv = self.to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `appender` is valid; `dv` was just created by `to_duck()`.
-        unsafe { crate::ffi::duckdb_append_value(appender, dv) };
-        // SAFETY: `dv` was created above; destroy exactly once.
-        unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
-        Ok(())
+        let dv = self.to_duck().map_err(Error::ConversionError)?;
+        // SAFETY: `appender` is valid; `dv` is an owned value appended and destroyed here.
+        unsafe { crate::types::appendable::append_owned_value(appender, dv) }
     }
 
     fn stmt_append(
@@ -329,12 +329,9 @@ impl AppendAble for Decimal {
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
         use crate::types::DuckDialect as _;
-        let mut dv = self.to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `stmt` is valid; `dv` was just created by `to_duck()`.
-        unsafe { crate::ffi::duckdb_bind_value(stmt, idx, dv) };
-        // SAFETY: `dv` was created above; destroy exactly once.
-        unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
-        Ok(())
+        let dv = self.to_duck().map_err(Error::ConversionError)?;
+        // SAFETY: `stmt`/`idx` are valid; `dv` is an owned value bound and destroyed here.
+        unsafe { crate::types::appendable::bind_owned_value(stmt, idx, dv) }
     }
 }
 

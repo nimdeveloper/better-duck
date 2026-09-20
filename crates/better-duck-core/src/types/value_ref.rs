@@ -575,20 +575,17 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
         macro_rules! bind_via_to_duck {
             () => {{
                 let owned = DuckValue::from(&*self);
-                let mut dv = owned.to_duck().map_err(Error::ConversionError)?;
-                // SAFETY: `stmt`/`idx` are valid; `dv` was created by `to_duck()`.
-                unsafe { ffi::duckdb_bind_value(stmt, idx, dv) };
-                // SAFETY: `dv` was created above; destroy exactly once.
-                unsafe { ffi::duckdb_destroy_value(&mut dv) };
-                return Ok(());
+                let dv = owned.to_duck().map_err(Error::ConversionError)?;
+                // SAFETY: `stmt`/`idx` are valid; `dv` is an owned value bound and destroyed here.
+                return unsafe { crate::types::appendable::bind_owned_value(stmt, idx, dv) };
             }};
         }
 
         match self {
             DuckValueRef::Null => {
                 // SAFETY: `stmt` is a valid prepared statement; `idx` is 1-based.
-                unsafe { ffi::duckdb_bind_null(stmt, idx) };
-                Ok(())
+                let rc = unsafe { ffi::duckdb_bind_null(stmt, idx) };
+                crate::helpers::duck_result::check_state(rc)
             },
             DuckValueRef::Boolean(v) => v.stmt_append(idx, stmt),
             DuckValueRef::TinyInt(v) => v.stmt_append(idx, stmt),
@@ -604,8 +601,8 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
                 // No generic u128 AppendAble; inline the bind.
                 let uhi = ffi::duckdb_uhugeint { lower: *v as u64, upper: (*v >> 64) as u64 };
                 // SAFETY: `uhi` is a valid duckdb_uhugeint; `stmt`/`idx` are valid.
-                unsafe { ffi::duckdb_bind_uhugeint(stmt, idx, uhi) };
-                Ok(())
+                let rc = unsafe { ffi::duckdb_bind_uhugeint(stmt, idx, uhi) };
+                crate::helpers::duck_result::check_state(rc)
             },
             DuckValueRef::Float(v) => v.stmt_append(idx, stmt),
             DuckValueRef::Double(v) => v.stmt_append(idx, stmt),
@@ -688,20 +685,18 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
         macro_rules! append_via_to_duck {
             () => {{
                 let owned = DuckValue::from(&*self);
-                let mut dv = owned.to_duck().map_err(Error::ConversionError)?;
-                // SAFETY: `appender` is valid; `dv` was created by `to_duck()`.
-                unsafe { ffi::duckdb_append_value(appender, dv) };
-                // SAFETY: `dv` was created above; destroy exactly once.
-                unsafe { ffi::duckdb_destroy_value(&mut dv) };
-                return Ok(());
+                let dv = owned.to_duck().map_err(Error::ConversionError)?;
+                // SAFETY: `appender` is valid; `dv` is an owned value appended and destroyed here.
+                return unsafe { crate::types::appendable::append_owned_value(appender, dv) };
             }};
         }
 
         match self {
             DuckValueRef::Null => {
                 // SAFETY: `appender` is a valid duckdb_appender.
-                unsafe { ffi::duckdb_append_null(appender) };
-                Ok(())
+                let rc = unsafe { ffi::duckdb_append_null(appender) };
+                // SAFETY: `appender` is valid and non-null.
+                unsafe { crate::helpers::duck_result::check_append(rc, appender) }
             },
             DuckValueRef::Boolean(v) => v.appender_append(appender),
             DuckValueRef::TinyInt(v) => v.appender_append(appender),
@@ -716,22 +711,24 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             DuckValueRef::UHugeInt(v) => {
                 let uhi = ffi::duckdb_uhugeint { lower: *v as u64, upper: (*v >> 64) as u64 };
                 // SAFETY: `uhi` is a valid duckdb_uhugeint; `appender` is valid.
-                unsafe { ffi::duckdb_append_uhugeint(appender, uhi) };
-                Ok(())
+                let rc = unsafe { ffi::duckdb_append_uhugeint(appender, uhi) };
+                // SAFETY: `appender` is valid and non-null.
+                unsafe { crate::helpers::duck_result::check_append(rc, appender) }
             },
             DuckValueRef::Float(v) => v.appender_append(appender),
             DuckValueRef::Double(v) => v.appender_append(appender),
             DuckValueRef::Text(s) => {
                 let bytes = s.as_bytes();
                 // SAFETY: `bytes.as_ptr()` is valid UTF-8; append copies the data.
-                unsafe {
+                let rc = unsafe {
                     ffi::duckdb_append_varchar_length(
                         appender,
                         bytes.as_ptr() as *const std::os::raw::c_char,
                         bytes.len() as u64,
                     )
                 };
-                Ok(())
+                // SAFETY: `appender` is valid and non-null.
+                unsafe { crate::helpers::duck_result::check_append(rc, appender) }
             },
             DuckValueRef::Blob(b) => b.appender_append(appender),
             #[cfg(feature = "chrono")]

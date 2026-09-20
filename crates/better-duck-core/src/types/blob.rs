@@ -73,14 +73,15 @@ impl AppendAble for Blob {
         appender: crate::ffi::duckdb_appender,
     ) -> crate::error::Result<()> {
         // SAFETY: `self.0.as_ptr()` is valid for `self.0.len()` bytes; append copies the data.
-        unsafe {
+        let rc = unsafe {
             crate::ffi::duckdb_append_blob(
                 appender,
                 self.0.as_ptr() as *const std::ffi::c_void,
                 self.0.len() as u64,
             )
         };
-        Ok(())
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
 
     fn stmt_append(
@@ -89,7 +90,7 @@ impl AppendAble for Blob {
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> crate::error::Result<()> {
         // SAFETY: `self.0.as_ptr()` is valid for `self.0.len()` bytes; bind copies the data.
-        unsafe {
+        let rc = unsafe {
             crate::ffi::duckdb_bind_blob(
                 stmt,
                 idx,
@@ -97,7 +98,7 @@ impl AppendAble for Blob {
                 self.0.len() as u64,
             )
         };
-        Ok(())
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 

@@ -3,13 +3,13 @@
 use std::ffi::CStr;
 
 use crate::ffi::{
-    duckdb_appender, duckdb_appender_destroy, duckdb_appender_error, duckdb_arrow,
-    duckdb_destroy_arrow, duckdb_destroy_prepare, duckdb_destroy_result, duckdb_prepare_error,
-    duckdb_prepared_statement, duckdb_query_arrow_error, duckdb_result, duckdb_result_error,
-    duckdb_state, DuckDBSuccess, Error as FFIError,
+    duckdb_appender, duckdb_appender_destroy, duckdb_appender_error_data, duckdb_destroy_prepare,
+    duckdb_destroy_result, duckdb_prepare_error, duckdb_prepared_statement, duckdb_result,
+    duckdb_result_error, duckdb_result_error_type, duckdb_state, DuckDBSuccess, Error as FFIError,
 };
 
-use crate::error::{Error, Result};
+use crate::error::{EngineError, EngineErrorKind, Error, Result};
+use crate::raw::error_data::ErrorData;
 
 /// Converts a DuckDB error code and optional message into a `Result<()>` with a `DuckDBFailure` error.
 ///
@@ -75,17 +75,69 @@ pub fn result_from_duckdb_appender(
 
     // SAFETY: `appender` is non-null (checked above). The appender handle stored in
     // `*appender` may still be null if creation failed, which we check before use.
-    // On failure with a non-null handle we extract the error string and destroy it.
+    // On failure with a non-null handle we read the *typed* error data (not the
+    // deprecated `duckdb_appender_error` string), then destroy the appender.
     unsafe {
-        let message = if (*appender).is_null() {
-            Some("appender is null".to_string())
-        } else {
-            let c_err = duckdb_appender_error(*appender);
-            let message = Some(CStr::from_ptr(c_err).to_string_lossy().to_string());
-            duckdb_appender_destroy(appender);
-            message
-        };
-        error_from_duckdb_code(code, message)
+        if (*appender).is_null() {
+            return error_from_duckdb_code(code, Some("appender is null".to_string()));
+        }
+        let engine = engine_error_from_appender(*appender);
+        duckdb_appender_destroy(appender);
+        Err(Error::Engine(engine))
+    }
+}
+
+/// Maps a failing appender operation into a typed [`Error::Engine`] without
+/// destroying the appender, so the caller can keep using or later destroy it.
+///
+/// # Safety
+///
+/// `appender` must be a valid, non-null `duckdb_appender`.
+#[cold]
+#[inline]
+pub unsafe fn check_append(
+    code: duckdb_state,
+    appender: duckdb_appender,
+) -> Result<()> {
+    if code == DuckDBSuccess {
+        return Ok(());
+    }
+    // SAFETY: `appender` is valid and non-null per this function's contract.
+    Err(Error::Engine(unsafe { engine_error_from_appender(appender) }))
+}
+
+/// Reads DuckDB's typed error data from an appender, copying it into an owned
+/// [`EngineError`]. Falls back to [`EngineError::unavailable`] when the appender
+/// exposes no error data.
+///
+/// # Safety
+///
+/// `appender` must be a valid, non-null `duckdb_appender`.
+#[cold]
+#[inline]
+unsafe fn engine_error_from_appender(appender: duckdb_appender) -> EngineError {
+    // SAFETY: `appender` is valid and non-null. `duckdb_appender_error_data` returns an
+    // owned handle (or null); `ErrorData` takes ownership and destroys it, copying every
+    // field out first.
+    match unsafe { ErrorData::from_raw(duckdb_appender_error_data(appender)) } {
+        Some(data) if data.has_error() => data.to_engine_error(),
+        _ => EngineError::unavailable(Some(
+            "appender reported failure without error data".to_owned(),
+        )),
+    }
+}
+
+/// Converts a bare `duckdb_state` from a bind/value FFI call into a `Result<()>`.
+///
+/// Bind-family calls (`duckdb_bind_*`, `duckdb_append_value`) expose no per-call
+/// error string, so a failure carries only the status code. Use [`check_append`]
+/// where a `duckdb_appender` is in hand, since that path can recover typed data.
+#[inline]
+pub fn check_state(code: duckdb_state) -> Result<()> {
+    if code == DuckDBSuccess {
+        Ok(())
+    } else {
+        Err(Error::DuckDBFailure(FFIError::new(code), None))
     }
 }
 
@@ -137,58 +189,11 @@ pub fn result_from_duckdb_prepare(
     }
 }
 
-/// Converts the result of a DuckDB Arrow query operation into a `Result<()>`.
-///
-/// If the operation was successful, returns `Ok(())`. Otherwise, retrieves the error message
-/// from the Arrow result, destroys the Arrow result, and returns an error.
-///
-/// # Arguments
-///
-/// * `code` - The DuckDB state code returned by the Arrow query operation.
-/// * `out` - The DuckDB Arrow result handle.
-///
-/// # Returns
-///
-/// * `Ok(())` if the operation was successful.
-/// * `Err(Error::DuckDBFailure)` with the error message if the operation failed.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let code = ffi::DuckDBSuccess;
-/// let out: ffi::duckdb_arrow = std::ptr::null_mut();
-/// let result = result_from_duckdb_arrow(code, out);
-/// assert!(result.is_ok());
-/// ```
-#[allow(unused)]
-#[cold]
-#[inline]
-pub fn result_from_duckdb_arrow(
-    code: duckdb_state,
-    mut out: duckdb_arrow,
-) -> Result<()> {
-    if code == DuckDBSuccess {
-        return Ok(());
-    }
-    // SAFETY: `out` is a duckdb_arrow returned by `duckdb_query_arrow`. If non-null we
-    // extract the error string and destroy it.
-    unsafe {
-        let message = if out.is_null() {
-            Some("out arrow is null".to_string())
-        } else {
-            let c_err = duckdb_query_arrow_error(out);
-            let message = Some(CStr::from_ptr(c_err).to_string_lossy().to_string());
-            duckdb_destroy_arrow(&mut out);
-            message
-        };
-        error_from_duckdb_code(code, message)
-    }
-}
-
 /// Converts the result of a DuckDB query operation into a `Result<()>`.
 ///
-/// If the operation was successful, returns `Ok(())`. Otherwise, retrieves the error message
-/// from the result, destroys the result, and returns an error.
+/// If the operation was successful, returns `Ok(())`. Otherwise, reads DuckDB's
+/// *typed* error classification (`duckdb_result_error_type`) and message, destroys
+/// the result, and returns a typed [`Error::Engine`].
 ///
 /// # Arguments
 ///
@@ -198,7 +203,7 @@ pub fn result_from_duckdb_arrow(
 /// # Returns
 ///
 /// * `Ok(())` if the operation was successful.
-/// * `Err(Error::DuckDBFailure)` with the error message if the operation failed.
+/// * `Err(Error::Engine)` carrying DuckDB's classification and message otherwise.
 ///
 /// # Example
 ///
@@ -218,17 +223,17 @@ pub fn result_from_duckdb_result(
         return Ok(());
     }
     // SAFETY: `out` is a `*mut duckdb_result` that was passed to `duckdb_query` or
-    // `duckdb_execute_prepared`. On error DuckDB writes error info into `*out`, and
-    // `duckdb_result_error` returns a pointer into that memory. We copy the error string
-    // and then destroy the result.
+    // `duckdb_execute_prepared`. On error DuckDB writes error info into `*out`;
+    // `duckdb_result_error_type` and `duckdb_result_error` read from that memory
+    // (the string pointer points into the result). We copy both out before
+    // `duckdb_destroy_result` frees them.
     unsafe {
-        let message = {
-            let c_err = duckdb_result_error(out);
-            let message = Some(CStr::from_ptr(c_err).to_string_lossy().to_string());
-            duckdb_destroy_result(out);
-            message
-        };
-        error_from_duckdb_code(code, message)
+        let kind = EngineErrorKind::from_raw(duckdb_result_error_type(out));
+        let c_err = duckdb_result_error(out);
+        let message =
+            (!c_err.is_null()).then(|| CStr::from_ptr(c_err).to_string_lossy().into_owned());
+        duckdb_destroy_result(out);
+        Err(Error::Engine(EngineError { kind, message }))
     }
 }
 
@@ -242,8 +247,13 @@ mod tests {
     fn converters_accept_success_without_dereferencing_outputs() {
         assert!(result_from_duckdb_appender(DuckDBSuccess, ptr::null_mut()).is_ok());
         assert!(result_from_duckdb_prepare(DuckDBSuccess, ptr::null_mut()).is_ok());
-        assert!(result_from_duckdb_arrow(DuckDBSuccess, ptr::null_mut()).is_ok());
         assert!(result_from_duckdb_result(DuckDBSuccess, ptr::null_mut()).is_ok());
+        assert!(check_state(DuckDBSuccess).is_ok());
+    }
+
+    #[test]
+    fn check_state_reports_failure_as_duckdb_failure() {
+        assert!(matches!(check_state(DuckDBError), Err(Error::DuckDBFailure(_, None))));
     }
 
     #[test]
@@ -265,16 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn arrow_failure_with_null_output_has_context() {
-        let error = result_from_duckdb_arrow(DuckDBError, ptr::null_mut()).unwrap_err();
-        assert!(matches!(
-            error,
-            Error::DuckDBFailure(_, Some(message)) if message == "out arrow is null"
-        ));
-    }
-
-    #[test]
-    fn failed_query_result_preserves_duckdb_message() {
+    fn failed_query_result_carries_typed_error_and_message() {
         let mut database = ptr::null_mut();
         let mut connection = ptr::null_mut();
         let path = std::ffi::CString::new(":memory:").unwrap();
@@ -288,10 +289,13 @@ mod tests {
             let mut out = mem::zeroed::<duckdb_result>();
             let code = crate::ffi::duckdb_query(connection, sql.as_ptr(), &mut out);
             let error = result_from_duckdb_result(code, &mut out).unwrap_err();
-            assert!(matches!(
-                error,
-                Error::DuckDBFailure(_, Some(message)) if message.contains("missing_table")
-            ));
+            let engine = match error {
+                Error::Engine(engine) => engine,
+                other => panic!("expected a typed engine error, got {other:?}"),
+            };
+            // A missing table is a catalog error; the driver reports DuckDB's own kind.
+            assert_eq!(engine.kind, EngineErrorKind::Catalog);
+            assert!(engine.message.is_some_and(|m| m.contains("missing_table")));
             crate::ffi::duckdb_disconnect(&mut connection);
             crate::ffi::duckdb_close(&mut database);
         }

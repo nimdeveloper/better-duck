@@ -49,14 +49,15 @@ impl AppendAble for String {
         let bytes = self.as_bytes();
         // SAFETY: `bytes.as_ptr()` is valid UTF-8 data of `bytes.len()` bytes.
         // `duckdb_append_varchar_length` copies the data and does not retain the pointer.
-        unsafe {
+        let rc = unsafe {
             crate::ffi::duckdb_append_varchar_length(
                 appender,
                 bytes.as_ptr() as *const c_char,
                 bytes.len() as u64,
             )
         };
-        Ok(())
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
 
     fn stmt_append(
@@ -67,7 +68,7 @@ impl AppendAble for String {
         let bytes = self.as_bytes();
         // SAFETY: `bytes.as_ptr()` is valid UTF-8 of `bytes.len()` bytes.
         // `duckdb_bind_varchar_length` copies the data and does not retain the pointer.
-        unsafe {
+        let rc = unsafe {
             crate::ffi::duckdb_bind_varchar_length(
                 stmt,
                 idx,
@@ -75,7 +76,7 @@ impl AppendAble for String {
                 bytes.len() as u64,
             )
         };
-        Ok(())
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 

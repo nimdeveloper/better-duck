@@ -161,8 +161,9 @@ macro_rules! impl_duck_append_able {
             ) -> Result<()> {
                 // SAFETY: `appender` is a valid duckdb_appender. The value is a copy of
                 // a valid Rust primitive compatible with the DuckDB column type.
-                unsafe { $duck_append_fn(appender, *self) };
-                Ok(())
+                let rc = unsafe { $duck_append_fn(appender, *self) };
+                // SAFETY: `appender` is valid and non-null.
+                unsafe { crate::helpers::duck_result::check_append(rc, appender) }
             }
             fn stmt_append(
                 &mut self,
@@ -171,8 +172,8 @@ macro_rules! impl_duck_append_able {
             ) -> Result<()> {
                 // SAFETY: `stmt` is a valid prepared statement. `idx` is a 1-based parameter
                 // index within the statement's parameter count, as required by the DuckDB C API.
-                unsafe { $duck_bind_fn(stmt, idx, *self) };
-                Ok(())
+                let rc = unsafe { $duck_bind_fn(stmt, idx, *self) };
+                crate::helpers::duck_result::check_state(rc)
             }
         }
     };

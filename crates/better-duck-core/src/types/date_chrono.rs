@@ -341,8 +341,9 @@ impl AppendAble for NaiveDate {
     ) -> crate::error::Result<()> {
         let raw = duckdb_date { days: self.num_days_from_ce() - 719_163 };
         // SAFETY: `raw` is a valid duckdb_date; `appender` is a valid duckdb_appender.
-        unsafe { crate::ffi::duckdb_append_date(appender, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_append_date(appender, raw) };
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
     fn stmt_append(
         &mut self,
@@ -351,8 +352,8 @@ impl AppendAble for NaiveDate {
     ) -> crate::error::Result<()> {
         let raw = duckdb_date { days: self.num_days_from_ce() - 719_163 };
         // SAFETY: `raw` is a valid duckdb_date; `stmt`/`idx` are valid.
-        unsafe { crate::ffi::duckdb_bind_date(stmt, idx, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_bind_date(stmt, idx, raw) };
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 
@@ -365,8 +366,9 @@ impl AppendAble for NaiveTime {
             + (self.nanosecond() as i64) / 1_000;
         let raw = duckdb_time { micros };
         // SAFETY: `raw` is a valid duckdb_time; `appender` is valid.
-        unsafe { crate::ffi::duckdb_append_time(appender, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_append_time(appender, raw) };
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
     fn stmt_append(
         &mut self,
@@ -377,8 +379,8 @@ impl AppendAble for NaiveTime {
             + (self.nanosecond() as i64) / 1_000;
         let raw = duckdb_time { micros };
         // SAFETY: `raw` is a valid duckdb_time; `stmt`/`idx` are valid.
-        unsafe { crate::ffi::duckdb_bind_time(stmt, idx, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_bind_time(stmt, idx, raw) };
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 
@@ -391,8 +393,9 @@ impl AppendAble for NaiveDateTime {
             + self.and_utc().timestamp_subsec_micros() as i64;
         let raw = duckdb_timestamp { micros };
         // SAFETY: `raw` is a valid duckdb_timestamp; `appender` is valid.
-        unsafe { crate::ffi::duckdb_append_timestamp(appender, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_append_timestamp(appender, raw) };
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
     fn stmt_append(
         &mut self,
@@ -403,8 +406,8 @@ impl AppendAble for NaiveDateTime {
             + self.and_utc().timestamp_subsec_micros() as i64;
         let raw = duckdb_timestamp { micros };
         // SAFETY: `raw` is a valid duckdb_timestamp; `stmt`/`idx` are valid.
-        unsafe { crate::ffi::duckdb_bind_timestamp(stmt, idx, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_bind_timestamp(stmt, idx, raw) };
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 
@@ -416,8 +419,9 @@ impl AppendAble for Duration {
         let micros = self.num_microseconds().unwrap_or(0);
         let raw = duckdb_interval { months: 0, days: 0, micros };
         // SAFETY: `raw` is a valid duckdb_interval; `appender` is valid.
-        unsafe { crate::ffi::duckdb_append_interval(appender, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_append_interval(appender, raw) };
+        // SAFETY: `appender` is valid and non-null.
+        unsafe { crate::helpers::duck_result::check_append(rc, appender) }
     }
     fn stmt_append(
         &mut self,
@@ -427,8 +431,8 @@ impl AppendAble for Duration {
         let micros = self.num_microseconds().unwrap_or(0);
         let raw = duckdb_interval { months: 0, days: 0, micros };
         // SAFETY: `raw` is a valid duckdb_interval; `stmt`/`idx` are valid.
-        unsafe { crate::ffi::duckdb_bind_interval(stmt, idx, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_bind_interval(stmt, idx, raw) };
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 
@@ -452,8 +456,8 @@ impl AppendAble for TimestampTz {
         let raw = duckdb_timestamp { micros: self.0.timestamp_micros() };
         // SAFETY: `raw` is a valid `duckdb_timestamp` (UTC microseconds since epoch).
         // `stmt` is a valid prepared statement; `idx` is a 1-based parameter index.
-        unsafe { crate::ffi::duckdb_bind_timestamp_tz(stmt, idx, raw) };
-        Ok(())
+        let rc = unsafe { crate::ffi::duckdb_bind_timestamp_tz(stmt, idx, raw) };
+        crate::helpers::duck_result::check_state(rc)
     }
 
     fn appender_append(
@@ -462,12 +466,9 @@ impl AppendAble for TimestampTz {
     ) -> crate::error::Result<()> {
         use crate::error::Error;
         use crate::types::DuckDialect as _;
-        let mut dv = self.to_duck().map_err(Error::ConversionError)?;
-        // SAFETY: `appender` is a valid duckdb_appender; `dv` was created by `to_duck()`.
-        unsafe { crate::ffi::duckdb_append_value(appender, dv) };
-        // SAFETY: `dv` was created above; destroy exactly once.
-        unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
-        Ok(())
+        let dv = self.to_duck().map_err(Error::ConversionError)?;
+        // SAFETY: `appender` is valid; `dv` is an owned value appended and destroyed here.
+        unsafe { crate::types::appendable::append_owned_value(appender, dv) }
     }
 }
 

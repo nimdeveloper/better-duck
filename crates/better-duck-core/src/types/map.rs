@@ -16,10 +16,10 @@ use crate::types::value_ref::DuckValueRef;
 use crate::{
     error::{DuckDBConversionError, Error, Result},
     ffi::{
-        duckdb_append_value, duckdb_bind_value, duckdb_create_map_type, duckdb_create_map_value,
-        duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_get_type_id, duckdb_list_entry,
-        duckdb_list_vector_get_child, duckdb_logical_type, duckdb_struct_vector_get_child,
-        duckdb_value, duckdb_vector, duckdb_vector_get_column_type, duckdb_vector_get_data, idx_t,
+        duckdb_create_map_type, duckdb_create_map_value, duckdb_destroy_logical_type,
+        duckdb_destroy_value, duckdb_get_type_id, duckdb_list_entry, duckdb_list_vector_get_child,
+        duckdb_logical_type, duckdb_struct_vector_get_child, duckdb_value, duckdb_vector,
+        duckdb_vector_get_column_type, duckdb_vector_get_data, idx_t,
     },
     types::appendable::AppendAble,
 };
@@ -307,24 +307,18 @@ where
         idx: u64,
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
-        let mut dv = build_typed_map_value(self).map_err(Error::ConversionError)?;
-        // SAFETY: `stmt`/`idx` are valid; `dv` was created by `build_typed_map_value`.
-        unsafe { duckdb_bind_value(stmt, idx, dv) };
-        // SAFETY: `dv` was created above; destroy exactly once.
-        unsafe { duckdb_destroy_value(&mut dv) };
-        Ok(())
+        let dv = build_typed_map_value(self).map_err(Error::ConversionError)?;
+        // SAFETY: `stmt`/`idx` are valid; `dv` is an owned value bound and destroyed here.
+        unsafe { crate::types::appendable::bind_owned_value(stmt, idx, dv) }
     }
 
     fn appender_append(
         &mut self,
         appender: crate::ffi::duckdb_appender,
     ) -> Result<()> {
-        let mut dv = build_typed_map_value(self).map_err(Error::ConversionError)?;
-        // SAFETY: `appender` is valid; `dv` was created by `build_typed_map_value`.
-        unsafe { duckdb_append_value(appender, dv) };
-        // SAFETY: `dv` was created above; destroy exactly once.
-        unsafe { duckdb_destroy_value(&mut dv) };
-        Ok(())
+        let dv = build_typed_map_value(self).map_err(Error::ConversionError)?;
+        // SAFETY: `appender` is valid; `dv` is an owned value appended and destroyed here.
+        unsafe { crate::types::appendable::append_owned_value(appender, dv) }
     }
 }
 
