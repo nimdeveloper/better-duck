@@ -1,5 +1,6 @@
 use std::ffi::{c_char, CString};
 use std::ptr;
+use std::sync::Arc;
 
 use crate::error::Result;
 use crate::ffi::{
@@ -7,7 +8,7 @@ use crate::ffi::{
     duckdb_appender_destroy, duckdb_appender_end_row, duckdb_appender_flush,
 };
 use crate::helpers::duck_result::result_from_duckdb_appender;
-use crate::raw::connection::RawConnection;
+use crate::raw::connection::ConnectionInner;
 use crate::types::appendable::AppendAble;
 
 /// A DuckDB appender for bulk-inserting rows into a table without going through
@@ -17,37 +18,47 @@ use crate::types::appendable::AppendAble;
 /// to flush the data to the database. Rows are also flushed automatically on drop
 /// (errors during the implicit flush are logged to stderr).
 pub struct Appender {
-    _con: RawConnection,
+    /// Keeps the connection this appender was created on open for at least as long
+    /// as the appender, and ties appended rows to that connection's transaction.
+    _connection: Arc<ConnectionInner>,
     inn: duckdb_appender,
 }
 
 impl Appender {
     /// Creates a new `Appender` for the given table and schema.
     ///
+    /// Takes the shared connection owner rather than a `RawConnection` so that rows
+    /// are appended on the *caller's* connection, and therefore inside any
+    /// transaction open on it.
+    ///
+    /// Crate-internal because [`ConnectionInner`] is: external callers construct
+    /// appenders through [`Connection::appender`](crate::connection::Connection::appender).
+    ///
     /// # Errors
     ///
     /// Returns an error if the table does not exist or the DuckDB appender cannot
     /// be created.
-    pub fn new(
-        con: RawConnection,
+    pub(crate) fn new(
+        connection: Arc<ConnectionInner>,
         table: &str,
         schema: &str,
     ) -> Result<Appender> {
         let mut appender: duckdb_appender = ptr::null_mut();
         let c_table = CString::new(table)?;
         let c_schema = CString::new(schema)?;
-        // SAFETY: `con.con` is a valid open duckdb_connection. `c_schema` and `c_table`
-        // are valid null-terminated C strings. `appender` is a valid output pointer.
+        // SAFETY: `connection`'s handle is a valid open duckdb_connection, kept alive by
+        // the `Arc` this appender retains. `c_schema` and `c_table` are valid
+        // null-terminated C strings. `appender` is a valid output pointer.
         let res = unsafe {
             duckdb_appender_create(
-                con.con,
+                connection.handle(),
                 c_schema.as_ptr() as *const c_char,
                 c_table.as_ptr() as *const c_char,
                 &mut appender,
             )
         };
         result_from_duckdb_appender(res, &mut appender)
-            .map(|_| Appender { _con: con, inn: appender })
+            .map(|_| Appender { _connection: connection, inn: appender })
     }
 
     /// Appends a row to the table.
@@ -123,6 +134,7 @@ mod appender_tests {
     use crate::{
         error::{DuckDBConversionError, Error},
         ffi::{duckdb_append_int32, duckdb_append_varchar, duckdb_bind_int32, duckdb_bind_varchar},
+        raw::connection::RawConnection,
         types::value::DuckValue,
     };
 
@@ -225,7 +237,7 @@ mod appender_tests {
         let create_sql = "CREATE TABLE test_appender (id INTEGER, name VARCHAR)";
         let _ = con.query(create_sql).unwrap();
 
-        let appender = Appender::new(con.clone(), "test_appender", "main");
+        let appender = con.appender("test_appender", "main");
         assert!(appender.is_ok());
     }
 
@@ -235,7 +247,7 @@ mod appender_tests {
 
         let _ = con.query("CREATE TABLE test_append (id INTEGER, name VARCHAR)").unwrap();
 
-        let mut appender = Appender::new(con.clone(), "test_append", "main").unwrap();
+        let mut appender = con.appender("test_append", "main").unwrap();
         let mut row = Row(1, "Alice");
         let mut row2 = Row(2, "Sara");
         let mut row3 = Row(3, "Charlie");
@@ -274,7 +286,8 @@ mod appender_tests {
 
     #[test]
     fn test_appender_rejects_interior_nul_table_name() {
-        let error = Appender::new(get_test_connection(), "test\0table", "main")
+        let error = get_test_connection()
+            .appender("test\0table", "main")
             .err()
             .expect("interior NUL table name should fail");
         assert!(matches!(error, Error::NulError(_)));
@@ -282,7 +295,8 @@ mod appender_tests {
 
     #[test]
     fn test_appender_rejects_interior_nul_schema_name() {
-        let error = Appender::new(get_test_connection(), "test_table", "ma\0in")
+        let error = get_test_connection()
+            .appender("test_table", "ma\0in")
             .err()
             .expect("interior NUL schema name should fail");
         assert!(matches!(error, Error::NulError(_)));
@@ -293,15 +307,15 @@ mod appender_tests {
         let mut con = get_test_connection();
         con.query("CREATE TABLE test_table (id INTEGER)").unwrap();
 
-        let appender = Appender::new(con, "test_table", "nonexistent_schema");
+        let appender = con.appender("test_table", "nonexistent_schema");
         assert!(appender.is_err());
     }
 
     #[test]
     fn test_appender_error_on_nonexistent_table() {
-        let con = get_test_connection();
+        let mut con = get_test_connection();
 
-        let appender = Appender::new(con, "nonexistent_table", "main");
+        let appender = con.appender("nonexistent_table", "main");
         assert!(appender.is_err());
     }
 
@@ -310,7 +324,7 @@ mod appender_tests {
         let mut con = get_test_connection();
         con.query("CREATE TABLE saved_rows (id INTEGER, name VARCHAR)").unwrap();
         let reader = con.try_clone().unwrap();
-        let mut appender = Appender::new(con.clone(), "saved_rows", "main").unwrap();
+        let mut appender = con.appender("saved_rows", "main").unwrap();
 
         appender.append(&mut Row(11, "saved")).unwrap();
         appender.save().unwrap();
@@ -325,7 +339,7 @@ mod appender_tests {
         let reader = con.try_clone().unwrap();
 
         {
-            let mut appender = Appender::new(con.clone(), "dropped_rows", "main").unwrap();
+            let mut appender = con.appender("dropped_rows", "main").unwrap();
             appender.append(&mut Row(12, "dropped")).unwrap();
         }
 
@@ -336,7 +350,7 @@ mod appender_tests {
     fn test_append_propagates_row_error_and_connection_remains_usable() {
         let mut con = get_test_connection();
         con.query("CREATE TABLE failed_rows (id INTEGER, name VARCHAR)").unwrap();
-        let mut appender = Appender::new(con.clone(), "failed_rows", "main").unwrap();
+        let mut appender = con.appender("failed_rows", "main").unwrap();
 
         let error = appender.append(&mut FailingRow).unwrap_err();
         assert!(matches!(

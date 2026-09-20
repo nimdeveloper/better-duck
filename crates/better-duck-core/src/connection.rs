@@ -194,18 +194,24 @@ impl Connection {
     ///
     /// # Errors
     ///
-    /// Returns an error if closing the underlying connection fails.
+    /// Returns an error if appenders created from this connection are still alive.
+    /// The connection stays open in that case and closes once the last of them is
+    /// dropped.
     #[must_use = "close result should be checked"]
     #[inline]
-    pub fn close(mut self) -> Result<()> {
+    pub fn close(self) -> Result<()> {
         self.0.close()
     }
 
     /// Returns `true` if the connection is open.
+    ///
+    /// Always `true`: [`close`](Connection::close) consumes the connection, so a
+    /// `Connection` value can only ever refer to an open connection. Retained so
+    /// existing callers keep compiling.
     #[inline]
     #[allow(unused)]
     pub fn is_open(&self) -> bool {
-        !self.0.con.is_null()
+        true
     }
 
     /// Returns a reference to the underlying `RawConnection`.
@@ -237,7 +243,7 @@ impl Connection {
     /// including, for `:memory:` databases, connections that observe the same data.
     #[inline]
     pub fn database(&self) -> Database {
-        Database::from_raw(std::sync::Arc::clone(&self.0.db))
+        Database::from_raw(std::sync::Arc::clone(self.0.database()))
     }
 
     /// Returns the raw `duckdb_connection` handle for internal FFI use (e.g. the
@@ -245,7 +251,7 @@ impl Connection {
     #[cfg(feature = "udf")]
     #[inline]
     pub(crate) fn raw_con(&self) -> crate::ffi::duckdb_connection {
-        self.0.con
+        self.0.handle()
     }
 }
 

@@ -31,11 +31,11 @@ pub struct DuckDbConnection {
     /// Prepared-statement cache — keyed by SQL text so each unique query is
     /// parsed and planned by DuckDB at most once per connection.
     ///
-    /// Declared **before** `inner` on purpose: struct fields drop in declaration
-    /// order, and every cached `CachedStatement` borrows `inner`'s DuckDB
-    /// connection. Dropping the cache first destroys those prepared handles
-    /// while the connection is still open. Moving this field below `inner`
-    /// would destroy them after `duckdb_disconnect`.
+    /// Still declared before `inner` so the cache drops first, which keeps the
+    /// destruction order tidy and predictable. Correctness no longer depends on
+    /// it: each `CachedStatement` retains the connection it was prepared on, so
+    /// the connection cannot be disconnected while any cached statement is alive
+    /// regardless of field order.
     statement_cache: StatementCache<DuckDb, CachedStatement>,
     pub(crate) inner: better_duck_core::connection::Connection,
     transaction_manager: AnsiTransactionManager,

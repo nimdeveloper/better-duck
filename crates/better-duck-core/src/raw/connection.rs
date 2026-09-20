@@ -116,21 +116,106 @@ impl Drop for RawDatabase {
     }
 }
 
+/// Sole owner of one open DuckDB connection handle.
+///
+/// Every resource that DuckDB scopes to a connection — prepared statements,
+/// appenders, and later pending/control handles — retains an
+/// [`Arc<ConnectionInner>`]. That makes "a child cannot outlive its connection"
+/// a type invariant instead of a convention the caller has to remember: the
+/// handle is disconnected in [`Drop`], which cannot run while any child still
+/// holds a reference.
+///
+/// Sharing the *connection* is deliberate, and different from sharing the
+/// database. Opening a second connection to the same database would put the
+/// child in a different transaction scope, so cached statements and appenders
+/// would silently run outside the caller's `BEGIN`/`ROLLBACK`.
+pub(crate) struct ConnectionInner {
+    /// Owned connection handle. Disconnected exactly once, in `Drop`.
+    con: duckdb_connection,
+    /// Keeps the database open for at least as long as this connection.
+    db: Arc<RawDatabase>,
+}
+
+impl ConnectionInner {
+    /// Opens a connection against `db`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DuckDBFailure`] if DuckDB cannot establish the connection.
+    fn connect(db: Arc<RawDatabase>) -> Result<Arc<ConnectionInner>> {
+        let mut con: duckdb_connection = ptr::null_mut();
+        // SAFETY: `db.0` is a valid open duckdb_database kept alive by the `Arc`;
+        // `con` is a valid output pointer.
+        let r = unsafe { duckdb_connect(db.0, &mut con) };
+        if r != DuckDBSuccess {
+            // SAFETY: `con` may be partially initialized on failure; `duckdb_disconnect`
+            // handles null/invalid handles gracefully and nulls the pointer.
+            unsafe { duckdb_disconnect(&mut con) };
+            return Err(Error::DuckDBFailure(FFIError::new(r), Some("connect error".to_owned())));
+        }
+        Ok(Arc::new(ConnectionInner { con, db }))
+    }
+
+    /// Returns the raw connection handle.
+    ///
+    /// Crate-internal: callers must not retain the handle beyond the borrow, and
+    /// must not use it concurrently from another thread (see the `Sync` note below).
+    #[inline]
+    pub(crate) fn handle(&self) -> duckdb_connection {
+        self.con
+    }
+
+    /// Returns the shared database this connection belongs to.
+    #[inline]
+    pub(crate) fn database(&self) -> &Arc<RawDatabase> {
+        &self.db
+    }
+}
+
+impl Drop for ConnectionInner {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `self.con` is the valid handle produced by `connect` and has not been
+        // disconnected before: `ConnectionInner` is only reachable behind an `Arc`, so
+        // this runs exactly once, when the last child reference is released.
+        // `duckdb_disconnect` returns void and tolerates null, so this cannot fail or panic.
+        unsafe { duckdb_disconnect(&mut self.con) };
+    }
+}
+
+// SAFETY: a `duckdb_connection` holds no thread-local state, so DuckDB permits using
+// it from a thread other than the one that created it. `ConnectionInner` owns its
+// handle outright and exposes no interior mutability, so transferring it (always
+// behind an `Arc`) to another thread cannot invalidate the handle.
+unsafe impl Send for ConnectionInner {}
+
+// SAFETY: DuckDB does *not* allow two overlapping calls on one connection, so `Sync`
+// is justified only because a shared `&ConnectionInner` cannot produce such a call.
+// `con` is private and its sole accessor is the crate-internal `handle()`; every type
+// that can reach it (`RawConnection`, `CachedStatement`, `Appender`) is `Send` but not
+// `Sync`, and each takes `&mut self` for the operations that drive the connection.
+// So `&ConnectionInner` can be observed from several threads while the connection
+// itself stays exclusively owned by whichever handle is using it.
+unsafe impl Sync for ConnectionInner {}
+
 /// A low-level connection to a DuckDB database.
 ///
-/// `RawConnection` manages both a connection handle and a reference to the underlying
-/// database. It provides methods to execute SQL commands and manage the connection lifecycle.
+/// `RawConnection` is a handle to a shared [`ConnectionInner`]. It provides methods to
+/// execute SQL commands and to create connection-scoped children.
 ///
 /// # Thread Safety
 ///
-/// While the database handle is shared through an [`Arc`], each connection is unique and
-/// should not be shared between threads. Instead, create new connections using
-/// [`try_clone`](RawConnection::try_clone) for each thread.
+/// A `RawConnection` may be moved between threads but not used from two at once.
+/// For a genuinely independent connection to the same database, use
+/// [`try_clone`](RawConnection::try_clone), which performs a fresh `duckdb_connect`
+/// and therefore gets its own transaction scope.
 ///
 /// # Resource Management
 ///
-/// Connections are automatically closed when dropped. The underlying database remains open
-/// until all connections are dropped and the last [`Arc`] reference is released.
+/// The connection is disconnected once this handle and every child it produced
+/// (prepared statements, appenders) have been dropped. The database stays open
+/// until the last connection to it is released. [`close`](RawConnection::close)
+/// consumes the handle and reports whether children were still outstanding.
 ///
 /// # Example
 ///
@@ -143,46 +228,37 @@ impl Drop for RawDatabase {
 /// let mut conn2 = conn.try_clone().unwrap();
 /// ```
 pub struct RawConnection {
-    /// Shared handle to the underlying database.
-    pub db: Arc<RawDatabase>,
-    /// The raw DuckDB connection handle.
-    pub con: duckdb_connection,
+    /// Shared owner of the connection handle.
+    inner: Arc<ConnectionInner>,
 }
 
 impl RawConnection {
     /// Returns the underlying raw DuckDB connection handle.
-    ///
-    /// # Safety
-    ///
-    /// This function exposes the raw FFI connection handle. Improper use of this handle
-    /// may lead to undefined behavior. Use with caution.
-    #[allow(unused)]
-    fn raw(&self) -> duckdb_connection {
-        self.con
+    #[inline]
+    pub(crate) fn handle(&self) -> duckdb_connection {
+        self.inner.handle()
+    }
+
+    /// Returns the shared connection owner, for children that must outlive this handle.
+    #[inline]
+    pub(crate) fn inner(&self) -> &Arc<ConnectionInner> {
+        &self.inner
+    }
+
+    /// Returns the shared database backing this connection.
+    #[inline]
+    pub(crate) fn database(&self) -> &Arc<RawDatabase> {
+        self.inner.database()
     }
 
     /// Creates a new `RawConnection` from an existing [`RawDatabase`].
-    ///
-    /// # Safety
-    ///
-    /// The `db` must contain a valid, open `duckdb_database`. This function is called
-    /// internally by [`open_with_flags`](RawConnection::open_with_flags).
     ///
     /// # Errors
     ///
     /// Returns an error if the connection cannot be established.
     #[inline]
     pub(crate) fn new(db: Arc<RawDatabase>) -> Result<RawConnection> {
-        let mut con: duckdb_connection = ptr::null_mut();
-        // SAFETY: `db.0` is a valid open duckdb_database; `con` is a valid output pointer.
-        let r = unsafe { duckdb_connect(db.0, &mut con) };
-        if r != DuckDBSuccess {
-            // SAFETY: `con` may be partially initialized on failure; `duckdb_disconnect`
-            // handles null/invalid handles gracefully.
-            unsafe { duckdb_disconnect(&mut con) };
-            return Err(Error::DuckDBFailure(FFIError::new(r), Some("connect error".to_owned())));
-        }
-        Ok(RawConnection { db, con })
+        ConnectionInner::connect(db).map(|inner| RawConnection { inner })
     }
 
     /// Opens a new connection to the database at the given path with the specified config.
@@ -202,34 +278,47 @@ impl RawConnection {
 
     /// Closes the connection, releasing the underlying DuckDB handle.
     ///
-    /// Subsequent calls are no-ops.
+    /// Consuming the handle makes double-close unrepresentable. The connection is
+    /// disconnected as soon as the last child (prepared statement, appender) is also
+    /// released, so dropping a `RawConnection` is equally safe — `close` exists to
+    /// *report* outstanding children rather than to silence them.
     ///
     /// # Errors
     ///
-    /// Always returns `Ok(())`.
-    pub fn close(&mut self) -> Result<()> {
-        if self.con.is_null() {
-            return Ok(());
+    /// Returns [`Error::DuckDBFailure`] if prepared statements or appenders created
+    /// from this connection are still alive. The connection stays open in that case,
+    /// and is disconnected when the last of them is dropped.
+    pub fn close(self) -> Result<()> {
+        match Arc::try_unwrap(self.inner) {
+            // Dropping the sole owner disconnects here.
+            Ok(inner) => {
+                drop(inner);
+                Ok(())
+            },
+            Err(shared) => {
+                let outstanding = Arc::strong_count(&shared).saturating_sub(1);
+                Err(Error::DuckDBFailure(
+                    FFIError::new(DuckDBError),
+                    Some(format!(
+                        "cannot close connection: {outstanding} prepared statement(s) or \
+                         appender(s) still borrow it"
+                    )),
+                ))
+            },
         }
-        // SAFETY: `self.con` is a valid open duckdb_connection. After disconnect it is
-        // set to null so this code path cannot run twice.
-        unsafe {
-            duckdb_disconnect(&mut self.con);
-            self.con = ptr::null_mut();
-        }
-        Ok(())
     }
 
-    /// Creates a new connection to the same database as this one.
+    /// Opens a second, independent connection to the same database.
     ///
-    /// The new connection shares the underlying database handle via [`Arc`].
+    /// This performs a fresh `duckdb_connect`, so the new connection has its own
+    /// transaction scope. To share *this* connection's transaction with a child
+    /// resource, pass [`inner`](RawConnection::inner) instead of cloning.
     ///
     /// # Errors
     ///
     /// Returns `Error::DuckDBFailure` if the connection cannot be established.
     pub fn try_clone(&self) -> Result<Self> {
-        // SAFETY: `self.db` is a valid Arc<RawDatabase> with a live database handle.
-        RawConnection::new(self.db.clone())
+        RawConnection::new(Arc::clone(self.database()))
     }
 
     /// Executes a SQL statement and returns the result.
@@ -258,7 +347,11 @@ impl RawConnection {
         // zeroed `duckdb_result`. Ownership transfers to `DuckResult::new`, whose `Drop`
         // calls `duckdb_destroy_result` exactly once.
         let r = unsafe {
-            duckdb_query(self.con, c_str.as_ptr() as *const c_char, &mut out as *mut duckdb_result)
+            duckdb_query(
+                self.handle(),
+                c_str.as_ptr() as *const c_char,
+                &mut out as *mut duckdb_result,
+            )
         };
         result_from_duckdb_result(r, &mut out as *mut duckdb_result)?;
         Ok(DuckResult::new(out))
@@ -284,6 +377,9 @@ impl RawConnection {
 
     /// Creates a new appender for the specified table and schema.
     ///
+    /// The appender retains *this* connection, so appended rows participate in any
+    /// transaction open on it.
+    ///
     /// # Errors
     ///
     /// Returns an error if the table does not exist or the appender cannot be created.
@@ -293,7 +389,7 @@ impl RawConnection {
         table: &str,
         schema: &str,
     ) -> Result<Appender> {
-        Appender::new(self.clone(), table, schema)
+        Appender::new(Arc::clone(self.inner()), table, schema)
     }
 
     /// Executes a parameterized INSERT statement for each value in `values`.
@@ -349,29 +445,14 @@ impl RawConnection {
     }
 }
 
-impl Clone for RawConnection {
-    /// Creates a new connection to the same database.
-    ///
-    /// # Warning
-    ///
-    /// Cloning a `RawConnection` creates a new DuckDB connection to the same underlying
-    /// database. Prefer using [`try_clone`](RawConnection::try_clone) if you need to
-    /// handle connection errors explicitly.
-    fn clone(&self) -> Self {
-        match self.try_clone() {
-            Ok(con) => con,
-            Err(e) => panic!("Failed to clone RawConnection: {e:?}"),
-        }
-    }
-}
-impl Drop for RawConnection {
-    #[inline]
-    fn drop(&mut self) {
-        if let Err(error) = self.close() {
-            log::error!("failed to close DuckDB connection during drop: {error}");
-        }
-    }
-}
+// `RawConnection` deliberately does not implement `Clone`. Cloning used to mean
+// "open a *separate* DuckDB connection", which silently moved the clone into a
+// different transaction scope, and it panicked when `duckdb_connect` failed. Use
+// `try_clone` for an independent connection, or `inner()` to share this one.
+//
+// No `Drop` impl is needed: `ConnectionInner` owns the handle and disconnects when
+// the last reference — this handle or any child — is released. That destructor
+// returns void and therefore cannot panic.
 
 #[cfg(test)]
 mod tests {
@@ -440,13 +521,98 @@ mod tests {
         assert!(conn.appender("missing_table", "main").is_err());
     }
 
+    /// `close` consumes the handle, so a second call cannot be written at all —
+    /// double-close is a compile error rather than a runtime guard.
     #[test]
-    fn raw_close_is_idempotent() {
+    fn close_consumes_the_connection() {
+        let path = CString::new(":memory:").unwrap();
+        let conn = RawConnection::open_with_flags(&path, Config::default()).unwrap();
+        conn.close().unwrap();
+    }
+
+    #[test]
+    fn close_reports_outstanding_children() {
         let path = CString::new(":memory:").unwrap();
         let mut conn = RawConnection::open_with_flags(&path, Config::default()).unwrap();
-        conn.close().unwrap();
-        conn.close().unwrap();
-        assert!(conn.con.is_null());
+        conn.query("CREATE TABLE held (id INTEGER)").unwrap();
+        let appender = conn.appender("held", "main").unwrap();
+
+        let error = conn.close().unwrap_err();
+        assert!(
+            matches!(error, Error::DuckDBFailure(_, Some(ref m)) if m.contains("still borrow it")),
+            "unexpected error: {error:?}"
+        );
+
+        // The connection stayed open; dropping the last child disconnects it.
+        drop(appender);
+    }
+
+    /// Regression: a `CachedStatement` retains its *connection*, so the connection
+    /// handle cannot be disconnected while the statement is still alive. Retaining
+    /// only the database would leave `duckdb_destroy_prepare` running against a
+    /// disconnected connection.
+    #[test]
+    fn cached_statement_keeps_its_connection_alive() {
+        use crate::raw::statement::CachedStatement;
+
+        let path = CString::new(":memory:").unwrap();
+        let mut conn = RawConnection::open_with_flags(&path, Config::default()).unwrap();
+        conn.query("CREATE TABLE kept (id INTEGER); INSERT INTO kept VALUES (5)").unwrap();
+
+        let mut stmt = CachedStatement::prepare(&conn, "SELECT id FROM kept").unwrap();
+        drop(conn);
+
+        let mut rows = stmt.execute().unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("id").unwrap(), &crate::types::value::DuckValue::Int(5));
+    }
+
+    /// A statement may be moved to another thread; it carries its connection with it.
+    #[test]
+    fn cached_statement_moves_across_threads() {
+        use crate::raw::statement::CachedStatement;
+
+        let path = CString::new(":memory:").unwrap();
+        let mut conn = RawConnection::open_with_flags(&path, Config::default()).unwrap();
+        conn.query("CREATE TABLE moved (id INTEGER); INSERT INTO moved VALUES (9)").unwrap();
+        let mut stmt = CachedStatement::prepare(&conn, "SELECT id FROM moved").unwrap();
+        drop(conn);
+
+        let value = std::thread::spawn(move || {
+            let mut rows = stmt.execute().unwrap();
+            let row = rows.next().unwrap().unwrap();
+            row.get("id").unwrap().clone()
+        })
+        .join()
+        .unwrap();
+
+        assert_eq!(value, crate::types::value::DuckValue::Int(9));
+    }
+
+    /// Regression: the appender runs on the caller's own connection, so its rows
+    /// join the caller's transaction and roll back with it. Previously the appender
+    /// was created on a *separate* cloned connection and the rows survived.
+    #[test]
+    fn appender_rows_join_the_callers_transaction() {
+        let path = CString::new(":memory:").unwrap();
+        let mut conn = RawConnection::open_with_flags(&path, Config::default()).unwrap();
+        conn.query("CREATE TABLE txn_rows (id INTEGER)").unwrap();
+
+        conn.query("BEGIN TRANSACTION").unwrap();
+        {
+            let mut appender = conn.appender("txn_rows", "main").unwrap();
+            appender.append(&mut 42_i32).unwrap();
+            appender.save().unwrap();
+        }
+        conn.query("ROLLBACK").unwrap();
+
+        let mut rows = conn.query("SELECT count(*) AS n FROM txn_rows").unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(
+            row.get("n").unwrap(),
+            &crate::types::value::DuckValue::BigInt(0),
+            "appended rows must roll back with the caller's transaction"
+        );
     }
 
     #[test]
