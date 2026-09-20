@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 224,
-  "expected_pending": 179,
+  "expected_production_used": 226,
+  "expected_pending": 177,
   "methods": [
     {
       "category": "Open Connect",
@@ -70,18 +70,22 @@
     {
       "category": "Open Connect",
       "symbol": "duckdb_interrupt",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "E5",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/connection.rs"
+      ]
     },
     {
       "category": "Open Connect",
       "symbol": "duckdb_query_progress",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "E5",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/connection.rs"
+      ]
     },
     {
       "category": "Open Connect",

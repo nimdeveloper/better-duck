@@ -237,6 +237,19 @@ impl Connection {
         self.0.try_clone().map(Connection)
     }
 
+    /// Returns a [`QueryControl`] for interrupting or observing the query running
+    /// on this connection from another thread.
+    ///
+    /// Mint the control *before* starting the query (typically on another thread),
+    /// then call [`QueryControl::interrupt`] or [`QueryControl::progress`] while it
+    /// runs. The control is generation-scoped: once the query finishes, it can no
+    /// longer affect a later query on the same connection.
+    #[inline]
+    #[must_use]
+    pub fn query_control(&self) -> crate::raw::connection::QueryControl {
+        self.0.query_control()
+    }
+
     /// Returns a shareable handle to the database backing this connection.
     ///
     /// Use [`Database::connect`] to open further connections to the same database —

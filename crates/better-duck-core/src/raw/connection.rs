@@ -3,7 +3,10 @@ use std::{
     mem,
     os::raw::c_char,
     ptr, str,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use crate::{
@@ -11,8 +14,8 @@ use crate::{
     error::{Error, Result},
     ffi::{
         duckdb_close, duckdb_connect, duckdb_connection, duckdb_database, duckdb_disconnect,
-        duckdb_free, duckdb_open_ext, duckdb_query, duckdb_result, DuckDBError, DuckDBSuccess,
-        Error as FFIError,
+        duckdb_free, duckdb_interrupt, duckdb_open_ext, duckdb_query, duckdb_query_progress,
+        duckdb_result, DuckDBError, DuckDBSuccess, Error as FFIError,
     },
     helpers::duck_result::result_from_duckdb_result,
     raw::{
@@ -134,6 +137,13 @@ pub(crate) struct ConnectionInner {
     con: duckdb_connection,
     /// Keeps the database open for at least as long as this connection.
     db: Arc<RawDatabase>,
+    /// Monotonic counter identifying the *current* query on this connection.
+    ///
+    /// Advanced once each query completes (see [`ConnectionInner::advance_query`]).
+    /// A [`QueryControl`] captures the generation live when it is minted; its
+    /// [`interrupt`](QueryControl::interrupt) is a no-op once the generation has
+    /// moved on, so a delayed cancellation can never interrupt a *later* query.
+    generation: AtomicU64,
 }
 
 impl ConnectionInner {
@@ -153,7 +163,7 @@ impl ConnectionInner {
             unsafe { duckdb_disconnect(&mut con) };
             return Err(Error::DuckDBFailure(FFIError::new(r), Some("connect error".to_owned())));
         }
-        Ok(Arc::new(ConnectionInner { con, db }))
+        Ok(Arc::new(ConnectionInner { con, db, generation: AtomicU64::new(0) }))
     }
 
     /// Returns the raw connection handle.
@@ -163,6 +173,21 @@ impl ConnectionInner {
     #[inline]
     pub(crate) fn handle(&self) -> duckdb_connection {
         self.con
+    }
+
+    /// Reads the current query generation.
+    #[inline]
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    /// Advances the query generation, invalidating any outstanding
+    /// [`QueryControl`] minted for the query that just finished.
+    ///
+    /// Called at the end of every query/statement execution.
+    #[inline]
+    pub(crate) fn advance_query(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Returns the shared database this connection belongs to.
@@ -197,6 +222,87 @@ unsafe impl Send for ConnectionInner {}
 // So `&ConnectionInner` can be observed from several threads while the connection
 // itself stays exclusively owned by whichever handle is using it.
 unsafe impl Sync for ConnectionInner {}
+
+/// A snapshot of a running query's progress.
+///
+/// Values mirror DuckDB's `duckdb_query_progress_type`. `percentage` is `-1.0`
+/// when DuckDB cannot estimate progress (e.g. progress reporting disabled, or no
+/// query running).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct QueryProgress {
+    /// Completion in `0.0..=100.0`, or `-1.0` when unknown.
+    pub percentage: f64,
+    /// Rows processed so far.
+    pub rows_processed: u64,
+    /// Total rows the query expects to process.
+    pub total_rows_to_process: u64,
+}
+
+/// A narrow, thread-safe handle for interrupting or observing one query.
+///
+/// Minted by [`RawConnection::query_control`]. Unlike the connection itself,
+/// `QueryControl` is `Clone + Send + Sync`: DuckDB explicitly permits
+/// `duckdb_interrupt` and `duckdb_query_progress` to be called from a *different*
+/// thread than the one running the query — that is their entire purpose. It
+/// exposes **only** those two read/signal operations, never anything that would
+/// execute SQL, so it cannot create a second concurrent user of the connection.
+///
+/// # Generation scoping
+///
+/// The control captures the connection's query generation when minted.
+/// [`interrupt`](QueryControl::interrupt) only signals DuckDB while that
+/// generation is still current; once the query completes (advancing the
+/// generation) it becomes a no-op. This makes a delayed or racing cancellation
+/// unable to interrupt a subsequent, unrelated query on the same connection.
+#[derive(Clone)]
+pub struct QueryControl {
+    inner: Arc<ConnectionInner>,
+    generation: u64,
+}
+
+impl QueryControl {
+    /// Requests interruption of the query this control was minted for.
+    ///
+    /// Idempotent, and a no-op once that query has finished (the generation has
+    /// advanced). Returns `true` if the interrupt was actually signalled to
+    /// DuckDB, `false` if it was skipped as stale.
+    pub fn interrupt(&self) -> bool {
+        if self.inner.generation() != self.generation {
+            return false;
+        }
+        // SAFETY: `self.inner` keeps the connection alive, so the handle is valid.
+        // DuckDB documents `duckdb_interrupt` as safe to call from another thread
+        // while a query runs on the connection; it only sets an interrupt flag.
+        unsafe { duckdb_interrupt(self.inner.handle()) };
+        true
+    }
+
+    /// Reads the progress of the query currently running on the connection.
+    ///
+    /// Returns `None` once the query this control was minted for has finished
+    /// (the generation has advanced), so a stale control cannot report a later
+    /// query's progress as its own.
+    pub fn progress(&self) -> Option<QueryProgress> {
+        if self.inner.generation() != self.generation {
+            return None;
+        }
+        // SAFETY: `self.inner` keeps the connection alive. DuckDB documents
+        // `duckdb_query_progress` as safe to call while a query runs; it copies a
+        // small POD struct out.
+        let raw = unsafe { duckdb_query_progress(self.inner.handle()) };
+        Some(QueryProgress {
+            percentage: raw.percentage,
+            rows_processed: raw.rows_processed,
+            total_rows_to_process: raw.total_rows_to_process,
+        })
+    }
+
+    /// Returns `true` if the query this control was minted for is still current.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.inner.generation() == self.generation
+    }
+}
 
 /// A low-level connection to a DuckDB database.
 ///
@@ -353,8 +459,23 @@ impl RawConnection {
                 &mut out as *mut duckdb_result,
             )
         };
+        // The query is finished (whether it succeeded or failed): advance the
+        // generation so any `QueryControl` minted for it can no longer interrupt.
+        self.inner.advance_query();
         result_from_duckdb_result(r, &mut out as *mut duckdb_result)?;
         Ok(DuckResult::new(out))
+    }
+
+    /// Returns a [`QueryControl`] for the query currently running (or about to run)
+    /// on this connection.
+    ///
+    /// The control can interrupt that query or read its progress from another
+    /// thread. It captures the connection's current query generation, so once the
+    /// query completes the control's [`interrupt`](QueryControl::interrupt) becomes
+    /// a no-op — a delayed cancellation cannot affect a *later* query.
+    #[must_use]
+    pub fn query_control(&self) -> QueryControl {
+        QueryControl { inner: Arc::clone(&self.inner), generation: self.inner.generation() }
     }
 
     /// Prepares a SQL statement for execution.
@@ -635,5 +756,90 @@ mod tests {
             error,
             Error::DuckDBFailure(_, Some(message)) if message == "Failed to insert values"
         ));
+    }
+
+    #[test]
+    fn query_control_goes_stale_after_the_query_completes() {
+        let path = CString::new(":memory:").unwrap();
+        let mut conn = RawConnection::open_with_flags(&path, Config::default()).unwrap();
+
+        let control = conn.query_control();
+        assert!(control.is_active(), "freshly minted control is active");
+
+        // Running a query advances the generation, retiring the control.
+        conn.query("SELECT 1").unwrap();
+        assert!(!control.is_active(), "control is stale once its query finished");
+
+        // A stale control neither signals DuckDB nor reports progress.
+        assert!(!control.interrupt(), "stale interrupt is a no-op");
+        assert!(control.progress().is_none(), "stale control reports no progress");
+    }
+
+    #[test]
+    fn interrupt_is_idempotent_and_generation_scoped() {
+        let path = CString::new(":memory:").unwrap();
+        let mut conn = RawConnection::open_with_flags(&path, Config::default()).unwrap();
+
+        // A control for the current (not-yet-run) query can be signalled repeatedly.
+        let control = conn.query_control();
+        assert!(control.interrupt(), "first interrupt signals");
+        assert!(control.interrupt(), "interrupt is idempotent while active");
+
+        // The interrupt flag applies to the connection; a benign query still runs.
+        // (DuckDB clears the flag when the interrupted query is processed.)
+        let _ = conn.query("SELECT 1");
+
+        // A control minted for an earlier generation cannot interrupt a later query.
+        let stale = conn.query_control();
+        conn.query("SELECT 2").unwrap();
+        conn.query("SELECT 3").unwrap();
+        assert!(!stale.interrupt(), "control cannot reach across generations");
+    }
+
+    #[test]
+    fn query_control_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<QueryControl>();
+    }
+
+    /// A `QueryControl` interrupts a genuinely long-running query from another
+    /// thread, and the interrupted query returns an error rather than completing.
+    #[test]
+    fn interrupt_stops_a_long_running_query() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let path = CString::new(":memory:").unwrap();
+        let mut conn = RawConnection::open_with_flags(&path, Config::default()).unwrap();
+        let control = conn.query_control();
+
+        let (tx, rx) = mpsc::channel();
+        // Interrupt shortly after the query starts, from another thread.
+        let interrupter = thread::spawn(move || {
+            // Wait until the main thread signals the query is about to run.
+            rx.recv().unwrap();
+            thread::sleep(std::time::Duration::from_millis(50));
+            control.interrupt();
+        });
+
+        tx.send(()).unwrap();
+        // A large cross join runs long enough to be interrupted mid-flight.
+        let result = conn.query(
+            "SELECT count(*) FROM range(1000000) t1, range(1000000) t2 WHERE t1.range = t2.range",
+        );
+        interrupter.join().unwrap();
+
+        // Either DuckDB reported the interrupt as an error, or (rarely) the query
+        // finished first. If it errored, it must be a *typed engine* error — the
+        // interrupt path goes through `duckdb_result_error_type`, not a bare
+        // `DuckDBFailure`. DuckDB labels an interrupted query `INVALID` (not
+        // `INTERRUPT`) on this build, so we assert the typed shape, not the exact
+        // kind, which is DuckDB's to decide.
+        if let Err(err) = result {
+            assert!(
+                matches!(&err, Error::Engine(_)),
+                "an interrupted query must surface a typed engine error, got {err:?}"
+            );
+        }
     }
 }

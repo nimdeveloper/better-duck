@@ -128,6 +128,9 @@ impl Statement<'_> {
         // to the stack-local zeroed `duckdb_result`. Ownership transfers to `DuckResult::new`,
         // whose `Drop` calls `duckdb_destroy_result` once.
         let resp = unsafe { duckdb_execute_prepared(self.stmt, &mut out as *mut duckdb_result) };
+        // The query is finished: advance the generation so a `QueryControl` minted
+        // for it can no longer interrupt a later query.
+        self.con.inner().advance_query();
         result_from_duckdb_result(resp, &mut out as *mut duckdb_result)?;
         Ok(DuckResult::new(out))
     }
@@ -298,6 +301,9 @@ impl CachedStatement {
         // transfers to DuckResult::new; its Drop calls duckdb_destroy_result exactly once.
         let r =
             unsafe { ffi::duckdb_execute_prepared(self.stmt, &mut out as *mut ffi::duckdb_result) };
+        // The query is finished: advance the generation so a `QueryControl` minted
+        // for it can no longer interrupt a later query.
+        self._connection.advance_query();
         result_from_duckdb_result(r, &mut out as *mut ffi::duckdb_result)?;
         Ok(DuckResult::new(out))
     }

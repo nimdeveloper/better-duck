@@ -58,6 +58,8 @@ pub use config::{AccessMode, Config, DefaultNullOrder, DefaultOrder};
 pub use database::Database;
 /// A DuckDB appender for bulk-inserting rows into a table.
 pub use raw::appender::Appender;
+/// A thread-safe handle for interrupting or observing one running query.
+pub use raw::connection::{QueryControl, QueryProgress};
 /// A fully iterable DuckDB query result.
 pub use raw::result::DuckResult;
 /// A single row from a DuckDB query result.
