@@ -5,7 +5,10 @@ use parking_lot::Mutex;
 use crate::{
     connection::Connection,
     error::{Error, Result},
-    raw::connection::{ConnectionInner, QueryControl},
+    raw::{
+        connection::{ConnectionInner, QueryControl},
+        statement::CachedStatement,
+    },
     result_set::ResultSet,
     types::{appendable::AppendAble, value::DuckValue},
     Appender,
@@ -196,6 +199,94 @@ impl AsyncConnection {
         .await
     }
 
+    /// Prepares and executes `sql` **incrementally**, stepping the query one
+    /// DuckDB task per `spawn_blocking` dispatch and yielding to the async runtime
+    /// between tasks.
+    ///
+    /// This is the async form of [`CachedStatement::pending`]: rather than run the
+    /// whole query inside one blocking call, each `execute_task` runs on its own
+    /// blocking dispatch, so a long query neither monopolises a blocking thread nor
+    /// blocks cancellation. Dropping the returned future stops stepping and, like
+    /// every query path here, requests interruption of the in-flight task via the
+    /// mutex-free [`QueryControl`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if preparation or any execution task fails.
+    pub async fn execute_pending<S>(
+        &self,
+        sql: S,
+    ) -> Result<ResultSet>
+    where
+        S: Into<String> + Send,
+    {
+        use crate::raw::pending::{OwnedPending, PendingState};
+
+        let sql = sql.into();
+
+        // Prepare the statement and create the owned pending on one dispatch.
+        let mut pending: OwnedPending = self
+            .with_connection(move |conn| CachedStatement::prepare(conn.db(), &sql)?.into_pending())
+            .await?;
+
+        // Step one task per dispatch, yielding between tasks. `OwnedPending` is
+        // `Send` and `'static`, so it moves in and out of each blocking task; the
+        // connection mutex is held only for the duration of a single `execute_task`.
+        loop {
+            // Move the pending into the blocking task, step once, move it back out
+            // alongside the resulting state.
+            let (next, returned) = self
+                .dispatch(move || {
+                    let state = pending.execute_task();
+                    (state, pending)
+                })
+                .await?;
+            pending = returned;
+
+            match next {
+                PendingState::Ready => break,
+                PendingState::NotReady | PendingState::NoTasksAvailable => {
+                    // Yield so the runtime can poll other tasks / observe a drop.
+                    tokio::task::yield_now().await;
+                },
+                PendingState::Error => {
+                    // Surface DuckDB's error; `execute` below would also, but this
+                    // avoids a redundant dispatch.
+                    let msg = pending.error();
+                    return Err(Error::Engine(crate::error::EngineError::unavailable(Some(
+                        msg.unwrap_or_else(|| "pending execution failed".to_owned()),
+                    ))));
+                },
+                PendingState::Unknown(_) => {
+                    // Treat an unrecognised state as "keep stepping" but yield first.
+                    tokio::task::yield_now().await;
+                },
+            }
+        }
+
+        // Materialise the final result on a last dispatch, then own it off-thread.
+        self.dispatch(move || pending.execute()?.materialize()).await?
+    }
+
+    /// Runs `f` on a blocking thread with cancel-on-drop interruption, but without
+    /// taking the connection mutex — `f` owns whatever handles it needs. Used by
+    /// [`execute_pending`](AsyncConnection::execute_pending) to move an
+    /// `OwnedPending` in and out of each dispatch.
+    async fn dispatch<F, T>(
+        &self,
+        f: F,
+    ) -> Result<T>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        let handle = tokio::task::spawn_blocking(f);
+        let mut interrupt_on_drop = InterruptOnDrop::new(self.query_control());
+        let out = handle.await.map_err(|e| Error::BackgroundTaskFailed(e.to_string()));
+        interrupt_on_drop.disarm();
+        out
+    }
+
     /// Runs a closure against a bulk-insert [`Appender`] for `table`/`schema` on a
     /// blocking thread.
     ///
@@ -295,6 +386,35 @@ mod tests {
         conn.execute_batch("INSERT INTO t VALUES (1)").await.unwrap();
         let result = conn.execute("SELECT id FROM t").await.unwrap();
         assert_eq!(result.len(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn execute_pending_steps_a_query_to_completion() {
+        let conn = AsyncConnection::open_in_memory().await.unwrap();
+        conn.execute_batch("CREATE TABLE t (id INTEGER)").await.unwrap();
+        conn.execute_batch("INSERT INTO t VALUES (1), (2), (3)").await.unwrap();
+
+        // Incremental stepping yields the same result as one-shot execute().
+        let set = conn.execute_pending("SELECT count(*) AS n FROM t").await.unwrap();
+        match set.rows()[0].get("n").unwrap() {
+            DuckValue::BigInt(n) => assert_eq!(*n, 3),
+            other => panic!("expected BigInt(3), got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn execute_pending_reports_a_prepare_error() {
+        let conn = AsyncConnection::open_in_memory().await.unwrap();
+        // A reference to a missing table fails while preparing the statement (the
+        // catalog lookup happens at prepare, before pending), so the pending path
+        // must surface that error — a `DuckDBFailure` from the prepare adapter —
+        // rather than hang. (Engine-typed errors come from the *execution* path;
+        // prepare failures keep the DuckDBFailure shape.)
+        let err = conn.execute_pending("SELECT * FROM no_such_table").await.unwrap_err();
+        assert!(
+            matches!(err, Error::DuckDBFailure(..) | Error::Engine(_)),
+            "expected a prepare/engine error, got {err:?}"
+        );
     }
 
     #[tokio::test]

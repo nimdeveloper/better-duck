@@ -541,6 +541,20 @@ impl CachedStatement {
         crate::raw::pending::PendingResult::new(self)
     }
 
+    /// Consumes this statement into an owned, `'static` pending execution.
+    ///
+    /// Unlike [`pending`](CachedStatement::pending), the returned
+    /// [`OwnedPending`](crate::raw::pending::OwnedPending) *owns* the statement, so
+    /// it can be stepped across `spawn_blocking` dispatches by the async adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if DuckDB cannot create the pending result.
+    #[allow(dead_code)]
+    pub fn into_pending(self) -> Result<crate::raw::pending::OwnedPending> {
+        crate::raw::pending::OwnedPending::new(self)
+    }
+
     /// Resets all parameter bindings so the statement can be re-executed.
     ///
     /// # Errors

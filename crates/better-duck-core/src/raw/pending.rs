@@ -162,20 +162,122 @@ impl<'a> PendingResult<'a> {
     /// execution fails.
     #[must_use = "the DuckResult owns the query output; consume it"]
     pub fn execute(mut self) -> Result<DuckResult> {
-        // SAFETY: a zeroed `duckdb_result` is the correct initial output state.
-        let mut out = unsafe { mem::zeroed::<duckdb_result>() };
-        // SAFETY: `self.pending` is valid; `&mut out` is a valid output pointer.
-        // `duckdb_execute_pending` writes the (possibly-error) result into `out`;
-        // ownership of `out` transfers to `DuckResult`/the error adapter, which
-        // destroys it exactly once.
-        let rc = unsafe { duckdb_execute_pending(self.pending, &mut out as *mut duckdb_result) };
-        // The pending handle has done its job; destroy it now (Drop would also, but
-        // `self` is consumed here and we want the result adapter to own `out`).
-        // SAFETY: `self.pending` is valid and destroyed exactly once; we then null
-        // it so `Drop` is a no-op.
+        // SAFETY: `self.pending` is valid; `finish_pending` runs `duckdb_execute_pending`,
+        // destroys the pending handle exactly once, and nulls it so `Drop` is a no-op.
+        unsafe { finish_pending(&mut self.pending) }
+    }
+}
+
+/// Runs `duckdb_execute_pending`, destroys the pending handle exactly once
+/// (nulling `*pending` so a later `Drop` is a no-op), and materialises the result.
+///
+/// Shared by [`PendingResult::execute`] and [`OwnedPending::execute`].
+///
+/// # Safety
+///
+/// `*pending` must be a valid, non-null `duckdb_pending_result` not yet destroyed.
+unsafe fn finish_pending(pending: &mut duckdb_pending_result) -> Result<DuckResult> {
+    // SAFETY: a zeroed `duckdb_result` is the correct initial output state.
+    let mut out = unsafe { mem::zeroed::<duckdb_result>() };
+    // SAFETY: `*pending` is valid; `&mut out` is a valid output pointer.
+    // `duckdb_execute_pending` writes the (possibly-error) result into `out`;
+    // ownership of `out` transfers to `DuckResult`/the error adapter, which destroys
+    // it exactly once.
+    let rc = unsafe { duckdb_execute_pending(*pending, &mut out as *mut duckdb_result) };
+    // SAFETY: `*pending` is valid; destroyed exactly once and nulled here.
+    unsafe { duckdb_destroy_pending(pending) };
+    crate::helpers::duck_result::result_from_duckdb_result(rc, &mut out as *mut duckdb_result)?;
+    Ok(DuckResult::new(out))
+}
+
+/// An owned pending execution: like [`PendingResult`] but it *owns* its
+/// [`CachedStatement`] instead of borrowing one, so it carries no lifetime and is
+/// `'static`.
+///
+/// This is what lets the async adapter step a query one task per
+/// `spawn_blocking` dispatch — the whole `OwnedPending` moves in and out of each
+/// blocking task, which a borrow-based `PendingResult` could not do.
+pub struct OwnedPending {
+    /// Destroyed first (declared before `_stmt`): the pending references the
+    /// statement, so it must be torn down before the statement's handle.
+    pending: duckdb_pending_result,
+    /// Owned statement, kept alive (with its connection) for the pending's whole
+    /// life. Never read directly — the pending uses the handle DuckDB copied at
+    /// creation — but its `Drop` must run *after* the pending's, hence the field
+    /// order above.
+    _stmt: CachedStatement,
+}
+
+// SAFETY: `OwnedPending` owns its pending handle and `CachedStatement` outright
+// and exposes no interior mutability. DuckDB permits moving a pending result to a
+// different thread as long as it is not used from two at once; `&mut self` on
+// every stepping method and the lack of `Sync` guarantee no concurrent use. This
+// mirrors `CachedStatement`'s own `Send` (which this value also contains).
+unsafe impl Send for OwnedPending {}
+
+impl OwnedPending {
+    /// Creates an owned pending execution from an owned prepared statement.
+    ///
+    /// Bind parameters on `stmt` before calling this.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Engine`] if DuckDB cannot create the pending result.
+    pub(crate) fn new(stmt: CachedStatement) -> Result<OwnedPending> {
+        let mut pending: duckdb_pending_result = std::ptr::null_mut();
+        // SAFETY: `stmt.handle()` is a valid prepared statement owned by `stmt`, which
+        // this value retains; `&mut pending` is a valid output pointer. DuckDB requires
+        // the pending result to be destroyed regardless of the return code.
+        let rc = unsafe { duckdb_pending_prepared(stmt.handle(), &mut pending) };
+        if rc != DuckDBSuccess {
+            // SAFETY: `pending` is the (possibly-error) handle; error string borrowed
+            // until destroy, so copy first, then destroy exactly once.
+            let message = unsafe { pending_error_message(pending) };
+            // SAFETY: destroyed exactly once here on the failure path.
+            unsafe { duckdb_destroy_pending(&mut pending) };
+            return Err(Error::Engine(EngineError::unavailable(Some(
+                message.unwrap_or_else(|| "failed to create pending result".to_owned()),
+            ))));
+        }
+        Ok(OwnedPending { pending, _stmt: stmt })
+    }
+
+    /// Executes a single task, returning the resulting [`PendingState`].
+    #[must_use = "the returned state says whether to keep stepping, finish, or stop on error"]
+    pub fn execute_task(&mut self) -> PendingState {
+        // SAFETY: `self.pending` is a valid, live pending result.
+        PendingState::from_raw(unsafe { duckdb_pending_execute_task(self.pending) })
+    }
+
+    /// Returns DuckDB's current error message, if any.
+    #[must_use]
+    pub fn error(&self) -> Option<String> {
+        // SAFETY: `self.pending` is a valid, live pending result.
+        unsafe { pending_error_message(self.pending) }
+    }
+
+    /// Runs to completion and returns the materialised [`DuckResult`], consuming
+    /// `self` so the result is transferred exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Engine`] carrying DuckDB's classification/message on failure.
+    #[must_use = "the DuckResult owns the query output; consume it"]
+    pub fn execute(mut self) -> Result<DuckResult> {
+        // SAFETY: `self.pending` is valid; `finish_pending` executes, destroys the
+        // handle once, and nulls it so `Drop` is a no-op. `self._stmt` drops afterwards.
+        unsafe { finish_pending(&mut self.pending) }
+    }
+}
+
+impl Drop for OwnedPending {
+    fn drop(&mut self) {
+        if self.pending.is_null() {
+            return;
+        }
+        // SAFETY: `self.pending` is a valid, non-null handle owned exclusively by this
+        // value (null-guarded above); destroyed exactly once, before `stmt` drops.
         unsafe { duckdb_destroy_pending(&mut self.pending) };
-        crate::helpers::duck_result::result_from_duckdb_result(rc, &mut out as *mut duckdb_result)?;
-        Ok(DuckResult::new(out))
     }
 }
 
