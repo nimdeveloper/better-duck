@@ -741,6 +741,17 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionSymbolVisitor {
         self.test_depth -= usize::from(test_only);
     }
 
+    fn visit_item_use(
+        &mut self,
+        _item: &'ast syn::ItemUse,
+    ) {
+        // Deliberately NOT descending into `use` trees. A bare import like
+        // `use ffi::duckdb_open;` is not a *use* of the symbol — counting it would
+        // let a dead import mark a capability "production_used". A genuine call
+        // site (`duckdb_open(...)`, or the bare `duckdb_open` ident in a call after
+        // importing it) is still recorded by `visit_ident` elsewhere in the file.
+    }
+
     fn visit_ident(
         &mut self,
         ident: &'ast syn::Ident,
@@ -1210,6 +1221,7 @@ Interrupt.
         let file = syn::parse_file(
             r#"
             use ffi::duckdb_open;
+            use ffi::duckdb_dead_import;
             #[cfg(test)]
             mod tests { use ffi::duckdb_interrupt; }
             #[test]
@@ -1218,6 +1230,7 @@ Interrupt.
             fn maybe_production() { ffi::duckdb_query(); }
             #[cfg(all(test, feature = "udf"))]
             fn test_only_all() { ffi::duckdb_connect(); }
+            fn uses_the_import() { duckdb_open(); }
             bind_function!(duckdb_bind_int32);
             "#,
         )
@@ -1227,10 +1240,18 @@ Interrupt.
         assert_eq!(
             visitor.symbols,
             BTreeSet::from([
+                // recorded via the macro token walk
                 "duckdb_bind_int32".to_owned(),
+                // imported AND called -> recorded via the call-site ident, not the `use`
                 "duckdb_open".to_owned(),
+                // called in a non-test, feature-gated fn
                 "duckdb_query".to_owned(),
-            ])
+            ]),
+            "a bare `use` (duckdb_dead_import) must NOT count; a called import (duckdb_open) must"
+        );
+        assert!(
+            !visitor.symbols.contains("duckdb_dead_import"),
+            "a symbol only ever imported, never called, must not be production_used"
         );
     }
 
