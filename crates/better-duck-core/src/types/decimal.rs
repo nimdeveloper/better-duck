@@ -272,4 +272,97 @@ mod tests {
             Err(DuckDBConversionError::PrecisionLoss(_))
         ));
     }
+
+    #[test]
+    fn to_ffi_from_ffi_round_trips_value_width_scale() {
+        for (v, w, s) in [(0_i128, 1, 0), (-1, 4, 2), (123456, 6, 2), (i64::MAX as i128, 38, 0)] {
+            let d = DuckDecimal::new(v, w, s).unwrap();
+            let back = DuckDecimal::from_ffi(d.to_ffi()).unwrap();
+            assert_eq!(back, d, "round trip DECIMAL({w},{s}) value {v}");
+        }
+    }
+
+    #[test]
+    fn to_duck_from_duck_round_trips_through_real_duckdb() {
+        use crate::types::DuckDialect;
+        let d = DuckDecimal::new(123456, 6, 2).unwrap();
+        // to_duck produces a real duckdb_value; from_duck reads it back.
+        let mut dv = d.to_duck().unwrap();
+        let back = DuckDecimal::from_duck(dv).unwrap();
+        assert_eq!(back.value, d.value);
+        assert_eq!(back.scale, d.scale);
+        // SAFETY: `dv` was created by `to_duck`; destroy exactly once.
+        unsafe { crate::ffi::duckdb_destroy_value(&mut dv) };
+    }
+
+    #[test]
+    fn logical_type_creates_a_real_decimal_type() {
+        let d = DuckDecimal::new(1, 18, 4).unwrap();
+        let mut lt = d.logical_type().unwrap();
+        assert!(!lt.is_null());
+        // The declared width/scale are readable back off the logical type.
+        // SAFETY: `lt` is a valid DECIMAL logical type from `logical_type`.
+        let (w, s) = unsafe { (decimal_width(lt), decimal_scale(lt)) };
+        assert_eq!((w, s), (18, 4));
+        // SAFETY: `lt` was allocated above; destroy exactly once.
+        unsafe { crate::ffi::duckdb_destroy_logical_type(&mut lt) };
+    }
+
+    #[test]
+    fn duck_decimal_appends_and_reads_back_via_real_connection() {
+        use crate::connection::Connection;
+        use crate::types::value::DuckValue;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE d (v DECIMAL(10,3))").unwrap();
+        {
+            let mut app = conn.appender("d", "main").unwrap();
+            // Exercises the AppendAble impl (appender_append) on DuckDecimal.
+            app.append(&mut DuckValue::Decimal(DuckDecimal::new(-12345, 10, 3).unwrap())).unwrap();
+            app.save().unwrap();
+        }
+        let mut rows = conn.execute("SELECT v FROM d").unwrap();
+        match rows.next().unwrap().unwrap().get("v").unwrap() {
+            DuckValue::Decimal(got) => {
+                assert_eq!(got.value, -12345);
+                assert_eq!((got.width, got.scale), (10, 3), "declared precision preserved");
+            },
+            other => panic!("expected Decimal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stmt_bind_exercises_appendable_bind_path() {
+        use crate::connection::Connection;
+        use crate::types::value::DuckValue;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE d (v DECIMAL(8,2))").unwrap();
+        // Exercises the AppendAble impl (stmt_append) on DuckDecimal via bind.
+        let n = conn
+            .execute_with(
+                "INSERT INTO d VALUES ($1)",
+                &mut [&mut DuckValue::Decimal(DuckDecimal::new(4200, 8, 2).unwrap())],
+            )
+            .unwrap()
+            .changes();
+        assert_eq!(n, 1);
+    }
+
+    #[cfg(feature = "decimal")]
+    #[test]
+    fn from_rust_decimal_computes_width_across_magnitudes() {
+        use rust_decimal::Decimal;
+        // zero -> width 1
+        let z: DuckDecimal = Decimal::from_i128_with_scale(0, 0).into();
+        assert_eq!((z.value, z.width, z.scale), (0, 1, 0));
+        // negative, fractional -> width covers the significant digits
+        let neg: DuckDecimal = Decimal::from_i128_with_scale(-4256, 2).into(); // -42.56
+        assert_eq!(neg.scale, 2);
+        assert!(neg.width >= 4, "width covers 4 significant digits, got {}", neg.width);
+        // scale-dominant value: 0.007 -> mantissa 7, scale 3, width must cover scale
+        let frac: DuckDecimal = Decimal::from_i128_with_scale(7, 3).into();
+        assert_eq!(frac.scale, 3);
+        assert!(frac.width >= 3, "width must cover the scale, got {}", frac.width);
+    }
 }
