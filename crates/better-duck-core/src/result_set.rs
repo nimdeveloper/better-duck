@@ -14,6 +14,10 @@ pub struct ResultSet {
     /// Lossless per-column type descriptors, carried over from the `DuckResult`
     /// this was materialized from (same order as `column_names`).
     column_schema: std::sync::Arc<[crate::types::TypeInfo]>,
+    /// The kind of statement that produced this result, carried from `DuckResult`.
+    statement_type: crate::raw::statement::StatementType,
+    /// What kind of output this result is, carried from `DuckResult`.
+    result_type: crate::raw::result::ResultType,
 }
 
 impl ResultSet {
@@ -23,8 +27,10 @@ impl ResultSet {
         changes: u64,
         column_names: Box<[Box<str>]>,
         column_schema: std::sync::Arc<[crate::types::TypeInfo]>,
+        statement_type: crate::raw::statement::StatementType,
+        result_type: crate::raw::result::ResultType,
     ) -> ResultSet {
-        ResultSet { rows, changes, column_names, column_schema }
+        ResultSet { rows, changes, column_names, column_schema, statement_type, result_type }
     }
 
     /// Returns the rows as a slice.
@@ -54,6 +60,16 @@ impl ResultSet {
     /// enum labels, and so on, preserved from the query result.
     pub fn column_schema(&self) -> &[crate::types::TypeInfo] {
         &self.column_schema
+    }
+
+    /// The kind of statement that produced this result (SELECT, INSERT, …).
+    pub fn statement_type(&self) -> crate::raw::statement::StatementType {
+        self.statement_type
+    }
+
+    /// What kind of output this result is (rows, changed-row count, nothing).
+    pub fn result_type(&self) -> crate::raw::result::ResultType {
+        self.result_type
     }
 
     /// Returns the number of rows in this result set.
@@ -119,7 +135,14 @@ mod tests {
             crate::types::TypeInfo::Scalar(crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER),
             crate::types::TypeInfo::Scalar(crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR),
         ]);
-        ResultSet::new(rows, 2, column_names, schema)
+        ResultSet::new(
+            rows,
+            2,
+            column_names,
+            schema,
+            crate::raw::statement::StatementType::Select,
+            crate::raw::result::ResultType::QueryResult,
+        )
     }
 
     fn ids<'a>(rows: impl IntoIterator<Item = &'a DuckRow>) -> Vec<i32> {
@@ -133,7 +156,14 @@ mod tests {
 
     #[test]
     fn empty_result_exposes_metadata_and_no_rows() {
-        let result = ResultSet::new(Vec::new(), 3, column_names(), Arc::from([]));
+        let result = ResultSet::new(
+            Vec::new(),
+            3,
+            column_names(),
+            Arc::from([]),
+            crate::raw::statement::StatementType::Select,
+            crate::raw::result::ResultType::QueryResult,
+        );
 
         assert!(result.is_empty());
         assert_eq!(result.len(), 0);

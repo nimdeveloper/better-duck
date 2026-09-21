@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 255,
-  "expected_pending": 148,
+  "expected_production_used": 257,
+  "expected_pending": 146,
   "methods": [
     {
       "category": "Open Connect",
@@ -275,10 +275,12 @@
     {
       "category": "Query Execution",
       "symbol": "duckdb_result_statement_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q5",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/result.rs"
+      ]
     },
     {
       "category": "Query Execution",
@@ -333,10 +335,12 @@
     {
       "category": "Result Functions",
       "symbol": "duckdb_result_return_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q5",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/result.rs"
+      ]
     },
     {
       "category": "Helpers",

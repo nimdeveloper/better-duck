@@ -7,18 +7,54 @@ use std::{
 
 use crate::ffi::{
     duckdb_column_count, duckdb_column_logical_type, duckdb_column_name, duckdb_destroy_result,
-    DUCKDB_TYPE,
+    duckdb_result_return_type, duckdb_result_statement_type, duckdb_result_type, DUCKDB_TYPE,
 };
 
 use crate::{
     error::{DuckDBConversionError, Error, Result},
     ffi,
     raw::row::DuckRow,
+    raw::statement::StatementType,
     result_set::ResultSet,
     types::{LogicalType, TypeInfo},
 };
 
 use super::data_chunk::DataChunk;
+
+/// What kind of output a query produced.
+///
+/// Mirrors DuckDB's `duckdb_result_type`. `#[non_exhaustive]` with
+/// [`Unknown`](ResultType::Unknown) so a value a future DuckDB adds is preserved
+/// rather than lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ResultType {
+    /// The result carries queryable rows (`SELECT`, `RETURNING`, …).
+    QueryResult,
+    /// The result reports a changed-row count (`INSERT`/`UPDATE`/`DELETE`).
+    ChangedRows,
+    /// The statement produced no result (many DDL statements).
+    Nothing,
+    /// `DUCKDB_RESULT_TYPE_INVALID`.
+    Invalid,
+    /// A type this build does not recognise; the raw value is preserved.
+    Unknown(duckdb_result_type),
+}
+
+impl ResultType {
+    /// Classifies a raw `duckdb_result_type`, preserving unrecognised values.
+    #[must_use]
+    pub fn from_raw(raw: duckdb_result_type) -> ResultType {
+        use crate::ffi as f;
+        match raw {
+            f::duckdb_result_type_DUCKDB_RESULT_TYPE_QUERY_RESULT => ResultType::QueryResult,
+            f::duckdb_result_type_DUCKDB_RESULT_TYPE_CHANGED_ROWS => ResultType::ChangedRows,
+            f::duckdb_result_type_DUCKDB_RESULT_TYPE_NOTHING => ResultType::Nothing,
+            f::duckdb_result_type_DUCKDB_RESULT_TYPE_INVALID => ResultType::Invalid,
+            other => ResultType::Unknown(other),
+        }
+    }
+}
 
 /// Represents the result of a DuckDB query, providing row-by-row iteration over
 /// the returned data.
@@ -44,6 +80,10 @@ pub struct DuckResult {
     /// `duckdb_column_logical_type` + [`LogicalType::describe`]. Owned, so it is
     /// `Clone`/`Send` and outlives the DuckDB logical-type handles it came from.
     column_schema: Arc<[TypeInfo]>,
+    /// The kind of statement that produced this result (`duckdb_result_statement_type`).
+    statement_type: StatementType,
+    /// What kind of output the result is (`duckdb_result_return_type`).
+    result_type: ResultType,
     /// Number of columns in the result.
     pub col_count: u64,
     /// Rows already pulled from the underlying result. Only populated once
@@ -74,6 +114,13 @@ impl DuckResult {
             // returned by `duckdb_query` or `duckdb_execute_prepared` and is now moved
             // (heap-allocated by the caller). `duckdb_column_count` reads from this struct.
             col_count: unsafe { duckdb_column_count(&mut result) },
+            // SAFETY: `result` is a valid `duckdb_result`. These take it by value (a
+            // small `Copy` struct) and only read its classification fields.
+            statement_type: StatementType::from_raw(unsafe {
+                duckdb_result_statement_type(result)
+            }),
+            // SAFETY: as above.
+            result_type: ResultType::from_raw(unsafe { duckdb_result_return_type(result) }),
             res: result,
             chunk: None,
             column_names: OnceCell::new(),
@@ -283,6 +330,20 @@ impl DuckResult {
         &self.column_schema
     }
 
+    /// The kind of statement that produced this result (SELECT, INSERT, …).
+    #[must_use]
+    #[inline]
+    pub fn statement_type(&self) -> StatementType {
+        self.statement_type
+    }
+
+    /// What kind of output this result is (rows, changed-row count, nothing).
+    #[must_use]
+    #[inline]
+    pub fn result_type(&self) -> ResultType {
+        self.result_type
+    }
+
     /// Returns a cheaply-cloneable handle to the full column schema.
     ///
     /// Used to carry the schema into an owned [`ResultSet`](crate::result_set::ResultSet)
@@ -406,13 +467,15 @@ impl DuckResult {
     pub fn materialize(mut self) -> Result<ResultSet> {
         let changes = self.changes();
         let column_names = self.column_names().to_vec().into_boxed_slice();
-        // Capture the lossless schema before `self` is consumed by iteration.
+        // Capture the lossless schema and classifications before `self` is consumed.
         let column_schema = self.column_schema_arc();
+        let statement_type = self.statement_type();
+        let result_type = self.result_type();
         let mut rows = Vec::new();
         for row in self {
             rows.push(row?);
         }
-        Ok(ResultSet::new(rows, changes, column_names, column_schema))
+        Ok(ResultSet::new(rows, changes, column_names, column_schema, statement_type, result_type))
     }
 }
 
@@ -518,6 +581,8 @@ mod tests {
         },
         helpers::path::path_to_cstring,
         raw::connection::RawConnection,
+        raw::result::ResultType,
+        raw::statement::StatementType,
         result_set::ResultSet,
         types::value::DuckValue,
     };
@@ -586,6 +651,36 @@ mod tests {
             .materialize()
             .unwrap();
         assert_eq!(set.column_schema(), &[TypeInfo::Decimal { width: 6, scale: 2 }]);
+    }
+
+    /// A SELECT is classified as a query result; the classification also survives
+    /// materialization into the owned `ResultSet`.
+    #[test]
+    fn select_reports_query_result_classification() {
+        let mut con = get_test_connection();
+        let result = con.query("SELECT 1 AS a").unwrap();
+        assert_eq!(result.statement_type(), StatementType::Select);
+        assert_eq!(result.result_type(), ResultType::QueryResult);
+
+        let set = con.prepare("SELECT 1 AS a").unwrap().execute().unwrap().materialize().unwrap();
+        assert_eq!(set.statement_type(), StatementType::Select);
+        assert_eq!(set.result_type(), ResultType::QueryResult);
+    }
+
+    /// A DML statement is classified as INSERT producing a changed-row count,
+    /// distinct from a SELECT's query-result classification.
+    #[test]
+    fn insert_reports_changed_rows_classification() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE t (id INTEGER)").unwrap();
+        let result = con.query("INSERT INTO t VALUES (1), (2)").unwrap();
+        assert_eq!(result.statement_type(), StatementType::Insert);
+        assert_eq!(result.result_type(), ResultType::ChangedRows);
+    }
+
+    #[test]
+    fn result_type_preserves_unknown_values() {
+        assert_eq!(ResultType::from_raw(9_999), ResultType::Unknown(9_999));
     }
 
     #[test]
