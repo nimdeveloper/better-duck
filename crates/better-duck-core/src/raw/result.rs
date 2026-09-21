@@ -5,13 +5,17 @@ use std::{
     sync::Arc,
 };
 
-use crate::ffi::{duckdb_column_count, duckdb_column_name, duckdb_destroy_result, DUCKDB_TYPE};
+use crate::ffi::{
+    duckdb_column_count, duckdb_column_logical_type, duckdb_column_name, duckdb_destroy_result,
+    DUCKDB_TYPE,
+};
 
 use crate::{
     error::{DuckDBConversionError, Error, Result},
     ffi,
     raw::row::DuckRow,
     result_set::ResultSet,
+    types::{LogicalType, TypeInfo},
 };
 
 use super::data_chunk::DataChunk;
@@ -33,7 +37,13 @@ pub struct DuckResult {
     /// [`DuckRow`] built from this result clones it in O(1) instead of re-allocating
     /// the whole column-name array per row.
     column_names: OnceCell<Arc<[Box<str>]>>,
+    /// Coarse per-column type ids. Retained for the existing migration-facing
+    /// `column_type` API; the lossless descriptor is `column_schema`.
     column_types: Box<[DUCKDB_TYPE]>,
+    /// Lossless per-column type descriptors, resolved once via
+    /// `duckdb_column_logical_type` + [`LogicalType::describe`]. Owned, so it is
+    /// `Clone`/`Send` and outlives the DuckDB logical-type handles it came from.
+    column_schema: Arc<[TypeInfo]>,
     /// Number of columns in the result.
     pub col_count: u64,
     /// Rows already pulled from the underlying result. Only populated once
@@ -68,6 +78,7 @@ impl DuckResult {
             chunk: None,
             column_names: OnceCell::new(),
             column_types: Box::new([]),
+            column_schema: Arc::from([]),
             cache: Vec::new(),
             cursor: 0,
             exhausted: false,
@@ -76,7 +87,31 @@ impl DuckResult {
         };
         res.resolve_columns_name().expect("failed to resolve column names");
         res.resolve_columns_types().expect("failed to resolve column types");
+        res.resolve_columns_schema();
         res
+    }
+
+    /// Resolves each column's lossless [`TypeInfo`] once, via
+    /// `duckdb_column_logical_type` + [`LogicalType::describe`].
+    ///
+    /// The `LogicalType` RAII wrapper destroys each handle right after it is
+    /// described, so no `duckdb_logical_type` outlives this call; the owned
+    /// `TypeInfo` values are what the result keeps.
+    #[inline]
+    fn resolve_columns_schema(&mut self) {
+        let mut schema = Vec::with_capacity(self.col_count as usize);
+        for i in 0..self.col_count {
+            // SAFETY: `self.res` is valid; `i` is within [0, col_count).
+            // `duckdb_column_logical_type` returns an owned handle (or null).
+            let raw = unsafe { duckdb_column_logical_type(&mut self.res, i) };
+            let info = LogicalType::from_raw(raw)
+                .map(|lt| lt.describe())
+                // A null/failed handle should not happen for a valid result column;
+                // fall back to the coarse id so schema length always matches col_count.
+                .unwrap_or_else(|_| TypeInfo::Scalar(self.column_types[i as usize]));
+            schema.push(info);
+        }
+        self.column_schema = Arc::from(schema);
     }
 
     #[inline]
@@ -222,6 +257,10 @@ impl DuckResult {
 
     /// Returns the DuckDB type of the column at `col_index`.
     ///
+    /// This is the coarse `duckdb_type` id, kept for migration. For the lossless
+    /// descriptor (DECIMAL precision, nested types, enum labels, …) use
+    /// [`column_logical_type`](DuckResult::column_logical_type).
+    ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidColumnIndex`] if `col_index` is out of range.
@@ -235,6 +274,37 @@ impl DuckResult {
             return Err(Error::InvalidColumnIndex(col_index));
         }
         Ok(self.column_types[col_index])
+    }
+
+    /// Returns the lossless [`TypeInfo`] descriptors for every column, in order.
+    #[must_use]
+    #[inline]
+    pub fn column_schema(&self) -> &[TypeInfo] {
+        &self.column_schema
+    }
+
+    /// Returns a cheaply-cloneable handle to the full column schema.
+    ///
+    /// Used to carry the schema into an owned [`ResultSet`](crate::result_set::ResultSet)
+    /// without re-resolving it.
+    #[must_use]
+    #[inline]
+    pub(crate) fn column_schema_arc(&self) -> Arc<[TypeInfo]> {
+        Arc::clone(&self.column_schema)
+    }
+
+    /// Returns the lossless [`TypeInfo`] of the column at `col_index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidColumnIndex`] if `col_index` is out of range.
+    #[allow(unused)]
+    #[inline]
+    pub fn column_logical_type(
+        &self,
+        col_index: usize,
+    ) -> Result<&TypeInfo> {
+        self.column_schema.get(col_index).ok_or(Error::InvalidColumnIndex(col_index))
     }
 
     /// Returns the name of the column at `col_index`.
@@ -336,11 +406,13 @@ impl DuckResult {
     pub fn materialize(mut self) -> Result<ResultSet> {
         let changes = self.changes();
         let column_names = self.column_names().to_vec().into_boxed_slice();
+        // Capture the lossless schema before `self` is consumed by iteration.
+        let column_schema = self.column_schema_arc();
         let mut rows = Vec::new();
         for row in self {
             rows.push(row?);
         }
-        Ok(ResultSet::new(rows, changes, column_names))
+        Ok(ResultSet::new(rows, changes, column_names, column_schema))
     }
 }
 
@@ -440,7 +512,10 @@ mod tests {
     use crate::{
         config::Config,
         error::Error,
-        ffi::{DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR},
+        ffi::{
+            DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
+            DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
+        },
         helpers::path::path_to_cstring,
         raw::connection::RawConnection,
         result_set::ResultSet,
@@ -473,6 +548,44 @@ mod tests {
         assert_eq!(result.column_idx("missing"), None);
         assert_eq!(result.column_type(2), Err(Error::InvalidColumnIndex(2)));
         assert_eq!(result.column_name(usize::MAX), Err(Error::InvalidColumnIndex(usize::MAX)));
+    }
+
+    /// The lossless column schema preserves what the coarse `column_type` id
+    /// discards: DECIMAL precision and nested LIST shape.
+    #[test]
+    fn column_schema_preserves_decimal_precision_and_nesting() {
+        use crate::types::TypeInfo;
+        let con = get_test_connection();
+        let mut stmt = con
+            .prepare("SELECT CAST(1.5 AS DECIMAL(9,3)) AS d, [10, 20]::INTEGER[] AS xs")
+            .unwrap();
+        let result = stmt.execute().unwrap();
+
+        // Coarse ids only say DECIMAL / LIST.
+        assert_eq!(result.column_type(0), Ok(DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL));
+        // The lossless schema keeps the declared precision and the element type.
+        assert_eq!(result.column_logical_type(0), Ok(&TypeInfo::Decimal { width: 9, scale: 3 }));
+        assert_eq!(
+            result.column_logical_type(1),
+            Ok(&TypeInfo::List(Box::new(TypeInfo::Scalar(DUCKDB_TYPE_DUCKDB_TYPE_INTEGER))))
+        );
+        assert_eq!(result.column_schema().len(), 2);
+        assert!(matches!(result.column_logical_type(2), Err(Error::InvalidColumnIndex(2))));
+    }
+
+    /// `materialize()` carries the lossless schema into the owned `ResultSet`.
+    #[test]
+    fn materialized_result_carries_column_schema() {
+        use crate::types::TypeInfo;
+        let con = get_test_connection();
+        let set = con
+            .prepare("SELECT CAST(2.25 AS DECIMAL(6,2)) AS d")
+            .unwrap()
+            .execute()
+            .unwrap()
+            .materialize()
+            .unwrap();
+        assert_eq!(set.column_schema(), &[TypeInfo::Decimal { width: 6, scale: 2 }]);
     }
 
     #[test]

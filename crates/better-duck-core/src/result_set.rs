@@ -11,6 +11,9 @@ pub struct ResultSet {
     rows: Vec<DuckRow>,
     changes: u64,
     column_names: Box<[Box<str>]>,
+    /// Lossless per-column type descriptors, carried over from the `DuckResult`
+    /// this was materialized from (same order as `column_names`).
+    column_schema: std::sync::Arc<[crate::types::TypeInfo]>,
 }
 
 impl ResultSet {
@@ -19,8 +22,9 @@ impl ResultSet {
         rows: Vec<DuckRow>,
         changes: u64,
         column_names: Box<[Box<str>]>,
+        column_schema: std::sync::Arc<[crate::types::TypeInfo]>,
     ) -> ResultSet {
-        ResultSet { rows, changes, column_names }
+        ResultSet { rows, changes, column_names, column_schema }
     }
 
     /// Returns the rows as a slice.
@@ -43,6 +47,13 @@ impl ResultSet {
     /// Returns the column names in result order.
     pub fn column_names(&self) -> &[Box<str>] {
         &self.column_names
+    }
+
+    /// Returns the lossless [`TypeInfo`](crate::types::TypeInfo) of every column,
+    /// in result order — DECIMAL precision, nested list/struct/map/union shape,
+    /// enum labels, and so on, preserved from the query result.
+    pub fn column_schema(&self) -> &[crate::types::TypeInfo] {
+        &self.column_schema
     }
 
     /// Returns the number of rows in this result set.
@@ -104,7 +115,11 @@ mod tests {
             ),
         ];
 
-        ResultSet::new(rows, 2, column_names)
+        let schema = Arc::from([
+            crate::types::TypeInfo::Scalar(crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER),
+            crate::types::TypeInfo::Scalar(crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR),
+        ]);
+        ResultSet::new(rows, 2, column_names, schema)
     }
 
     fn ids<'a>(rows: impl IntoIterator<Item = &'a DuckRow>) -> Vec<i32> {
@@ -118,7 +133,7 @@ mod tests {
 
     #[test]
     fn empty_result_exposes_metadata_and_no_rows() {
-        let result = ResultSet::new(Vec::new(), 3, column_names());
+        let result = ResultSet::new(Vec::new(), 3, column_names(), Arc::from([]));
 
         assert!(result.is_empty());
         assert_eq!(result.len(), 0);
