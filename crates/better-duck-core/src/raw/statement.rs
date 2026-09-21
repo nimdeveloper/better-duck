@@ -502,7 +502,21 @@ impl CachedStatement {
         // transaction scope.
         let r = unsafe { ffi::duckdb_prepare(conn.handle(), c_str.as_ptr(), &mut stmt) };
         result_from_duckdb_prepare(r, stmt)?;
-        Ok(CachedStatement { _connection: Arc::clone(conn.inner()), sql: sql_str.into(), stmt })
+        Ok(CachedStatement::from_prepared(Arc::clone(conn.inner()), stmt, sql_str.into()))
+    }
+
+    /// Wraps an already-prepared handle into a `CachedStatement`.
+    ///
+    /// Shared by [`prepare`](CachedStatement::prepare) and the extracted-statement
+    /// path ([`ExtractedStatements::prepare`](crate::raw::extracted::ExtractedStatements::prepare)),
+    /// so both produce the identical wrapper — same connection-retention and
+    /// destruction invariants.
+    pub(crate) fn from_prepared(
+        connection: Arc<ConnectionInner>,
+        stmt: duckdb_prepared_statement,
+        sql: Box<str>,
+    ) -> CachedStatement {
+        CachedStatement { _connection: connection, sql, stmt }
     }
 
     /// Resets all parameter bindings so the statement can be re-executed.

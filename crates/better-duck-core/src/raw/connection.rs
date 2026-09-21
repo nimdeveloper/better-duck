@@ -513,6 +513,24 @@ impl RawConnection {
         Statement::new(self, sql.as_ref())
     }
 
+    /// Parses a (possibly multi-statement) SQL string into an
+    /// [`ExtractedStatements`](crate::raw::extracted::ExtractedStatements) batch,
+    /// each statement preparable on demand.
+    ///
+    /// DuckDB does the parsing — there is no Rust-side statement splitting.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `sql` contains a nul byte or cannot be parsed.
+    #[must_use = "extract_statements returns a batch; prepare its statements to run them"]
+    #[allow(unused)]
+    pub fn extract_statements(
+        &self,
+        sql: impl AsRef<str>,
+    ) -> Result<crate::raw::extracted::ExtractedStatements> {
+        crate::raw::extracted::ExtractedStatements::extract(self, sql.as_ref())
+    }
+
     /// Creates a new appender for the specified table and schema.
     ///
     /// The appender retains *this* connection, so appended rows participate in any
