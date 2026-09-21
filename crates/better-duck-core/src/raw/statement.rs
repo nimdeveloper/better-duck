@@ -1,8 +1,17 @@
-use std::{ffi::CString, mem, ptr, sync::Arc};
+use std::{
+    ffi::{CStr, CString},
+    mem, ptr,
+    sync::Arc,
+};
 
 use crate::ffi::{
-    duckdb_clear_bindings, duckdb_destroy_prepare, duckdb_execute_prepared, duckdb_nparams,
-    duckdb_prepare, duckdb_result, DuckDBSuccess,
+    duckdb_bind_parameter_index, duckdb_clear_bindings, duckdb_destroy_prepare,
+    duckdb_execute_prepared, duckdb_free, duckdb_nparams, duckdb_param_logical_type,
+    duckdb_param_type, duckdb_parameter_name, duckdb_prepare,
+    duckdb_prepared_statement_column_count, duckdb_prepared_statement_column_logical_type,
+    duckdb_prepared_statement_column_name, duckdb_prepared_statement_column_type,
+    duckdb_prepared_statement_type, duckdb_result, duckdb_statement_type, duckdb_type,
+    DuckDBSuccess,
 };
 
 use crate::{
@@ -14,8 +23,254 @@ use crate::{
         connection::{ConnectionInner, RawConnection},
         result::DuckResult,
     },
-    types::appendable::AppendAble,
+    types::{appendable::AppendAble, LogicalType, TypeInfo},
 };
+
+/// The kind of SQL statement a prepared statement holds.
+///
+/// Mirrors DuckDB's `duckdb_statement_type`. `#[non_exhaustive]` because DuckDB
+/// adds statement kinds across releases; an id this build does not recognise is
+/// preserved verbatim in [`StatementType::Unknown`] rather than lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum StatementType {
+    /// `DUCKDB_STATEMENT_TYPE_INVALID`
+    Invalid,
+    /// `SELECT`
+    Select,
+    /// `INSERT`
+    Insert,
+    /// `UPDATE`
+    Update,
+    /// `EXPLAIN`
+    Explain,
+    /// `DELETE`
+    Delete,
+    /// `PREPARE`
+    Prepare,
+    /// `CREATE`
+    Create,
+    /// `EXECUTE`
+    Execute,
+    /// `ALTER`
+    Alter,
+    /// `TRANSACTION`
+    Transaction,
+    /// `COPY`
+    Copy,
+    /// `ANALYZE`
+    Analyze,
+    /// `SET VARIABLE`
+    VariableSet,
+    /// `CREATE FUNCTION`
+    CreateFunc,
+    /// `DROP`
+    Drop,
+    /// `EXPORT`
+    Export,
+    /// `PRAGMA`
+    Pragma,
+    /// `VACUUM`
+    Vacuum,
+    /// `CALL`
+    Call,
+    /// `SET`
+    Set,
+    /// `LOAD`
+    Load,
+    /// `RELATION`
+    Relation,
+    /// `EXTENSION`
+    Extension,
+    /// `LOGICAL_PLAN`
+    LogicalPlan,
+    /// `ATTACH`
+    Attach,
+    /// `DETACH`
+    Detach,
+    /// `MULTI`
+    Multi,
+    /// A statement kind this build does not recognise; the raw id is preserved.
+    Unknown(duckdb_statement_type),
+}
+
+impl StatementType {
+    /// Classifies a raw `duckdb_statement_type`, preserving unrecognised values.
+    #[must_use]
+    pub fn from_raw(raw: duckdb_statement_type) -> StatementType {
+        use crate::ffi as f;
+        match raw {
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_INVALID => StatementType::Invalid,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_SELECT => StatementType::Select,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_INSERT => StatementType::Insert,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_UPDATE => StatementType::Update,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXPLAIN => StatementType::Explain,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_DELETE => StatementType::Delete,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_PREPARE => StatementType::Prepare,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_CREATE => StatementType::Create,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXECUTE => StatementType::Execute,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_ALTER => StatementType::Alter,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_TRANSACTION => {
+                StatementType::Transaction
+            },
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_COPY => StatementType::Copy,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_ANALYZE => StatementType::Analyze,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_VARIABLE_SET => {
+                StatementType::VariableSet
+            },
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_CREATE_FUNC => StatementType::CreateFunc,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_DROP => StatementType::Drop,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXPORT => StatementType::Export,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_PRAGMA => StatementType::Pragma,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_VACUUM => StatementType::Vacuum,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_CALL => StatementType::Call,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_SET => StatementType::Set,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_LOAD => StatementType::Load,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_RELATION => StatementType::Relation,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_EXTENSION => StatementType::Extension,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_LOGICAL_PLAN => {
+                StatementType::LogicalPlan
+            },
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_ATTACH => StatementType::Attach,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_DETACH => StatementType::Detach,
+            f::duckdb_statement_type_DUCKDB_STATEMENT_TYPE_MULTI => StatementType::Multi,
+            other => StatementType::Unknown(other),
+        }
+    }
+}
+
+/// Prepared-statement metadata shared by [`Statement`] and [`CachedStatement`].
+///
+/// These operate on a raw `duckdb_prepared_statement`; both wrappers delegate to
+/// them so parameter/column introspection lives in one place.
+///
+/// # Safety
+///
+/// Every function requires `stmt` to be a valid, live `duckdb_prepared_statement`.
+mod meta {
+    use super::*;
+
+    /// The statement kind (`duckdb_prepared_statement_type`).
+    pub(super) fn statement_type(stmt: duckdb_prepared_statement) -> StatementType {
+        // SAFETY: `stmt` is a valid prepared statement.
+        StatementType::from_raw(unsafe { duckdb_prepared_statement_type(stmt) })
+    }
+
+    /// Number of parameters (`duckdb_nparams`).
+    pub(super) fn param_count(stmt: duckdb_prepared_statement) -> u64 {
+        // SAFETY: `stmt` is valid.
+        unsafe { duckdb_nparams(stmt) }
+    }
+
+    /// The name of the parameter at the given 1-based index, if any.
+    ///
+    /// Returns `None` for an out-of-range index (DuckDB returns null) or a
+    /// positional (anonymous) parameter.
+    pub(super) fn parameter_name(
+        stmt: duckdb_prepared_statement,
+        idx: u64,
+    ) -> Option<String> {
+        // SAFETY: `stmt` is valid; `duckdb_parameter_name` returns an owned `char*`
+        // (free with `duckdb_free`) or null, which `owned_c_string` copies + frees.
+        unsafe { owned_c_string(duckdb_parameter_name(stmt, idx)) }
+    }
+
+    /// The coarse `duckdb_type` of the parameter at the 1-based index.
+    pub(super) fn param_type(
+        stmt: duckdb_prepared_statement,
+        idx: u64,
+    ) -> duckdb_type {
+        // SAFETY: `stmt` is valid.
+        unsafe { duckdb_param_type(stmt, idx) }
+    }
+
+    /// The lossless [`TypeInfo`] of the parameter at the 1-based index.
+    pub(super) fn param_type_info(
+        stmt: duckdb_prepared_statement,
+        idx: u64,
+    ) -> Option<TypeInfo> {
+        // SAFETY: `stmt` is valid; `duckdb_param_logical_type` returns an owned handle
+        // (or null) wrapped into RAII, described, then destroyed on drop.
+        LogicalType::from_raw(unsafe { duckdb_param_logical_type(stmt, idx) })
+            .ok()
+            .map(|lt| lt.describe())
+    }
+
+    /// Resolves a named parameter to its 1-based index
+    /// (`duckdb_bind_parameter_index`).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NulError`] if `name` has an interior nul; [`Error::InvalidParameterName`]
+    /// if DuckDB does not know the name.
+    pub(super) fn parameter_index(
+        stmt: duckdb_prepared_statement,
+        name: &str,
+    ) -> Result<u64> {
+        let c_name = CString::new(name)?;
+        let mut idx: crate::ffi::idx_t = 0;
+        // SAFETY: `stmt` is valid; `c_name` is a valid null-terminated string that
+        // outlives the call; `&mut idx` is a valid output pointer.
+        let rc = unsafe { duckdb_bind_parameter_index(stmt, &mut idx, c_name.as_ptr()) };
+        if rc == DuckDBSuccess {
+            Ok(idx)
+        } else {
+            Err(Error::InvalidParameterName(name.to_owned()))
+        }
+    }
+
+    /// Number of result columns (`duckdb_prepared_statement_column_count`).
+    pub(super) fn column_count(stmt: duckdb_prepared_statement) -> u64 {
+        // SAFETY: `stmt` is valid.
+        unsafe { duckdb_prepared_statement_column_count(stmt) }
+    }
+
+    /// The name of the result column at `idx`, if in range.
+    pub(super) fn column_name(
+        stmt: duckdb_prepared_statement,
+        idx: u64,
+    ) -> Option<String> {
+        // SAFETY: `stmt` is valid; owned `char*` (or null) copied + freed.
+        unsafe { owned_c_string(duckdb_prepared_statement_column_name(stmt, idx)) }
+    }
+
+    /// The coarse `duckdb_type` of the result column at `idx`.
+    pub(super) fn column_type(
+        stmt: duckdb_prepared_statement,
+        idx: u64,
+    ) -> duckdb_type {
+        // SAFETY: `stmt` is valid.
+        unsafe { duckdb_prepared_statement_column_type(stmt, idx) }
+    }
+
+    /// The lossless [`TypeInfo`] of the result column at `idx`.
+    pub(super) fn column_type_info(
+        stmt: duckdb_prepared_statement,
+        idx: u64,
+    ) -> Option<TypeInfo> {
+        // SAFETY: `stmt` is valid; owned handle (or null) wrapped, described, dropped.
+        LogicalType::from_raw(unsafe { duckdb_prepared_statement_column_logical_type(stmt, idx) })
+            .ok()
+            .map(|lt| lt.describe())
+    }
+
+    /// Copies a DuckDB-owned `char*` into an owned `String`, freeing it with
+    /// `duckdb_free`. Returns `None` for null.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be null or a `char*` DuckDB allocated for the caller to free.
+    unsafe fn owned_c_string(ptr: *const std::os::raw::c_char) -> Option<String> {
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: non-null, valid null-terminated C string per the contract.
+        let owned = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+        // SAFETY: DuckDB allocated `ptr`; ownership transferred to us to free.
+        unsafe { duckdb_free(ptr as *mut std::os::raw::c_void) };
+        Some(owned)
+    }
+}
 
 /// A prepared DuckDB statement that can be executed one or more times.
 ///
@@ -278,6 +533,109 @@ impl CachedStatement {
         value.stmt_append(idx, self.stmt)
     }
 
+    /// Binds `value` to the parameter identified by `name` (e.g. `$id` → `"id"`).
+    ///
+    /// Resolves the name to its 1-based index via `duckdb_bind_parameter_index`,
+    /// then binds there.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidParameterName`] if the statement has no such parameter,
+    /// [`Error::NulError`] if `name` contains an interior nul, or a bind failure.
+    pub fn bind_named<T: AppendAble + ?Sized>(
+        &mut self,
+        name: &str,
+        value: &mut T,
+    ) -> Result<()> {
+        let idx = meta::parameter_index(self.stmt, name)?;
+        value.stmt_append(idx, self.stmt)
+    }
+
+    /// Returns the kind of SQL statement this prepared statement holds.
+    #[must_use]
+    pub fn statement_type(&self) -> StatementType {
+        meta::statement_type(self.stmt)
+    }
+
+    /// Number of parameters in the statement.
+    #[must_use]
+    pub fn parameter_count(&self) -> u64 {
+        meta::param_count(self.stmt)
+    }
+
+    /// The name of the parameter at the 1-based `index`, or `None` for a
+    /// positional parameter or an out-of-range index.
+    #[must_use]
+    pub fn parameter_name(
+        &self,
+        index: u64,
+    ) -> Option<String> {
+        meta::parameter_name(self.stmt, index)
+    }
+
+    /// The coarse `duckdb_type` of the parameter at the 1-based `index`.
+    #[must_use]
+    pub fn parameter_type(
+        &self,
+        index: u64,
+    ) -> duckdb_type {
+        meta::param_type(self.stmt, index)
+    }
+
+    /// The lossless [`TypeInfo`] of the parameter at the 1-based `index`.
+    #[must_use]
+    pub fn parameter_logical_type(
+        &self,
+        index: u64,
+    ) -> Option<TypeInfo> {
+        meta::param_type_info(self.stmt, index)
+    }
+
+    /// Resolves a named parameter to its 1-based index.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidParameterName`] if unknown, [`Error::NulError`] on interior nul.
+    pub fn parameter_index(
+        &self,
+        name: &str,
+    ) -> Result<u64> {
+        meta::parameter_index(self.stmt, name)
+    }
+
+    /// Number of result columns the statement will produce.
+    #[must_use]
+    pub fn column_count(&self) -> u64 {
+        meta::column_count(self.stmt)
+    }
+
+    /// The name of the result column at `index`, if in range.
+    #[must_use]
+    pub fn column_name(
+        &self,
+        index: u64,
+    ) -> Option<String> {
+        meta::column_name(self.stmt, index)
+    }
+
+    /// The coarse `duckdb_type` of the result column at `index`.
+    #[must_use]
+    pub fn column_type(
+        &self,
+        index: u64,
+    ) -> duckdb_type {
+        meta::column_type(self.stmt, index)
+    }
+
+    /// The lossless [`TypeInfo`] of the result column at `index`.
+    #[must_use]
+    pub fn column_logical_type(
+        &self,
+        index: u64,
+    ) -> Option<TypeInfo> {
+        meta::column_type_info(self.stmt, index)
+    }
+
     /// Executes the prepared statement and returns the result.
     ///
     /// Works for all statement types:
@@ -332,6 +690,7 @@ unsafe impl Send for CachedStatement {}
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER;
     use crate::helpers::path::path_to_cstring;
     use crate::raw::connection::RawConnection;
     use crate::types::{appendable::AppendAble, value::DuckValue};
@@ -512,5 +871,77 @@ mod tests {
         assert_eq!(stmt.bind_idx, 1);
         stmt.clear_bindings().unwrap();
         assert_eq!(stmt.bind_idx, 0);
+    }
+
+    #[test]
+    fn statement_type_is_classified() {
+        let mut con = get_test_connection();
+        let select = CachedStatement::prepare(&con, "SELECT 1").unwrap();
+        assert_eq!(select.statement_type(), StatementType::Select);
+        drop(select);
+
+        con.query("CREATE TABLE t (id INTEGER)").unwrap();
+        let insert = CachedStatement::prepare(&con, "INSERT INTO t VALUES (1)").unwrap();
+        assert_eq!(insert.statement_type(), StatementType::Insert);
+    }
+
+    #[test]
+    fn prepared_parameter_metadata_names_types_and_index() {
+        let con = get_test_connection();
+        // Two named parameters. (DuckDB rejects mixing named `$x` and positional
+        // `?` in one statement, so both are named here.)
+        let stmt = CachedStatement::prepare(&con, "SELECT $id::INTEGER AS a, $label::VARCHAR AS b")
+            .unwrap();
+        assert_eq!(stmt.parameter_count(), 2);
+        // Each named parameter reports its name; index round-trips.
+        assert_eq!(stmt.parameter_name(1).as_deref(), Some("id"));
+        assert_eq!(stmt.parameter_name(2).as_deref(), Some("label"));
+        assert_eq!(stmt.parameter_index("id").unwrap(), 1);
+        assert_eq!(stmt.parameter_index("label").unwrap(), 2);
+        assert_eq!(stmt.parameter_type(1), DUCKDB_TYPE_DUCKDB_TYPE_INTEGER);
+        assert_eq!(
+            stmt.parameter_logical_type(1),
+            Some(TypeInfo::Scalar(DUCKDB_TYPE_DUCKDB_TYPE_INTEGER))
+        );
+
+        // Missing name and out-of-range index are precise errors / None.
+        assert!(
+            matches!(stmt.parameter_index("nope"), Err(Error::InvalidParameterName(n)) if n == "nope")
+        );
+        assert!(matches!(stmt.parameter_index("a\0b"), Err(Error::NulError(_))));
+        assert_eq!(stmt.parameter_name(999), None);
+    }
+
+    #[test]
+    fn prepared_output_column_schema() {
+        let con = get_test_connection();
+        let stmt = CachedStatement::prepare(
+            &con,
+            "SELECT 1::INTEGER AS id, CAST(1.5 AS DECIMAL(8,2)) AS amount",
+        )
+        .unwrap();
+        assert_eq!(stmt.column_count(), 2);
+        assert_eq!(stmt.column_name(0).as_deref(), Some("id"));
+        assert_eq!(stmt.column_name(1).as_deref(), Some("amount"));
+        assert_eq!(stmt.column_type(0), DUCKDB_TYPE_DUCKDB_TYPE_INTEGER);
+        // Lossless output type keeps the declared DECIMAL precision.
+        assert_eq!(stmt.column_logical_type(1), Some(TypeInfo::Decimal { width: 8, scale: 2 }));
+        assert_eq!(stmt.column_name(999), None);
+    }
+
+    #[test]
+    fn bind_named_binds_by_parameter_name() {
+        let con = get_test_connection();
+        let mut stmt = CachedStatement::prepare(&con, "SELECT $value::INTEGER AS value").unwrap();
+        let mut v = CheckedI32(77);
+        stmt.bind_named("value", &mut v).unwrap();
+        assert_single_value(stmt.execute().unwrap(), "value", DuckValue::Int(77));
+
+        // An unknown name is a precise error, and the statement stays usable.
+        let mut other = CheckedI32(1);
+        assert!(matches!(
+            stmt.bind_named("missing", &mut other),
+            Err(Error::InvalidParameterName(n)) if n == "missing"
+        ));
     }
 }

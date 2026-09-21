@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 235,
-  "expected_pending": 168,
+  "expected_production_used": 244,
+  "expected_pending": 159,
   "methods": [
     {
       "category": "Open Connect",
@@ -354,6 +354,7 @@
       "owner_task": null,
       "evidence": [
         "crates/better-duck-core/src/raw/connection.rs",
+        "crates/better-duck-core/src/raw/statement.rs",
         "crates/better-duck-core/src/types/bignum.rs",
         "crates/better-duck-core/src/types/bit.rs",
         "crates/better-duck-core/src/types/duck_struct.rs",
@@ -613,26 +614,32 @@
     {
       "category": "Prepared Statements",
       "symbol": "duckdb_parameter_name",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
     },
     {
       "category": "Prepared Statements",
       "symbol": "duckdb_param_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
     },
     {
       "category": "Prepared Statements",
       "symbol": "duckdb_param_logical_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
     },
     {
       "category": "Prepared Statements",
@@ -647,42 +654,52 @@
     {
       "category": "Prepared Statements",
       "symbol": "duckdb_prepared_statement_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
     },
     {
       "category": "Prepared Statements",
       "symbol": "duckdb_prepared_statement_column_count",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
     },
     {
       "category": "Prepared Statements",
       "symbol": "duckdb_prepared_statement_column_name",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
     },
     {
       "category": "Prepared Statements",
       "symbol": "duckdb_prepared_statement_column_logical_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
     },
     {
       "category": "Prepared Statements",
       "symbol": "duckdb_prepared_statement_column_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
     },
     {
       "category": "Bind Values to Prepared Statements",
@@ -697,10 +714,12 @@
     {
       "category": "Bind Values to Prepared Statements",
       "symbol": "duckdb_bind_parameter_index",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/statement.rs"
+      ]
     },
     {
       "category": "Bind Values to Prepared Statements",
