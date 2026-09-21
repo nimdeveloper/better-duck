@@ -106,7 +106,6 @@
 pub(crate) mod callback;
 mod context;
 mod data_chunk;
-mod logical_type;
 /// DuckDB replacement scans: rewrite an unresolved table reference into a
 /// table function call. **Experimental** — see the module docs.
 pub mod replacement;
@@ -118,10 +117,10 @@ pub mod scalar;
 pub mod table;
 mod vector;
 
+/// An owned DuckDB logical type handle.
+pub use crate::types::LogicalType;
 /// An owned-or-borrowed DuckDB data chunk.
 pub use data_chunk::DataChunkHandle;
-/// An owned DuckDB logical type handle.
-pub use logical_type::LogicalType;
 /// The trait behind DuckDB replacement scans, and its callback-info type.
 /// **Experimental** — see the [`replacement`] module docs.
 pub use replacement::{ReplacementScan, ReplacementScanInfo};

@@ -9,10 +9,9 @@ use crate::{
     },
 };
 
-use super::{
-    logical_type::LogicalType,
-    vector::{VectorMut, VectorRef},
-};
+use crate::types::LogicalType;
+
+use super::vector::{VectorMut, VectorRef};
 
 /// A DuckDB data chunk: a batch of rows laid out column-wise, one [`VectorRef`]/
 /// [`VectorMut`] per column.

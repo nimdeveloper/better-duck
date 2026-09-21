@@ -18,6 +18,10 @@ pub use bit::DuckBit;
 /// DuckDB BLOB type — [`Blob`] new type wrapping `Vec<u8>`.
 pub mod blob;
 pub use blob::Blob;
+
+/// Metadata-preserving logical type + recursive `TypeInfo` descriptor.
+pub mod logical_type;
+pub use logical_type::{LogicalType, TypeInfo};
 /// Float canonicalization for `DuckValue` `Eq` + `Hash`.
 pub(crate) mod cmp;
 /// Chrono date/time types and `DuckDialect` implementations for the `chrono` feature.

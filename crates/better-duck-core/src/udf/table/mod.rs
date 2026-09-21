@@ -15,7 +15,8 @@ use crate::{
 use self::function::TableFunction;
 pub use self::function::{BindInfo, InitInfo, TableFunctionInfo};
 pub use self::row::{run_table_func, TableInitData, TableRow};
-use super::{callback::contain_callback, data_chunk::DataChunkHandle, logical_type::LogicalType};
+use super::{callback::contain_callback, data_chunk::DataChunkHandle};
+use crate::types::LogicalType;
 
 /// A DuckDB table function: produces rows and columns for use in a `FROM`
 /// clause, e.g. `SELECT * FROM my_func(1, 2)`.

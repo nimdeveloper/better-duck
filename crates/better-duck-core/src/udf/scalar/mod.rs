@@ -12,10 +12,8 @@ use crate::{
 };
 
 use self::function::{ScalarFunction, ScalarFunctionInfo, ScalarFunctionSet};
-use super::{
-    callback::contain_callback, data_chunk::DataChunkHandle, logical_type::LogicalType,
-    vector::VectorMut,
-};
+use super::{callback::contain_callback, data_chunk::DataChunkHandle, vector::VectorMut};
+use crate::types::LogicalType;
 
 /// A DuckDB scalar function: computes one value per row.
 ///

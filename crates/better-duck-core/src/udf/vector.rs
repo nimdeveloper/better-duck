@@ -374,8 +374,8 @@ impl<T: ScalarRet> ScalarRet for Option<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::LogicalType;
     use crate::udf::data_chunk::DataChunkHandle;
-    use crate::udf::logical_type::LogicalType;
 
     #[test]
     fn i32_round_trips() {
