@@ -519,6 +519,28 @@ impl CachedStatement {
         CachedStatement { _connection: connection, sql, stmt }
     }
 
+    /// Returns the raw prepared-statement handle, for crate-internal FFI (e.g. the
+    /// pending-execution wrapper). The handle stays owned by this `CachedStatement`.
+    #[inline]
+    pub(crate) fn handle(&self) -> duckdb_prepared_statement {
+        self.stmt
+    }
+
+    /// Begins incremental ("pending") execution of this statement.
+    ///
+    /// Bind parameters first. The returned
+    /// [`PendingResult`](crate::raw::pending::PendingResult) borrows `self`, runs
+    /// the query one task at a time, and materialises the final result on
+    /// `execute()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if DuckDB cannot create the pending result.
+    #[allow(dead_code)]
+    pub fn pending(&self) -> Result<crate::raw::pending::PendingResult<'_>> {
+        crate::raw::pending::PendingResult::new(self)
+    }
+
     /// Resets all parameter bindings so the statement can be re-executed.
     ///
     /// # Errors

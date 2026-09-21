@@ -62,6 +62,8 @@ pub use raw::appender::Appender;
 pub use raw::connection::{QueryControl, QueryProgress};
 /// A parsed batch of SQL statements, each preparable on demand.
 pub use raw::extracted::ExtractedStatements;
+/// Incremental execution of a prepared statement, one task at a time.
+pub use raw::pending::{PendingResult, PendingState};
 /// A fully iterable DuckDB query result.
 pub use raw::result::DuckResult;
 /// A single row from a DuckDB query result.

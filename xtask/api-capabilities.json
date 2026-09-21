@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 248,
-  "expected_pending": 155,
+  "expected_production_used": 255,
+  "expected_pending": 148,
   "methods": [
     {
       "category": "Open Connect",
@@ -1005,58 +1005,72 @@
     {
       "category": "Pending Result Interface",
       "symbol": "duckdb_pending_prepared",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/pending.rs"
+      ]
     },
     {
       "category": "Pending Result Interface",
       "symbol": "duckdb_destroy_pending",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/pending.rs"
+      ]
     },
     {
       "category": "Pending Result Interface",
       "symbol": "duckdb_pending_error",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/pending.rs"
+      ]
     },
     {
       "category": "Pending Result Interface",
       "symbol": "duckdb_pending_execute_task",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/pending.rs"
+      ]
     },
     {
       "category": "Pending Result Interface",
       "symbol": "duckdb_pending_execute_check_state",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/pending.rs"
+      ]
     },
     {
       "category": "Pending Result Interface",
       "symbol": "duckdb_execute_pending",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/pending.rs"
+      ]
     },
     {
       "category": "Pending Result Interface",
       "symbol": "duckdb_pending_execution_is_finished",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "Q3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/pending.rs"
+      ]
     },
     {
       "category": "Value Interface",
