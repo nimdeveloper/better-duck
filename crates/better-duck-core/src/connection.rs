@@ -251,7 +251,11 @@ impl Connection {
     }
 
     /// Returns the shared connection owner, for building a mutex-free
-    /// [`QueryControl`] source (used by the async layer).
+    /// [`QueryControl`] source.
+    ///
+    /// Only the async layer needs this, so it is gated on the `async` feature to
+    /// avoid a dead-code warning in the default build.
+    #[cfg(feature = "async")]
     #[inline]
     pub(crate) fn inner(&self) -> &std::sync::Arc<crate::raw::connection::ConnectionInner> {
         self.0.inner()

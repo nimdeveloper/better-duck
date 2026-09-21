@@ -909,9 +909,9 @@ impl DuckValue {
                     },
                 )
             },
-            _ => {
-                todo!()
-            },
+            other => Err(DuckDBConversionError::ConversionError(format!(
+                "reading DuckDB column type {other} is not yet supported"
+            ))),
         }
     }
 }

@@ -268,6 +268,10 @@ impl QueryControl {
     /// `Arc<ConnectionInner>` *without* locking the mutex that guards the
     /// `Connection` — which is the whole point, since that mutex is held by the
     /// running native query the control needs to interrupt.
+    ///
+    /// Gated on `async`: only the async layer mints a control this way, so under
+    /// the default build it would otherwise be dead code.
+    #[cfg(feature = "async")]
     #[inline]
     pub(crate) fn from_inner(inner: Arc<ConnectionInner>) -> QueryControl {
         let generation = inner.generation();

@@ -553,14 +553,15 @@ mod appender_tests {
 
     // NOTE: a regression test for a failed flush on a `PRIMARY KEY` (ART-indexed)
     // table is deliberately *not* included here. That scenario deadlocks inside
-    // DuckDB's own `duckdb_appender_destroy`, reproduced with a pure-FFI probe (no
-    // wrapper code): two identical raw-FFI runs gave one clean completion and one
-    // hang at `destroy`. It is an upstream, nondeterministic C++ race, not a
-    // wrapper defect, and no Rust-side ordering avoids it — the probe already
-    // deadlocked on DuckDB's own documented cleanup path. E4's own fix (never
-    // re-flushing a poisoned appender) is covered below with `CHECK`-constraint
-    // failures, which poison identically but build no index and so tear down
-    // deterministically. The upstream defect is documented above.
+    // DuckDB's own `duckdb_appender_destroy`. Through the wrapper — which always
+    // destroys the handle — it deadlocks *deterministically* (hangs on the first
+    // iteration of every run); an earlier pure-FFI probe that varied the call
+    // sequence saw it intermittently, hence an older "nondeterministic" wording.
+    // It is an upstream C++ defect on DuckDB's own documented cleanup path, not a
+    // wrapper defect, and no Rust-side ordering avoids it; including the test would
+    // hang CI. The fix (never re-flushing a poisoned appender) is covered
+    // below with `CHECK`-constraint failures, which poison identically but build
+    // no index and so tear down cleanly. The upstream defect is documented above.
 
     /// Once poisoned, every further operation fails fast without touching the C
     /// handle, and does not re-enter DuckDB.
