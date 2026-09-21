@@ -166,7 +166,11 @@ fn round_trip_enum() -> better_duck_core::error::Result<()> {
     let mut stmt = conn.db().prepare("SELECT m FROM t")?;
     let mut result = stmt.execute()?;
     let row = result.next().expect("expected one row")?;
-    assert_eq!(row.get("m"), Some(&DuckValue::Enum("happy".to_string())));
+    // ENUM now carries its dictionary + selected index; check the label.
+    match row.get("m") {
+        Some(DuckValue::Enum(e)) => assert_eq!(e.label(), "happy"),
+        other => panic!("expected Enum, got {other:?}"),
+    }
     assert!(result.next().is_none());
     Ok(())
 }

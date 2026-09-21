@@ -18,15 +18,15 @@ use crate::{
     error::{DuckDBConversionError, Error, Result},
     ffi::{
         duckdb_array_type_array_size, duckdb_array_type_child_type, duckdb_destroy_logical_type,
-        duckdb_enum_dictionary_size, duckdb_enum_dictionary_value, duckdb_free, duckdb_get_type_id,
-        duckdb_list_type_child_type, duckdb_logical_type, duckdb_logical_type_get_alias,
-        duckdb_map_type_key_type, duckdb_map_type_value_type, duckdb_struct_type_child_count,
-        duckdb_struct_type_child_name, duckdb_struct_type_child_type, duckdb_type,
-        duckdb_union_type_member_count, duckdb_union_type_member_name,
-        duckdb_union_type_member_type, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
-        DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL, DUCKDB_TYPE_DUCKDB_TYPE_ENUM,
-        DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP, DUCKDB_TYPE_DUCKDB_TYPE_STRUCT,
-        DUCKDB_TYPE_DUCKDB_TYPE_UNION,
+        duckdb_enum_dictionary_size, duckdb_enum_dictionary_value, duckdb_enum_internal_type,
+        duckdb_free, duckdb_get_type_id, duckdb_list_type_child_type, duckdb_logical_type,
+        duckdb_logical_type_get_alias, duckdb_map_type_key_type, duckdb_map_type_value_type,
+        duckdb_struct_type_child_count, duckdb_struct_type_child_name,
+        duckdb_struct_type_child_type, duckdb_type, duckdb_union_type_member_count,
+        duckdb_union_type_member_name, duckdb_union_type_member_type, idx_t,
+        DUCKDB_TYPE_DUCKDB_TYPE_ARRAY, DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
+        DUCKDB_TYPE_DUCKDB_TYPE_ENUM, DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP,
+        DUCKDB_TYPE_DUCKDB_TYPE_STRUCT, DUCKDB_TYPE_DUCKDB_TYPE_UNION,
     },
     types::{
         decimal::{decimal_scale, decimal_width},
@@ -231,16 +231,32 @@ impl LogicalType {
     /// Reads the ENUM dictionary as an ordered list of labels.
     #[must_use]
     pub fn enum_dictionary(&self) -> Vec<String> {
-        // SAFETY: `self.0` is valid; meaningful only for ENUM types.
-        let size = unsafe { duckdb_enum_dictionary_size(self.0) } as u64;
-        let mut labels = Vec::with_capacity(size as usize);
-        for i in 0..size {
-            // SAFETY: `i` is within [0, size); `duckdb_enum_dictionary_value` returns
-            // an owned `char*` (free with `duckdb_free`) that we copy out.
-            let label = unsafe { owned_c_string(duckdb_enum_dictionary_value(self.0, i as idx_t)) };
-            labels.push(label.unwrap_or_default());
+        // SAFETY: `self.0` is a valid logical type owned by `self`.
+        unsafe { enum_dictionary_of(self.0) }
+    }
+
+    /// The physical storage type DuckDB uses for this ENUM's index
+    /// (`UTINYINT`/`USMALLINT`/`UINTEGER`), which is authoritative — it is not
+    /// always the narrowest type the dictionary size would allow.
+    #[must_use]
+    pub fn enum_internal_type(&self) -> duckdb_type {
+        // SAFETY: `self.0` is a valid logical type; meaningful only for ENUM types.
+        unsafe { duckdb_enum_internal_type(self.0) }
+    }
+
+    /// Reads the ENUM dictionary from a logical-type handle that this
+    /// `LogicalType` does **not** own — e.g. the borrowed handle
+    /// `duckdb_get_value_type` returns, which must not be destroyed.
+    ///
+    /// Copies every label out; the handle itself is neither retained nor freed.
+    #[must_use]
+    pub(crate) fn enum_dictionary_of_borrowed(borrowed: duckdb_logical_type) -> Vec<String> {
+        if borrowed.is_null() {
+            return Vec::new();
         }
-        labels
+        // SAFETY: `borrowed` is a valid (non-null) logical type; we only read from it
+        // and never destroy it, honouring `duckdb_get_value_type`'s ownership rule.
+        unsafe { enum_dictionary_of(borrowed) }
     }
 
     /// Materialises the full, recursive [`TypeInfo`] descriptor for this type.
@@ -305,6 +321,25 @@ fn describe_or_scalar(
     parent_id: duckdb_type,
 ) -> TypeInfo {
     child.map_or(TypeInfo::Scalar(parent_id), |c| c.describe())
+}
+
+/// Reads an ENUM logical type's ordered dictionary of labels.
+///
+/// # Safety
+///
+/// `lt` must be a valid ENUM `duckdb_logical_type`. The handle is only read, never
+/// destroyed, so it is valid for both owned and borrowed handles.
+unsafe fn enum_dictionary_of(lt: duckdb_logical_type) -> Vec<String> {
+    // SAFETY: `lt` is a valid ENUM logical type per the contract.
+    let size = unsafe { duckdb_enum_dictionary_size(lt) } as u64;
+    let mut labels = Vec::with_capacity(size as usize);
+    for i in 0..size {
+        // SAFETY: `i` is within [0, size); `duckdb_enum_dictionary_value` returns an
+        // owned `char*` (free with `duckdb_free`) that `owned_c_string` copies + frees.
+        let label = unsafe { owned_c_string(duckdb_enum_dictionary_value(lt, i as idx_t)) };
+        labels.push(label.unwrap_or_default());
+    }
+    labels
 }
 
 /// Copies a DuckDB-owned `char*` into an owned `String`, freeing the original

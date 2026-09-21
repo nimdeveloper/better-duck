@@ -352,8 +352,13 @@ fn enum_basic() -> better_duck_core::error::Result<()> {
     conn.execute_batch("INSERT INTO moods VALUES ('happy'), (NULL), ('sad')")?;
     let rows: Vec<_> = conn.execute("SELECT m FROM moods")?.collect::<Result<_, _>>()?;
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].get("m"), Some(&DuckValue::Enum("happy".to_string())));
+    // ENUM values now preserve their dictionary + selected index; compare by label.
+    let label = |row: &better_duck_core::DuckRow| match row.get("m") {
+        Some(better_duck_core::types::value::DuckValue::Enum(e)) => Some(e.label().to_owned()),
+        _ => None,
+    };
+    assert_eq!(label(&rows[0]).as_deref(), Some("happy"));
     assert_eq!(rows[1].get("m"), Some(&DuckValue::Null));
-    assert_eq!(rows[2].get("m"), Some(&DuckValue::Enum("sad".to_string())));
+    assert_eq!(label(&rows[2]).as_deref(), Some("sad"));
     Ok(())
 }

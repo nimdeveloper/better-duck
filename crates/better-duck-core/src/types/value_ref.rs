@@ -129,8 +129,8 @@ pub enum DuckValueRef<'a> {
     Blob(Blob),
     /// The value is a list
     List(Vec<DuckValueRef<'a>>),
-    /// The value is an enum
-    Enum(Cow<'a, str>),
+    /// The value is an `ENUM`, borrowing its dictionary + selected index.
+    Enum(Cow<'a, crate::types::duck_enum::DuckEnum>),
     /// The value is a struct (string-keyed field map with a fixed schema).
     Struct(HashMap<String, DuckValueRef<'a>>),
     /// The value is an array with fixed length
@@ -392,7 +392,7 @@ impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
             DuckValue::Decimal(d) => DuckValueRef::Decimal(*d),
             DuckValue::Blob(b) => DuckValueRef::Blob(b.clone()),
             DuckValue::List(l) => DuckValueRef::List(l.iter().map(DuckValueRef::from).collect()),
-            DuckValue::Enum(e) => DuckValueRef::Enum(Cow::Borrowed(e.as_str())),
+            DuckValue::Enum(e) => DuckValueRef::Enum(Cow::Borrowed(e)),
             DuckValue::Struct(m) => DuckValueRef::Struct(
                 m.iter().map(|(k, v)| (k.clone(), DuckValueRef::from(v))).collect(),
             ),

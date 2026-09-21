@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 257,
-  "expected_pending": 146,
+  "expected_production_used": 262,
+  "expected_pending": 140,
   "methods": [
     {
       "category": "Open Connect",
@@ -363,7 +363,6 @@
         "crates/better-duck-core/src/types/bit.rs",
         "crates/better-duck-core/src/types/duck_struct.rs",
         "crates/better-duck-core/src/types/logical_type.rs",
-        "crates/better-duck-core/src/types/value.rs",
         "crates/better-duck-core/src/types/varchar.rs"
       ]
     },
@@ -1095,20 +1094,22 @@
     {
       "category": "Value Interface",
       "symbol": "duckdb_create_varchar",
+      "current_state": "safe_alternative",
+      "target_disposition": "safe_alternative",
+      "owner_task": null,
+      "evidence": [
+        "Superseded by duckdb_create_varchar_length: the NUL-terminated constructor silently truncates strings at an interior NUL, so String::to_duck uses the length-aware variant instead. Retained as a documented safe alternative, not called from production."
+      ]
+    },
+    {
+      "category": "Value Interface",
+      "symbol": "duckdb_create_varchar_length",
       "current_state": "production_used",
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
         "crates/better-duck-core/src/types/varchar.rs"
       ]
-    },
-    {
-      "category": "Value Interface",
-      "symbol": "duckdb_create_varchar_length",
-      "current_state": "pending",
-      "target_disposition": "production_used",
-      "owner_task": "T4",
-      "evidence": []
     },
     {
       "category": "Value Interface",
@@ -1626,10 +1627,12 @@
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_value_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T7",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/duck_enum.rs"
+      ]
     },
     {
       "category": "Value Interface",
@@ -1780,18 +1783,22 @@
     {
       "category": "Value Interface",
       "symbol": "duckdb_create_enum_value",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/duck_enum.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_enum_value",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/duck_enum.rs"
+      ]
     },
     {
       "category": "Value Interface",
@@ -1900,10 +1907,12 @@
     {
       "category": "Logical Type Interface",
       "symbol": "duckdb_create_enum_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/duck_enum.rs"
+      ]
     },
     {
       "category": "Logical Type Interface",
@@ -1965,10 +1974,12 @@
     {
       "category": "Logical Type Interface",
       "symbol": "duckdb_enum_internal_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/logical_type.rs"
+      ]
     },
     {
       "category": "Logical Type Interface",
@@ -1977,8 +1988,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/logical_type.rs",
-        "crates/better-duck-core/src/types/value.rs"
+        "crates/better-duck-core/src/types/logical_type.rs"
       ]
     },
     {
@@ -1988,8 +1998,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/logical_type.rs",
-        "crates/better-duck-core/src/types/value.rs"
+        "crates/better-duck-core/src/types/logical_type.rs"
       ]
     },
     {
@@ -2114,6 +2123,7 @@
       "owner_task": null,
       "evidence": [
         "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/duck_enum.rs",
         "crates/better-duck-core/src/types/duck_struct.rs",
         "crates/better-duck-core/src/types/logical_type.rs",
         "crates/better-duck-core/src/types/map.rs",

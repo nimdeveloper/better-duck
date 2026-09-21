@@ -1,11 +1,11 @@
 use std::{
-    ffi::{CStr, CString},
+    ffi::CStr,
     os::raw::{c_char, c_void},
 };
 
 use crate::{
     ffi::{
-        duckdb_create_logical_type, duckdb_create_varchar, duckdb_free, duckdb_get_varchar,
+        duckdb_create_logical_type, duckdb_create_varchar_length, duckdb_free, duckdb_get_varchar,
         duckdb_logical_type, duckdb_value, DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
     },
     types::appendable::AppendAble,
@@ -33,11 +33,15 @@ impl DuckDialect for String {
     }
 
     fn to_duck(&self) -> Result<duckdb_value, DuckDBConversionError> {
-        let c_str = CString::new(self.as_str())
-            .map_err(|e| DuckDBConversionError::ConversionError(e.to_string()))?;
-        // SAFETY: `c_str` is a valid null-terminated C string. `duckdb_create_varchar`
-        // copies the string contents internally.
-        Ok(unsafe { duckdb_create_varchar(c_str.as_ptr()) })
+        // Length-aware construction: unlike `duckdb_create_varchar` (NUL-terminated),
+        // this preserves interior NUL bytes, so a `Text` value round-trips through the
+        // value path even when it embeds a `\0`. DuckDB copies the bytes internally.
+        let bytes = self.as_bytes();
+        // SAFETY: `bytes.as_ptr()` is valid for `bytes.len()` bytes of UTF-8; the call
+        // copies them and does not retain the pointer.
+        Ok(unsafe {
+            duckdb_create_varchar_length(bytes.as_ptr() as *const c_char, bytes.len() as u64)
+        })
     }
 }
 
@@ -125,11 +129,41 @@ mod tests {
     }
 
     #[test]
-    fn interior_nul_is_a_conversion_error() {
-        let err = "before\0after".to_owned().to_duck().unwrap_err();
-        assert!(
-            matches!(err, DuckDBConversionError::ConversionError(message) if message.contains("nul byte"))
-        );
+    fn interior_nul_is_accepted_on_write_no_longer_rejected() {
+        // `to_duck` is length-aware (`duckdb_create_varchar_length`), so a string
+        // with an embedded NUL is *accepted* (a real, non-null `duckdb_value`) rather
+        // than rejected the way the old NUL-terminated `duckdb_create_varchar`
+        // required. Full round-trip through a query result is covered by
+        // `embedded_nul_round_trips_through_a_query_result` below; the *standalone*
+        // `duckdb_get_varchar` reader is NUL-terminated (a DuckDB C-API limitation),
+        // so this test only asserts the value is created, not read back here.
+        let mut duck_value = "before\0after".to_owned().to_duck().unwrap();
+        assert!(!duck_value.is_null(), "length-aware create must accept an embedded NUL");
+        // SAFETY: `duck_value` was created by `to_duck`; destroy exactly once.
+        unsafe { duckdb_destroy_value(&mut duck_value) };
+    }
+
+    #[test]
+    fn embedded_nul_round_trips_through_a_query_result() {
+        // The vector read path is length-aware (`duckdb_string_t_length`), so a
+        // string with an embedded NUL survives a full write→read round trip when it
+        // goes through a real query result (as opposed to the standalone-value
+        // `duckdb_get_varchar` path, which is NUL-terminated).
+        use crate::connection::Connection;
+        use crate::types::value::DuckValue;
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (s VARCHAR)").unwrap();
+        {
+            let mut app = conn.appender("t", "main").unwrap();
+            app.append(&mut "before\0after".to_owned()).unwrap();
+            app.save().unwrap();
+        }
+        let mut rows = conn.execute("SELECT s FROM t").unwrap();
+        match rows.next().unwrap().unwrap().get("s").unwrap() {
+            DuckValue::Text(s) => assert_eq!(s, "before\0after"),
+            other => panic!("expected Text, got {other:?}"),
+        }
     }
 
     #[test]

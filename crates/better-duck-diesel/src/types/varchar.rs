@@ -22,8 +22,8 @@ impl FromSql<Text, DuckDb> for String {
         match val {
             DuckValueRef::Text(v) => Ok(v.into_owned()),
             // DuckDB uses dictionary encoding (ENUM physical type) for DISTINCT /
-            // aggregate results on VARCHAR columns.
-            DuckValueRef::Enum(v) => Ok(v.into_owned()),
+            // aggregate results on VARCHAR columns; read the selected label.
+            DuckValueRef::Enum(v) => Ok(v.label().to_owned()),
             _ => Err("Unexpected data for string type".into()),
         }
     }
@@ -51,11 +51,11 @@ impl ToSql<Text, DuckDb> for str {
 /// Deserialize a DuckDB `ENUM` column into a [`String`].
 ///
 /// DuckDB stores enum values as dictionary-encoded strings. The decoded
-/// label is exposed via `DuckValueRef::Enum(Cow<str>)`.
+/// label is read from the `DuckEnum` the core value carries.
 impl FromSql<DuckEnum, DuckDb> for String {
     fn from_sql(val: DuckValueRef) -> deserialize::Result<Self> {
         match val {
-            DuckValueRef::Enum(v) => Ok(v.into_owned()),
+            DuckValueRef::Enum(v) => Ok(v.label().to_owned()),
             _ => Err("Unexpected data for String (ENUM) type".into()),
         }
     }
@@ -63,13 +63,17 @@ impl FromSql<DuckEnum, DuckDb> for String {
 
 /// Serialize a `str` slice as a DuckDB `ENUM` bind parameter.
 ///
-/// Diesel's `&str` and `String` blanket impls derive from this `str` impl automatically.
+/// A bare string has no ENUM dictionary context, so it is bound as `VARCHAR`;
+/// DuckDB casts it to the target column's ENUM type. (A value that already knows
+/// its dictionary — a `better_duck_core::types::DuckEnum` — binds as a real ENUM
+/// through the core value path.) Diesel's `&str`/`String` blanket impls derive
+/// from this `str` impl automatically.
 impl ToSql<DuckEnum, DuckDb> for str {
     fn to_sql<'b>(
         &'b self,
         out: &mut Output<'b, '_, DuckDb>,
     ) -> serialize::Result {
-        out.set_value(DuckValueRef::Enum(Cow::Borrowed(self)));
+        out.set_value(DuckValueRef::Text(Cow::Borrowed(self)));
         Ok(IsNull::No)
     }
 }

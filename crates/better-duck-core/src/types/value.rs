@@ -3,7 +3,6 @@ use crate::ffi::duckdb_hugeint;
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::hash::{Hash, Hasher};
 use std::mem;
 #[cfg(not(feature = "chrono"))]
@@ -17,15 +16,15 @@ use crate::types::decimal::DuckDecimal;
 use crate::{
     ffi::{
         duckdb_create_logical_type, duckdb_create_null_value, duckdb_create_uhugeint, duckdb_date,
-        duckdb_destroy_logical_type, duckdb_enum_dictionary_size, duckdb_enum_dictionary_value,
-        duckdb_free, duckdb_interval, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
-        duckdb_string_t_length, duckdb_time, duckdb_time_ns, duckdb_time_tz, duckdb_timestamp,
-        duckdb_timestamp_ms, duckdb_timestamp_ns, duckdb_timestamp_s, duckdb_type, duckdb_uhugeint,
-        duckdb_validity_row_is_valid, duckdb_value, duckdb_vector, duckdb_vector_get_column_type,
-        duckdb_vector_get_data, duckdb_vector_get_validity, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
-        DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM,
-        DUCKDB_TYPE_DUCKDB_TYPE_BIT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN,
-        DUCKDB_TYPE_DUCKDB_TYPE_DATE, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_ENUM,
+        duckdb_destroy_logical_type, duckdb_interval, duckdb_logical_type, duckdb_string_t,
+        duckdb_string_t_data, duckdb_string_t_length, duckdb_time, duckdb_time_ns, duckdb_time_tz,
+        duckdb_timestamp, duckdb_timestamp_ms, duckdb_timestamp_ns, duckdb_timestamp_s,
+        duckdb_type, duckdb_uhugeint, duckdb_validity_row_is_valid, duckdb_value, duckdb_vector,
+        duckdb_vector_get_column_type, duckdb_vector_get_data, duckdb_vector_get_validity,
+        DUCKDB_TYPE_DUCKDB_TYPE_ARRAY, DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM, DUCKDB_TYPE_DUCKDB_TYPE_BIT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB,
+        DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
+        DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_ENUM,
         DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT,
         DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL,
         DUCKDB_TYPE_DUCKDB_TYPE_INVALID, DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP,
@@ -158,8 +157,8 @@ pub enum DuckValue {
     Blob(Blob),
     /// The value is a list
     List(Vec<DuckValue>),
-    /// The value is an enum
-    Enum(String),
+    /// The value is an `ENUM`, preserving its dictionary and selected index.
+    Enum(crate::types::duck_enum::DuckEnum),
     /// The value is a struct (string-keyed field map with a fixed schema).
     Struct(HashMap<String, DuckValue>),
     /// The value is an array with fixed length
@@ -415,7 +414,7 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
             DuckValueRef::Decimal(d) => DuckValue::Decimal(*d),
             DuckValueRef::Blob(b) => DuckValue::Blob(b.clone()),
             DuckValueRef::List(l) => DuckValue::List(l.iter().map(DuckValue::from).collect()),
-            DuckValueRef::Enum(e) => DuckValue::Enum(e.to_string()),
+            DuckValueRef::Enum(e) => DuckValue::Enum(e.clone().into_owned()),
             DuckValueRef::Struct(m) => {
                 DuckValue::Struct(m.iter().map(|(k, v)| (k.clone(), DuckValue::from(v))).collect())
             },
@@ -758,47 +757,37 @@ impl DuckValue {
             },
             DUCKDB_TYPE_DUCKDB_TYPE_ENUM => {
                 // SAFETY: `val` is a valid duckdb_vector from an active DuckDB result.
-                // `duckdb_vector_get_column_type` returns a new logical type that the caller
-                // must destroy with `duckdb_destroy_logical_type`.
-                let mut logical_type = unsafe { duckdb_vector_get_column_type(val) };
-                // SAFETY: `logical_type` is a valid duckdb_logical_type of ENUM kind.
-                let dict_size = unsafe { duckdb_enum_dictionary_size(logical_type) };
-                // SAFETY: The dictionary size determines storage width per the DuckDB spec.
+                // `duckdb_vector_get_column_type` returns a new logical type that the RAII
+                // `LogicalType` wrapper destroys exactly once on drop.
+                let logical_type = crate::types::LogicalType::from_raw(unsafe {
+                    duckdb_vector_get_column_type(val)
+                })
+                .map_err(|_| {
+                    DuckDBConversionError::ConversionError("null ENUM logical type".to_owned())
+                })?;
+                // The index's physical width comes from DuckDB's *authoritative*
+                // internal type, not inferred from dictionary size (a small dict can
+                // still use a wider storage type).
+                let internal = logical_type.enum_internal_type();
+                // SAFETY: `internal` names the storage width of the packed index array;
                 // `row_idx` is within [0, chunk_size).
                 let raw_index: u32 = unsafe {
                     let data = duckdb_vector_get_data(val);
-                    if dict_size <= u8::MAX as u32 {
-                        *(data as *const u8).add(row_idx as usize) as u32
-                    } else if dict_size <= u16::MAX as u32 {
-                        *(data as *const u16).add(row_idx as usize) as u32
-                    } else {
-                        *(data as *const u32).add(row_idx as usize)
+                    match internal {
+                        DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT => {
+                            *(data as *const u8).add(row_idx as usize) as u32
+                        },
+                        DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT => {
+                            *(data as *const u16).add(row_idx as usize) as u32
+                        },
+                        _ => *(data as *const u32).add(row_idx as usize),
                     }
                 };
-                // SAFETY: `raw_index` is within [0, dict_size). The returned C string is a
-                // heap-allocated null-terminated UTF-8 string that we must free with `duckdb_free`.
-                let c_str_ptr =
-                    unsafe { duckdb_enum_dictionary_value(logical_type, raw_index as idx_t) };
-                let name = if c_str_ptr.is_null() {
-                    // SAFETY: `logical_type` was obtained from `duckdb_vector_get_column_type`.
-                    unsafe { duckdb_destroy_logical_type(&mut logical_type) };
-                    return Err(DuckDBConversionError::ConversionError(format!(
-                        "enum index {raw_index} out of range (dict size {dict_size})"
-                    )));
-                } else {
-                    // SAFETY: `duckdb_enum_dictionary_value` returns valid null-terminated UTF-8.
-                    let s = unsafe { CStr::from_ptr(c_str_ptr) }
-                        .to_str()
-                        .map(|s| s.to_owned())
-                        .map_err(|e| DuckDBConversionError::ConversionError(e.to_string()))?;
-                    // SAFETY: `c_str_ptr` was allocated by DuckDB and must be freed via `duckdb_free`.
-                    unsafe { duckdb_free(c_str_ptr as *mut std::ffi::c_void) };
-                    s
-                };
-                // SAFETY: `logical_type` was obtained from `duckdb_vector_get_column_type`
-                // and must be destroyed exactly once.
-                unsafe { duckdb_destroy_logical_type(&mut logical_type) };
-                Ok(DuckValue::Enum(name))
+                // Preserve the whole dictionary + selected index, so a round trip
+                // writes a real ENUM rather than degrading to VARCHAR.
+                let dict: std::sync::Arc<[String]> =
+                    std::sync::Arc::from(logical_type.enum_dictionary());
+                crate::types::duck_enum::DuckEnum::new(dict, raw_index as u64).map(DuckValue::Enum)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_LIST | DUCKDB_TYPE_DUCKDB_TYPE_ARRAY => {
                 crate::types::array::read_list_or_array(val, t, row_idx)
@@ -987,7 +976,9 @@ impl DuckValue {
             #[cfg(not(feature = "chrono"))]
             DuckValue::TimeNs(t) => t.to_duck(),
 
-            DuckValue::Text(s) | DuckValue::Enum(s) => s.to_duck(),
+            DuckValue::Text(s) => s.to_duck(),
+            // A real ENUM value (dictionary + index), never degraded to VARCHAR.
+            DuckValue::Enum(e) => e.to_duck(),
             DuckValue::Blob(b) => b.to_duck(),
 
             DuckValue::Decimal(d) => d.to_duck(),
@@ -1044,9 +1035,9 @@ impl DuckValue {
             DuckValue::Interval(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL),
             DuckValue::TimeTz(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ),
             DuckValue::TimeNs(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_TIME_NS),
-            DuckValue::Text(_) | DuckValue::Enum(_) => {
-                scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR)
-            },
+            DuckValue::Text(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR),
+            // An ENUM's logical type is its own dictionary, not VARCHAR.
+            DuckValue::Enum(e) => e.logical_type(),
             // Uses the value's *declared* precision, so a round trip preserves
             // DECIMAL(width, scale) rather than collapsing to a default.
             DuckValue::Decimal(d) => d.logical_type(),

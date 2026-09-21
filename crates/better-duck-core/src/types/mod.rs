@@ -22,6 +22,10 @@ pub use blob::Blob;
 /// Metadata-preserving logical type + recursive `TypeInfo` descriptor.
 pub mod logical_type;
 pub use logical_type::{LogicalType, TypeInfo};
+
+/// Metadata-preserving ENUM value (`DuckEnum`), dictionary + selected index.
+pub mod duck_enum;
+pub use duck_enum::DuckEnum;
 /// Float canonicalization for `DuckValue` `Eq` + `Hash`.
 pub(crate) mod cmp;
 /// Chrono date/time types and `DuckDialect` implementations for the `chrono` feature.
