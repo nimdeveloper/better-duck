@@ -631,4 +631,45 @@ mod appender_tests {
         let error = appender.finish().unwrap_err();
         assert!(matches!(error, Error::Engine(_)), "expected typed engine error, got {error:?}");
     }
+
+    /// `finish` on an already-poisoned appender fails fast at the state check,
+    /// before touching the C handle — it must not attempt a close on invalidated
+    /// data.
+    #[test]
+    fn finish_on_poisoned_appender_reports_poison_without_reclose() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE finish_poisoned (id INTEGER CHECK (id > 0))").unwrap();
+        let mut appender = con.appender("finish_poisoned", "main").unwrap();
+
+        appender.append(&mut DuckValue::Int(-1)).unwrap();
+        appender.save().unwrap_err(); // poisons
+
+        let error = appender.finish().unwrap_err();
+        assert!(
+            matches!(error, Error::Engine(ref e)
+                if e.message.as_deref() == Some("appender was invalidated by an earlier failure")),
+            "finish on a poisoned appender must report the poison, got {error:?}"
+        );
+    }
+
+    /// Dropping a `Ready` appender that has an unflushed constraint-violating row
+    /// runs the best-effort flush in `Drop`, which fails and is logged (never
+    /// panics), and leaves the connection usable.
+    #[test]
+    fn drop_with_pending_violation_logs_and_leaves_connection_usable() {
+        let mut con = get_test_connection();
+        con.query("CREATE TABLE drop_fail (id INTEGER CHECK (id > 0))").unwrap();
+        {
+            let mut appender = con.appender("drop_fail", "main").unwrap();
+            // Buffered but not saved: the violation surfaces during Drop's flush.
+            appender.append(&mut DuckValue::Int(-9)).unwrap();
+            // appender drops here — Drop flushes (Ready state), fails, logs, destroys.
+        }
+        // The connection is unharmed and the bad row was not committed.
+        con.query("INSERT INTO drop_fail VALUES (3)").unwrap();
+        assert_row_exists(&con, "drop_fail", 3);
+        let mut rows = con.query("SELECT count(*) AS n FROM drop_fail").unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("n").unwrap(), &DuckValue::BigInt(1), "only the valid row persisted");
+    }
 }
