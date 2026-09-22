@@ -8,7 +8,10 @@ use crate::{
     error::{Error, Result},
     ffi,
     helpers::path::path_to_cstring,
-    raw::{appender::Appender, connection::RawConnection, result::DuckResult},
+    raw::{
+        appender::Appender, connection::RawConnection, result::DuckResult,
+        table_description::TableDescription,
+    },
     types::appendable::AppendAble,
 };
 
@@ -218,6 +221,41 @@ impl Connection {
         // SAFETY: `value` was returned by `duckdb_get_table_names`; destroy exactly once.
         unsafe { ffi::duckdb_destroy_value(&mut value) };
         Ok(names)
+    }
+
+    /// Describes `schema.table` (default catalog), giving indexed access to column
+    /// names and `DEFAULT` flags via [`TableDescription`].
+    ///
+    /// The API has no column-count accessor; obtain the number of columns from a
+    /// trusted bounds source (an appender's column count, or a `SELECT … LIMIT 0`
+    /// schema) and read `0..count`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the names contain an interior NUL, or if DuckDB cannot
+    /// describe the table (the error carries DuckDB's catalog-aware message).
+    pub fn table_description(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<TableDescription> {
+        TableDescription::create(self.0.handle(), schema, table)
+    }
+
+    /// Like [`table_description`](Connection::table_description) but with an explicit
+    /// catalog (`None` uses DuckDB's default).
+    ///
+    /// # Errors
+    ///
+    /// As [`table_description`](Connection::table_description), plus an interior NUL
+    /// in `catalog`.
+    pub fn table_description_ext(
+        &self,
+        catalog: Option<&str>,
+        schema: &str,
+        table: &str,
+    ) -> Result<TableDescription> {
+        TableDescription::create_ext(self.0.handle(), catalog, schema, table)
     }
 
     /// Creates an appender for bulk-inserting rows into the given table and schema.

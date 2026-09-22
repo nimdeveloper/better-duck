@@ -7,3 +7,4 @@ pub(crate) mod pending;
 pub mod result;
 pub mod row;
 pub(crate) mod statement;
+pub mod table_description;

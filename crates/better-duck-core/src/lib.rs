@@ -70,6 +70,8 @@ pub use raw::result::{DuckResult, ResultType};
 pub use raw::row::DuckRow;
 /// A prepared statement suitable for caching and re-execution.
 pub use raw::statement::{CachedStatement, StatementType};
+
+pub use raw::table_description::TableDescription;
 /// An owned, thread-safe, fully materialized query result.
 pub use result_set::ResultSet;
 /// Trait for binding values to DuckDB prepared statements and appenders.

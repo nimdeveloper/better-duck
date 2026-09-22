@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 273,
-  "expected_pending": 129,
+  "expected_production_used": 279,
+  "expected_pending": 123,
   "methods": [
     {
       "category": "Open Connect",
@@ -368,6 +368,7 @@
         "crates/better-duck-core/src/connection.rs",
         "crates/better-duck-core/src/raw/connection.rs",
         "crates/better-duck-core/src/raw/statement.rs",
+        "crates/better-duck-core/src/raw/table_description.rs",
         "crates/better-duck-core/src/types/bignum.rs",
         "crates/better-duck-core/src/types/bit.rs",
         "crates/better-duck-core/src/types/duck_struct.rs",
@@ -3631,50 +3632,62 @@
     {
       "category": "Table Description",
       "symbol": "duckdb_table_description_create",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/table_description.rs"
+      ]
     },
     {
       "category": "Table Description",
       "symbol": "duckdb_table_description_create_ext",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/table_description.rs"
+      ]
     },
     {
       "category": "Table Description",
       "symbol": "duckdb_table_description_destroy",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/table_description.rs"
+      ]
     },
     {
       "category": "Table Description",
       "symbol": "duckdb_table_description_error",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/table_description.rs"
+      ]
     },
     {
       "category": "Table Description",
       "symbol": "duckdb_column_has_default",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/table_description.rs"
+      ]
     },
     {
       "category": "Table Description",
       "symbol": "duckdb_table_description_get_column_name",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/table_description.rs"
+      ]
     },
     {
       "category": "Threading Information",
