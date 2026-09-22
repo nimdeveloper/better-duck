@@ -1,6 +1,6 @@
 pub(crate) mod appender;
 pub(crate) mod connection;
-mod data_chunk;
+pub mod data_chunk;
 pub(crate) mod error_data;
 pub(crate) mod extracted;
 pub(crate) mod pending;

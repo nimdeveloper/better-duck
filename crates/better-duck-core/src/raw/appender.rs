@@ -4,14 +4,17 @@ use std::sync::Arc;
 
 use crate::error::{EngineError, Error, Result};
 use crate::ffi::{
+    duckdb_append_data_chunk, duckdb_append_default, duckdb_append_default_to_chunk,
     duckdb_appender, duckdb_appender_add_column, duckdb_appender_begin_row,
     duckdb_appender_clear_columns, duckdb_appender_close, duckdb_appender_column_count,
     duckdb_appender_column_type, duckdb_appender_create, duckdb_appender_create_ext,
     duckdb_appender_create_query, duckdb_appender_destroy, duckdb_appender_end_row,
-    duckdb_appender_error_data, duckdb_appender_flush, duckdb_logical_type, idx_t, DuckDBSuccess,
+    duckdb_appender_error_data, duckdb_appender_flush, duckdb_data_chunk_get_column_count,
+    duckdb_data_chunk_get_size, duckdb_logical_type, idx_t, DuckDBSuccess,
 };
 use crate::helpers::duck_result::result_from_duckdb_appender;
 use crate::raw::connection::ConnectionInner;
+use crate::raw::data_chunk::DataChunk;
 use crate::raw::error_data::ErrorData;
 use crate::types::appendable::AppendAble;
 use crate::types::LogicalType;
@@ -252,6 +255,106 @@ impl Appender {
         self.ensure_configurable()?;
         // SAFETY: `self.inn` is a valid, non-null duckdb_appender.
         let rc = unsafe { duckdb_appender_clear_columns(self.inn) };
+        self.check(rc)
+    }
+
+    /// Appends one row in which every column takes its `DEFAULT` value.
+    ///
+    /// Fills the active column list with `duckdb_append_default` (a column whose
+    /// table has no `DEFAULT` becomes `NULL`). Opens and closes the row like
+    /// [`append`](Appender::append), so a failure part-way never leaves a half-open
+    /// row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the appender is poisoned/closed or DuckDB rejects a
+    /// default.
+    pub fn append_default_row(&mut self) -> Result<()> {
+        self.ensure_ready()?;
+        let columns = self.column_count();
+
+        // SAFETY: `self.inn` is a valid duckdb_appender created by a constructor.
+        let begin = unsafe { duckdb_appender_begin_row(self.inn) };
+        self.check(begin)?;
+
+        // The guard ends the row on every exit path (early `?`/panic).
+        let guard = RowGuard { appender: self, ended: false };
+        for _ in 0..columns {
+            // SAFETY: `guard.appender.inn` is valid with a row open; each call appends
+            // the current column's default and advances the column cursor.
+            let rc = unsafe { duckdb_append_default(guard.appender.inn) };
+            guard.appender.check(rc)?;
+        }
+        guard.end()?;
+        self.rows_appended = true;
+        Ok(())
+    }
+
+    /// Appends every row of `chunk` to the appender in one call
+    /// (`duckdb_append_data_chunk`).
+    ///
+    /// `chunk` is only read — the caller keeps ownership and it is destroyed on drop
+    /// as usual. The chunk's column count must match the appender's active column
+    /// list; this is validated Rust-side before the FFI call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the appender is poisoned/closed, the chunk's column count
+    /// disagrees with the appender's, or DuckDB rejects the chunk (e.g. type
+    /// mismatch).
+    pub fn append_chunk(
+        &mut self,
+        chunk: &DataChunk,
+    ) -> Result<()> {
+        self.ensure_ready()?;
+        let appender_cols = self.column_count();
+        // SAFETY: `chunk.0` is a valid duckdb_data_chunk owned by `chunk`.
+        let chunk_cols = unsafe { duckdb_data_chunk_get_column_count(chunk.0) } as u64;
+        if chunk_cols != appender_cols {
+            return Err(Error::Engine(EngineError::unavailable(Some(format!(
+                "data chunk has {chunk_cols} columns but the appender expects {appender_cols}"
+            )))));
+        }
+        // SAFETY: `self.inn` is a valid appender; `chunk.0` is a valid data chunk whose
+        // column count matches. DuckDB reads the chunk and does not take ownership.
+        let rc = unsafe { duckdb_append_data_chunk(self.inn, chunk.0) };
+        self.check(rc)?;
+        // SAFETY: `chunk.0` is valid; a non-empty chunk means rows now exist.
+        if unsafe { duckdb_data_chunk_get_size(chunk.0) } > 0 {
+            self.rows_appended = true;
+        }
+        Ok(())
+    }
+
+    /// Writes the `DEFAULT` value of appender column `col` into `chunk` at
+    /// `(col, row)` (`duckdb_append_default_to_chunk`); a column with no `DEFAULT`
+    /// becomes `NULL`.
+    ///
+    /// `col` must be within the chunk's column count (validated Rust-side).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the appender is poisoned/closed, `col` is out of range, or
+    /// DuckDB reports a failure.
+    pub fn append_default_to_chunk(
+        &mut self,
+        chunk: &mut DataChunk,
+        col: u64,
+        row: u64,
+    ) -> Result<()> {
+        self.ensure_ready()?;
+        // SAFETY: `chunk.0` is a valid duckdb_data_chunk owned by `chunk`.
+        let chunk_cols = unsafe { duckdb_data_chunk_get_column_count(chunk.0) } as u64;
+        if col >= chunk_cols {
+            return Err(Error::Engine(EngineError::unavailable(Some(format!(
+                "column {col} out of range for a {chunk_cols}-column chunk"
+            )))));
+        }
+        // SAFETY: `self.inn` is a valid appender; `chunk.0` is a valid chunk; `col` is
+        // in range. DuckDB writes the default into the chunk cell.
+        let rc = unsafe {
+            duckdb_append_default_to_chunk(self.inn, chunk.0, col as idx_t, row as idx_t)
+        };
         self.check(rc)
     }
 
@@ -965,6 +1068,96 @@ mod appender_tests {
             assert_eq!(rows.len(), 2);
             assert_eq!(rows[0].get("v"), Some(&DuckValue::Int(42)));
             assert_eq!(rows[1].get("v"), Some(&DuckValue::Int(43)));
+        }
+    }
+
+    // DEFAULT rows/cells and whole-chunk ingestion.
+    mod chunk_ingestion {
+        use crate::connection::Connection;
+        use crate::raw::data_chunk::DataChunk;
+        use crate::types::value::DuckValue;
+        use crate::types::LogicalType;
+
+        #[test]
+        fn append_default_row_fills_table_defaults_and_nulls() {
+            let mut conn = Connection::open_in_memory().unwrap();
+            // `a` has a DEFAULT, `b` does not (so it becomes NULL).
+            conn.execute_batch("CREATE TABLE t (a INTEGER DEFAULT 5, b INTEGER)").unwrap();
+            {
+                let mut app = conn.appender("t", "main").unwrap();
+                app.append_default_row().unwrap();
+                app.save().unwrap();
+            }
+            let mut rows = conn.execute("SELECT a, b FROM t").unwrap();
+            let row = rows.next().unwrap().unwrap();
+            assert_eq!(row.get("a"), Some(&DuckValue::Int(5)), "DEFAULT applied");
+            assert_eq!(row.get("b"), Some(&DuckValue::Null), "no DEFAULT -> NULL");
+        }
+
+        #[test]
+        fn append_chunk_copies_rows_and_validates_column_count() {
+            let mut conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("CREATE TABLE src (v INTEGER)").unwrap();
+            conn.execute_batch("INSERT INTO src VALUES (1), (2), (3)").unwrap();
+            conn.execute_batch("CREATE TABLE dst (v INTEGER)").unwrap();
+
+            // Fetch a chunk of the source rows (owned; independent of the result).
+            let chunk = {
+                let result = conn.execute("SELECT v FROM src ORDER BY v").unwrap();
+                DataChunk::from_result(&result).expect("a chunk").unwrap()
+            };
+
+            {
+                let mut app = conn.appender("dst", "main").unwrap();
+                app.append_chunk(&chunk).unwrap();
+                app.save().unwrap();
+            }
+            let rows: Vec<_> = conn
+                .execute("SELECT v FROM dst ORDER BY v")
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert_eq!(rows.len(), 3);
+            assert_eq!(rows[0].get("v"), Some(&DuckValue::Int(1)));
+            assert_eq!(rows[2].get("v"), Some(&DuckValue::Int(3)));
+
+            // A chunk whose column count disagrees with the appender is rejected
+            // Rust-side (dst2 has two columns, the chunk has one).
+            conn.execute_batch("CREATE TABLE dst2 (v INTEGER, w INTEGER)").unwrap();
+            let mut app2 = conn.appender("dst2", "main").unwrap();
+            assert!(app2.append_chunk(&chunk).is_err(), "column-count mismatch must error");
+        }
+
+        #[test]
+        fn append_default_to_chunk_fills_a_cell() {
+            let mut conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("CREATE TABLE t (a INTEGER DEFAULT 42)").unwrap();
+
+            // Build a one-column INTEGER chunk to receive the default.
+            let int_ty = LogicalType::of::<i32>().unwrap();
+            let mut raw_types = [int_ty.as_raw()];
+            // SAFETY: `raw_types` holds one valid logical type handle that outlives the
+            // call; DuckDB copies it. The returned chunk is wrapped in RAII (`DataChunk`)
+            // so it is destroyed exactly once.
+            let raw = unsafe { crate::ffi::duckdb_create_data_chunk(raw_types.as_mut_ptr(), 1) };
+            let mut chunk = DataChunk::new(raw).unwrap();
+            drop(int_ty);
+
+            {
+                let mut app = conn.appender("t", "main").unwrap();
+                // Write column 0's DEFAULT (42) into chunk cell (0, 0), then size it.
+                app.append_default_to_chunk(&mut chunk, 0, 0).unwrap();
+                // SAFETY: `chunk` is valid; one row is now populated.
+                unsafe { crate::ffi::duckdb_data_chunk_set_size(*chunk, 1) };
+                app.append_chunk(&chunk).unwrap();
+                app.save().unwrap();
+
+                // Out-of-range column is rejected Rust-side.
+                assert!(app.append_default_to_chunk(&mut chunk, 5, 0).is_err());
+            }
+            let mut rows = conn.execute("SELECT a FROM t").unwrap();
+            let row = rows.next().unwrap().unwrap();
+            assert_eq!(row.get("a"), Some(&DuckValue::Int(42)));
         }
     }
 }

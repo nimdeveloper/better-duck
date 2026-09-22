@@ -8,12 +8,22 @@ use crate::ffi::{duckdb_data_chunk, duckdb_destroy_data_chunk};
 use super::result::DuckResult;
 use crate::{error::Result, ffi};
 
+/// An owned DuckDB `duckdb_data_chunk` — a batch of column vectors — that is
+/// destroyed on drop.
+///
+/// Obtain one from a query result with [`DataChunk::from_result`], then append it
+/// elsewhere with [`Appender::append_chunk`](crate::Appender::append_chunk).
 pub struct DataChunk(
     pub(crate) duckdb_data_chunk,
     pub(crate) u64, // current row index in chunk
 );
 
 impl DataChunk {
+    /// Takes ownership of a raw `duckdb_data_chunk` handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `data_chunk` is null.
     #[inline]
     pub fn new(data_chunk: ffi::duckdb_data_chunk) -> Result<DataChunk> {
         if data_chunk.is_null() {
@@ -24,6 +34,8 @@ impl DataChunk {
         }
         Ok(DataChunk(data_chunk, 0))
     }
+    /// Fetches the next chunk of a query result, or `None` once the result is
+    /// exhausted.
     #[inline]
     pub fn from_result(result: &DuckResult) -> Option<Result<DataChunk>> {
         // SAFETY: `result` is a valid duckdb_result; the returned chunk (if non-null)
@@ -37,17 +49,21 @@ impl DataChunk {
         Some(res)
     }
 
+    /// The current row cursor used by [`next_row`](DataChunk::next_row).
     #[allow(unused)]
     #[inline]
     pub fn current_row(&self) -> u64 {
         self.1
     }
+    /// The number of rows in the chunk.
     #[inline]
     pub fn row_count(&self) -> u64 {
         // SAFETY: `self.0` is a valid duckdb_data_chunk (enforced by the caller).
         unsafe { ffi::duckdb_data_chunk_get_size(self.0) }
     }
 
+    /// Advances the row cursor, returning the next row index, or `None` at the end
+    /// (destroying the underlying chunk).
     #[inline]
     pub fn next_row(&mut self) -> Option<u64> {
         // SAFETY: `self.0` is a valid duckdb_data_chunk (enforced by the caller).
