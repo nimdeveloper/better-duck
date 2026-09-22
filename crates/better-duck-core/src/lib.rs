@@ -53,7 +53,7 @@ pub use better_duck_macros::duckdb_scalar;
 #[cfg(feature = "udf")]
 pub use better_duck_macros::duckdb_table_function;
 /// DuckDB database configuration.
-pub use config::{AccessMode, Config, DefaultNullOrder, DefaultOrder};
+pub use config::{library_version, AccessMode, Config, ConfigFlag, DefaultNullOrder, DefaultOrder};
 /// A shared, cloneable handle to an open DuckDB database.
 pub use database::Database;
 /// A DuckDB appender for bulk-inserting rows into a table.

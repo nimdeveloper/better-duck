@@ -2,7 +2,12 @@ use crate::{
     error::{Error, Result},
     ffi,
 };
-use std::{default::Default, ffi::CString, os::raw::c_char, ptr};
+use std::{
+    default::Default,
+    ffi::{CStr, CString},
+    os::raw::c_char,
+    ptr,
+};
 
 use strum::{Display, EnumString};
 
@@ -42,6 +47,32 @@ pub enum DefaultNullOrder {
     NullsLast,
 }
 
+/// A DuckDB configuration flag's human-readable name and description, as reported
+/// by [`Config::flag`] / [`Config::flags`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigFlag {
+    /// The flag's name (e.g. `"access_mode"`), usable as a key for [`Config::with`].
+    pub name: String,
+    /// A human-readable description of what the flag controls.
+    pub description: String,
+}
+
+/// The version string of the linked DuckDB library (e.g. `"v1.5.5"`).
+///
+/// Wraps `duckdb_library_version`, whose result is a static string owned by DuckDB
+/// (never freed); the bytes are copied into an owned `String`.
+#[must_use]
+pub fn library_version() -> String {
+    // SAFETY: `duckdb_library_version` returns a static, null-terminated string that
+    // must NOT be freed; we only read and copy it.
+    let ptr = unsafe { ffi::duckdb_library_version() };
+    if ptr.is_null() {
+        return String::new();
+    }
+    // SAFETY: `ptr` is a valid, non-null, null-terminated static C string.
+    unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
+}
+
 /// duckdb configuration
 /// Refer to <https://github.com/duckdb/duckdb/blob/master/src/main/config.cpp>
 #[derive(Default)]
@@ -52,6 +83,44 @@ pub struct Config {
 impl Config {
     pub(crate) fn duckdb_config(&self) -> ffi::duckdb_config {
         self.config.unwrap_or(std::ptr::null_mut() as ffi::duckdb_config)
+    }
+
+    /// The number of configuration flags DuckDB recognises.
+    ///
+    /// Flags are addressable by index in `0..flag_count()` via [`Config::flag`].
+    #[must_use]
+    pub fn flag_count() -> usize {
+        // SAFETY: `duckdb_config_count` takes no arguments and only reads a static table.
+        unsafe { ffi::duckdb_config_count() }
+    }
+
+    /// The name and description of the configuration flag at `index`, or `None` if
+    /// `index >= flag_count()`.
+    ///
+    /// Wraps `duckdb_get_config_flag`; the returned name/description are static
+    /// strings owned by DuckDB (never freed) and are copied into the [`ConfigFlag`].
+    #[must_use]
+    pub fn flag(index: usize) -> Option<ConfigFlag> {
+        let mut name: *const c_char = ptr::null();
+        let mut description: *const c_char = ptr::null();
+        // SAFETY: `name`/`description` are valid out-pointers. On success DuckDB writes
+        // pointers to static strings (which must NOT be freed); an out-of-range index
+        // returns `DuckDBError` and leaves them untouched.
+        let state = unsafe { ffi::duckdb_get_config_flag(index, &mut name, &mut description) };
+        if state != ffi::DuckDBSuccess || name.is_null() || description.is_null() {
+            return None;
+        }
+        // SAFETY: `name` is a valid, non-null, null-terminated static C string owned
+        // by DuckDB; we copy it out and never free it.
+        let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+        // SAFETY: `description` is likewise a valid static C string owned by DuckDB.
+        let description = unsafe { CStr::from_ptr(description) }.to_string_lossy().into_owned();
+        Some(ConfigFlag { name, description })
+    }
+
+    /// Iterates every configuration flag DuckDB recognises, in index order.
+    pub fn flags() -> impl Iterator<Item = ConfigFlag> {
+        (0..Self::flag_count()).filter_map(Self::flag)
     }
 
     /// enable autoload extensions
@@ -374,5 +443,33 @@ mod tests {
     fn config_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Config>();
+    }
+
+    #[test]
+    fn library_version_is_reported() {
+        let version = super::library_version();
+        assert!(!version.is_empty(), "library version must not be empty");
+        // DuckDB reports versions like "v1.5.5"; at minimum it should contain a digit.
+        assert!(version.chars().any(|c| c.is_ascii_digit()), "version {version:?} has no digit");
+    }
+
+    #[test]
+    fn config_flags_are_discoverable() {
+        let count = Config::flag_count();
+        assert!(count > 0, "DuckDB must expose at least one config flag");
+
+        // Index 0 is in range; one past the end is not.
+        assert!(Config::flag(0).is_some());
+        assert!(Config::flag(count).is_none(), "index == count must be out of range");
+
+        // Iterating yields exactly `count` flags, each with a non-empty name.
+        let flags: Vec<_> = Config::flags().collect();
+        assert_eq!(flags.len(), count);
+        assert!(flags.iter().all(|f| !f.name.is_empty()));
+
+        // A stable, well-known flag is present and usable as a `with` key.
+        let threads = flags.iter().find(|f| f.name == "threads").expect("`threads` flag missing");
+        assert!(!threads.description.is_empty());
+        assert!(Config::default().with(&threads.name, "2").is_ok());
     }
 }

@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 267,
-  "expected_pending": 135,
+  "expected_production_used": 270,
+  "expected_pending": 132,
   "methods": [
     {
       "category": "Open Connect",
@@ -124,10 +124,12 @@
     {
       "category": "Open Connect",
       "symbol": "duckdb_library_version",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/config.rs"
+      ]
     },
     {
       "category": "Open Connect",
@@ -150,18 +152,22 @@
     {
       "category": "Configuration",
       "symbol": "duckdb_config_count",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/config.rs"
+      ]
     },
     {
       "category": "Configuration",
       "symbol": "duckdb_get_config_flag",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/config.rs"
+      ]
     },
     {
       "category": "Configuration",
