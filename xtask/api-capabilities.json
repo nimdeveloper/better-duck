@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 312,
-  "expected_pending": 88,
+  "expected_production_used": 315,
+  "expected_pending": 85,
   "methods": [
     {
       "category": "Open Connect",
@@ -376,6 +376,7 @@
         "crates/better-duck-core/src/connection.rs",
         "crates/better-duck-core/src/raw/connection.rs",
         "crates/better-duck-core/src/raw/expression.rs",
+        "crates/better-duck-core/src/raw/owned_value.rs",
         "crates/better-duck-core/src/raw/profiling.rs",
         "crates/better-duck-core/src/raw/statement.rs",
         "crates/better-duck-core/src/raw/table_description.rs",
@@ -1114,6 +1115,7 @@
       "evidence": [
         "crates/better-duck-core/src/connection.rs",
         "crates/better-duck-core/src/raw/expression.rs",
+        "crates/better-duck-core/src/raw/owned_value.rs",
         "crates/better-duck-core/src/raw/profiling.rs",
         "crates/better-duck-core/src/types/appendable.rs",
         "crates/better-duck-core/src/types/array.rs",
@@ -1802,10 +1804,12 @@
     {
       "category": "Value Interface",
       "symbol": "duckdb_is_null_value",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T7",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
@@ -1860,18 +1864,22 @@
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_struct_child",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T7",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_value_to_string",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T7",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Logical Type Interface",

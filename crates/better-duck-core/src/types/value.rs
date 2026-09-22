@@ -1154,6 +1154,25 @@ impl DuckValue {
             DuckValue::Bignum(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM),
         }
     }
+
+    /// Materialises this value as a standalone, owned DuckDB value
+    /// ([`OwnedValue`](crate::raw::owned_value::OwnedValue)) for introspection —
+    /// SQL-`NULL` check, SQL string rendering, and `STRUCT` child access.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuckDBConversionError`] if the value has no DuckDB representation
+    /// (see [`to_duck`](DuckValue::to_duck)).
+    pub fn to_owned_value(
+        &self
+    ) -> Result<crate::raw::owned_value::OwnedValue, DuckDBConversionError> {
+        let raw = self.to_duck()?;
+        // SAFETY: `raw` is an owned duckdb_value produced by `to_duck`; `OwnedValue`
+        // takes ownership and destroys it exactly once on drop.
+        unsafe { crate::raw::owned_value::OwnedValue::from_raw(raw) }.ok_or_else(|| {
+            DuckDBConversionError::ConversionError("value produced a null duckdb_value".to_owned())
+        })
+    }
 }
 
 impl DuckValue {

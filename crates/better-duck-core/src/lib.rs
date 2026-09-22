@@ -79,6 +79,8 @@ pub use raw::profiling::ProfilingNode;
 
 pub use raw::client_context::ClientContext;
 
+pub use raw::owned_value::OwnedValue;
+
 #[cfg(feature = "udf")]
 pub use raw::expression::Expression;
 /// An owned, thread-safe, fully materialized query result.

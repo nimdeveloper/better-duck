@@ -7,6 +7,7 @@ pub(crate) mod error_data;
 #[cfg(feature = "udf")]
 pub mod expression;
 pub(crate) mod extracted;
+pub mod owned_value;
 pub(crate) mod pending;
 pub mod profiling;
 pub mod result;
