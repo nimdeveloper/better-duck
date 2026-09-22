@@ -1,4 +1,5 @@
 pub(crate) mod appender;
+pub mod client_context;
 pub(crate) mod connection;
 pub mod data_chunk;
 pub(crate) mod error_data;

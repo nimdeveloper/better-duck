@@ -20,7 +20,8 @@ use crate::{
         duckdb_init_set_error, duckdb_init_set_init_data, duckdb_init_set_max_threads,
         duckdb_register_table_function, duckdb_table_function,
         duckdb_table_function_add_named_parameter, duckdb_table_function_add_parameter,
-        duckdb_table_function_bind_t, duckdb_table_function_init_t, duckdb_table_function_set_bind,
+        duckdb_table_function_bind_t, duckdb_table_function_get_client_context,
+        duckdb_table_function_init_t, duckdb_table_function_set_bind,
         duckdb_table_function_set_extra_info, duckdb_table_function_set_function,
         duckdb_table_function_set_init, duckdb_table_function_set_local_init,
         duckdb_table_function_set_name, duckdb_table_function_supports_projection_pushdown,
@@ -216,6 +217,20 @@ impl BindInfo {
     pub fn parameter_count(&self) -> u64 {
         // SAFETY: `self.ptr` is valid.
         unsafe { duckdb_bind_get_parameter_count(self.ptr) }
+    }
+
+    /// The [`ClientContext`] of the connection executing this bind, exposing its
+    /// stable connection id. The returned context borrows `self`, so it cannot
+    /// outlive the bind call. Returns `None` if no context is available.
+    #[must_use]
+    pub fn client_context(&self) -> Option<crate::raw::client_context::ClientContext<'_>> {
+        let mut ctx: crate::ffi::duckdb_client_context = std::ptr::null_mut();
+        // SAFETY: `self.ptr` is a valid bind info; `ctx` is a valid out-pointer DuckDB
+        // writes an owned client-context handle into.
+        unsafe { duckdb_table_function_get_client_context(self.ptr, &mut ctx) };
+        // SAFETY: `ctx` is null or an owned handle whose owner (this bind call)
+        // outlives the returned borrow.
+        unsafe { crate::raw::client_context::ClientContext::from_raw(ctx) }
     }
 
     /// Reads the positional parameter at `index` as `T`.

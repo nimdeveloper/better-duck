@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 296,
-  "expected_pending": 106,
+  "expected_production_used": 300,
+  "expected_pending": 102,
   "methods": [
     {
       "category": "Open Connect",
@@ -100,26 +100,32 @@
     {
       "category": "Open Connect",
       "symbol": "duckdb_connection_get_client_context",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X2",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/connection.rs"
+      ]
     },
     {
       "category": "Open Connect",
       "symbol": "duckdb_client_context_get_connection_id",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X2",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/client_context.rs"
+      ]
     },
     {
       "category": "Open Connect",
       "symbol": "duckdb_destroy_client_context",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X2",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/client_context.rs"
+      ]
     },
     {
       "category": "Open Connect",
@@ -2997,10 +3003,12 @@
     {
       "category": "Table Function Bind",
       "symbol": "duckdb_table_function_get_client_context",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X2",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/table/function.rs"
+      ]
     },
     {
       "category": "Table Function Bind",

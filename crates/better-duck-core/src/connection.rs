@@ -9,8 +9,8 @@ use crate::{
     ffi,
     helpers::path::path_to_cstring,
     raw::{
-        appender::Appender, connection::RawConnection, profiling::ProfilingNode,
-        result::DuckResult, table_description::TableDescription,
+        appender::Appender, client_context::ClientContext, connection::RawConnection,
+        profiling::ProfilingNode, result::DuckResult, table_description::TableDescription,
     },
     types::appendable::AppendAble,
 };
@@ -289,6 +289,21 @@ impl Connection {
     ) -> Option<String> {
         // SAFETY: `self.0.handle()` is a valid open connection.
         unsafe { crate::raw::profiling::profiling_metric(self.0.handle(), key) }
+    }
+
+    /// Returns this connection's [`ClientContext`], exposing its stable connection
+    /// id. The returned context borrows `self`, so it cannot outlive the connection.
+    ///
+    /// Returns `None` if DuckDB does not provide a context for the connection.
+    #[must_use]
+    pub fn client_context(&self) -> Option<ClientContext<'_>> {
+        let mut ctx: crate::ffi::duckdb_client_context = std::ptr::null_mut();
+        // SAFETY: `self.0.handle()` is a valid open connection; `ctx` is a valid
+        // out-pointer DuckDB writes an owned client-context handle into.
+        unsafe { crate::ffi::duckdb_connection_get_client_context(self.0.handle(), &mut ctx) };
+        // SAFETY: `ctx` is either null or an owned client-context handle whose owner
+        // (this connection) outlives the returned borrow.
+        unsafe { ClientContext::from_raw(ctx) }
     }
 
     /// Creates an appender for bulk-inserting rows into the given table and schema.
