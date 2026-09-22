@@ -103,14 +103,16 @@
 //! over panicking; the ordinary error path never depends on unwinding.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+/// DuckDB scalar functions: row-wise functions used in a `SELECT` list or
+/// `WHERE` clause.
+pub mod aggregate;
 pub(crate) mod callback;
 mod context;
 mod data_chunk;
 /// DuckDB replacement scans: rewrite an unresolved table reference into a
 /// table function call. **Experimental** — see the module docs.
 pub mod replacement;
-/// DuckDB scalar functions: row-wise functions used in a `SELECT` list or
-/// `WHERE` clause.
+
 pub mod scalar;
 /// DuckDB table functions: functions used in a `FROM` clause that produce rows
 /// and columns.
@@ -119,12 +121,14 @@ mod vector;
 
 /// An owned DuckDB logical type handle.
 pub use crate::types::LogicalType;
+/// The trait behind DuckDB scalar functions, and its signature type.
+pub use aggregate::VAggregate;
 /// An owned-or-borrowed DuckDB data chunk.
 pub use data_chunk::DataChunkHandle;
 /// The trait behind DuckDB replacement scans, and its callback-info type.
 /// **Experimental** — see the [`replacement`] module docs.
 pub use replacement::{ReplacementScan, ReplacementScanInfo};
-/// The trait behind DuckDB scalar functions, and its signature type.
+
 pub use scalar::{ScalarBindInfo, ScalarSignature, VScalar};
 /// Opt-in trait for a [`VTab`] with per-worker-thread ("local") init data.
 pub use table::VTabLocalInit;
