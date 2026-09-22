@@ -3,7 +3,7 @@ use std::{
     ptr,
 };
 
-use crate::ffi::{duckdb_data_chunk, duckdb_destroy_data_chunk};
+use crate::ffi::{duckdb_data_chunk, duckdb_data_chunk_reset, duckdb_destroy_data_chunk};
 
 use super::result::DuckResult;
 use crate::{error::Result, ffi};
@@ -62,6 +62,15 @@ impl DataChunk {
         unsafe { ffi::duckdb_data_chunk_get_size(self.0) }
     }
 
+    /// Resets the chunk to empty (row count 0), keeping its allocated capacity so it
+    /// can be refilled and re-appended.
+    #[inline]
+    pub fn reset(&mut self) {
+        // SAFETY: `self.0` is a valid, non-null duckdb_data_chunk owned by `self`.
+        unsafe { duckdb_data_chunk_reset(self.0) };
+        self.1 = 0;
+    }
+
     /// Advances the row cursor, returning the next row index, or `None` at the end
     /// (destroying the underlying chunk).
     #[inline]
@@ -108,5 +117,29 @@ impl Drop for DataChunk {
             // ensures this path runs at most once.
             unsafe { duckdb_destroy_data_chunk(&mut (self.0)) };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::LogicalType;
+
+    #[test]
+    fn reset_clears_the_row_count() {
+        // Build a one-column INTEGER chunk and give it three rows.
+        let int_ty = LogicalType::of::<i32>().unwrap();
+        let mut raw_types = [int_ty.as_raw()];
+        // SAFETY: `raw_types` holds one valid logical type handle for the call; DuckDB
+        // copies it. The returned chunk is wrapped in RAII (destroyed once on drop).
+        let raw = unsafe { ffi::duckdb_create_data_chunk(raw_types.as_mut_ptr(), 1) };
+        drop(int_ty);
+        let mut chunk = DataChunk::new(raw).unwrap();
+        // SAFETY: `chunk` is valid; sizing to 3 rows is within the default capacity.
+        unsafe { ffi::duckdb_data_chunk_set_size(*chunk, 3) };
+        assert_eq!(chunk.row_count(), 3);
+
+        chunk.reset();
+        assert_eq!(chunk.row_count(), 0, "reset must clear the chunk to empty");
     }
 }

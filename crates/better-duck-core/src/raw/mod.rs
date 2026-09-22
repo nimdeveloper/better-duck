@@ -8,6 +8,7 @@ pub(crate) mod error_data;
 pub mod expression;
 pub(crate) mod extracted;
 pub mod owned_value;
+pub mod owned_vector;
 pub(crate) mod pending;
 pub mod profiling;
 pub mod result;
