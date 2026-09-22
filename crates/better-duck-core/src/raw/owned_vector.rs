@@ -194,6 +194,43 @@ impl OwnedVector {
         }
         Ok(())
     }
+
+    /// Makes this vector a constant vector that references `value`
+    /// (`duckdb_vector_reference_value`): every logical row reads as `value`,
+    /// sharing its storage rather than copying it.
+    ///
+    /// # Safety
+    ///
+    /// This creates a zero-copy alias: `value` must outlive every use of this vector,
+    /// and `value` must not be mutated or destroyed while the vector still references
+    /// it. The wrapper cannot encode that lifetime for two independently-owned
+    /// handles, so the invariant is the caller's to uphold.
+    pub unsafe fn reference_value(
+        &mut self,
+        value: &crate::raw::owned_value::OwnedValue,
+    ) {
+        // SAFETY: `self.ptr` is a valid vector; `value.raw()` is a valid duckdb_value.
+        // The caller upholds the outlives/no-mutation contract documented above.
+        unsafe { crate::ffi::duckdb_vector_reference_value(self.ptr, value.raw()) };
+    }
+
+    /// Makes this vector a zero-copy, read-only alias of `from`'s storage
+    /// (`duckdb_vector_reference_vector`).
+    ///
+    /// # Safety
+    ///
+    /// `from` must outlive every use of this vector, and neither vector's shared
+    /// storage may be mutated while the alias is live (no overlapping mutable views).
+    /// The wrapper cannot encode that across two independently-owned vectors, so the
+    /// invariant is the caller's to uphold.
+    pub unsafe fn reference_vector(
+        &mut self,
+        from: &OwnedVector,
+    ) {
+        // SAFETY: both handles are valid vectors of the same type; the caller upholds
+        // the outlives / no-aliased-mutation contract documented above.
+        unsafe { crate::ffi::duckdb_vector_reference_vector(self.ptr, from.ptr) };
+    }
 }
 
 impl Drop for OwnedVector {
@@ -330,5 +367,31 @@ mod tests {
 
         // `len` beyond the selection is rejected.
         assert!(v.slice(&rev, 5).is_err());
+    }
+
+    #[test]
+    fn reference_value_makes_a_constant_vector() {
+        use crate::types::value::DuckValue;
+        let ty = LogicalType::of::<i32>().unwrap();
+        let mut v = OwnedVector::new(&ty, 4).unwrap();
+        // `value` outlives every use of `v` below (dropped at end of scope, after v).
+        let value = DuckValue::Int(99).to_owned_value().unwrap();
+        // SAFETY: `value` lives for the rest of this scope, longer than every read of
+        // `v`, and is neither mutated nor destroyed while `v` references it.
+        unsafe { v.reference_value(&value) };
+        // A constant vector reads the referenced value at row 0.
+        assert_eq!(read_i32s(&mut v, 1), vec![99]);
+    }
+
+    #[test]
+    fn reference_vector_aliases_source_storage() {
+        let ty = LogicalType::of::<i32>().unwrap();
+        let mut src = OwnedVector::new(&ty, 4).unwrap();
+        write_i32s(&mut src, &[7, 8]);
+        let mut view = OwnedVector::new(&ty, 4).unwrap();
+        // SAFETY: `src` outlives `view` (dropped after it) and its storage is not
+        // mutated while `view` aliases it.
+        unsafe { view.reference_vector(&src) };
+        assert_eq!(read_i32s(&mut view, 2), vec![7, 8]);
     }
 }

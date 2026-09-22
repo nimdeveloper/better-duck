@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 328,
-  "expected_pending": 71,
+  "expected_production_used": 330,
+  "expected_pending": 69,
   "methods": [
     {
       "category": "Open Connect",
@@ -2467,18 +2467,22 @@
     {
       "category": "Vector Interface",
       "symbol": "duckdb_vector_reference_value",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V5",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_vector.rs"
+      ]
     },
     {
       "category": "Vector Interface",
       "symbol": "duckdb_vector_reference_vector",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V5",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_vector.rs"
+      ]
     },
     {
       "category": "Validity Mask Functions",

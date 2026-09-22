@@ -45,6 +45,13 @@ impl OwnedValue {
         unsafe { duckdb_is_null_value(self.value) }
     }
 
+    /// The raw handle, borrowed for the duration of `&self` (e.g. to make a vector
+    /// reference this value). The caller must not destroy it.
+    #[allow(dead_code)]
+    pub(crate) fn raw(&self) -> duckdb_value {
+        self.value
+    }
+
     /// The value's SQL string rendering (e.g. `42`, `'text'`), or `None` if DuckDB
     /// produces none.
     #[must_use]
