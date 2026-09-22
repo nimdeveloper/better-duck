@@ -125,7 +125,7 @@ pub use data_chunk::DataChunkHandle;
 /// **Experimental** — see the [`replacement`] module docs.
 pub use replacement::{ReplacementScan, ReplacementScanInfo};
 /// The trait behind DuckDB scalar functions, and its signature type.
-pub use scalar::{ScalarSignature, VScalar};
+pub use scalar::{ScalarBindInfo, ScalarSignature, VScalar};
 /// Opt-in trait for a [`VTab`] with per-worker-thread ("local") init data.
 pub use table::VTabLocalInit;
 /// The row type produced by a `#[duckdb_table_function]`-generated function,
@@ -262,9 +262,9 @@ pub mod __private {
         ScalarStateGuard, TableExtraInfoGuard,
     };
     pub use crate::udf::{
-        run_table_func, BindInfo, DataChunkHandle, InitInfo, LogicalType, ScalarArg, ScalarRet,
-        ScalarSignature, TableFunctionInfo, TableInitData, TableRow, UdfResult, VScalar, VTab,
-        VTabLocalInit, VectorMut, VectorRef,
+        run_table_func, BindInfo, DataChunkHandle, InitInfo, LogicalType, ScalarArg,
+        ScalarBindInfo, ScalarRet, ScalarSignature, TableFunctionInfo, TableInitData, TableRow,
+        UdfResult, VScalar, VTab, VTabLocalInit, VectorMut, VectorRef,
     };
     pub use std::boxed::Box;
     pub use std::result::Result as StdResult;

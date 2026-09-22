@@ -3,6 +3,9 @@ pub mod client_context;
 pub(crate) mod connection;
 pub mod data_chunk;
 pub(crate) mod error_data;
+/// Bound-expression RAII + constant folding, used by scalar-function bind (`udf`).
+#[cfg(feature = "udf")]
+pub mod expression;
 pub(crate) mod extracted;
 pub(crate) mod pending;
 pub mod profiling;

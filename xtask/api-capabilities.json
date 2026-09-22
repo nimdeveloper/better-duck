@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 300,
-  "expected_pending": 102,
+  "expected_production_used": 312,
+  "expected_pending": 88,
   "methods": [
     {
       "category": "Open Connect",
@@ -200,10 +200,12 @@
     {
       "category": "Error Data",
       "symbol": "duckdb_create_error_data",
-      "current_state": "pending",
-      "target_disposition": "production_used",
-      "owner_task": "X3",
-      "evidence": []
+      "current_state": "safe_alternative",
+      "target_disposition": "safe_alternative",
+      "owner_task": null,
+      "evidence": [
+        "This driver only READS duckdb_error_data (from duckdb_expression_fold and the appender/prepare/pending error paths, via the ErrorData RAII reader); it never CONSTRUCTS one, building a pure-Rust EngineError instead. Retained as a documented safe alternative."
+      ]
     },
     {
       "category": "Error Data",
@@ -373,6 +375,7 @@
       "evidence": [
         "crates/better-duck-core/src/connection.rs",
         "crates/better-duck-core/src/raw/connection.rs",
+        "crates/better-duck-core/src/raw/expression.rs",
         "crates/better-duck-core/src/raw/profiling.rs",
         "crates/better-duck-core/src/raw/statement.rs",
         "crates/better-duck-core/src/raw/table_description.rs",
@@ -1110,6 +1113,7 @@
       "owner_task": null,
       "evidence": [
         "crates/better-duck-core/src/connection.rs",
+        "crates/better-duck-core/src/raw/expression.rs",
         "crates/better-duck-core/src/raw/profiling.rs",
         "crates/better-duck-core/src/types/appendable.rs",
         "crates/better-duck-core/src/types/array.rs",
@@ -1440,6 +1444,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
+        "crates/better-duck-core/src/raw/expression.rs",
         "crates/better-duck-core/src/types/mod.rs"
       ]
     },
@@ -1490,6 +1495,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
+        "crates/better-duck-core/src/raw/expression.rs",
         "crates/better-duck-core/src/types/numeric.rs"
       ]
     },
@@ -1510,6 +1516,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
+        "crates/better-duck-core/src/raw/expression.rs",
         "crates/better-duck-core/src/types/numeric.rs"
       ]
     },
@@ -1576,6 +1583,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
+        "crates/better-duck-core/src/raw/expression.rs",
         "crates/better-duck-core/src/types/numeric.rs"
       ]
     },
@@ -1666,6 +1674,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
+        "crates/better-duck-core/src/raw/expression.rs",
         "crates/better-duck-core/src/types/duck_enum.rs"
       ]
     },
@@ -1705,6 +1714,7 @@
       "owner_task": null,
       "evidence": [
         "crates/better-duck-core/src/connection.rs",
+        "crates/better-duck-core/src/raw/expression.rs",
         "crates/better-duck-core/src/raw/profiling.rs",
         "crates/better-duck-core/src/types/varchar.rs"
       ]
@@ -1985,6 +1995,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
+        "crates/better-duck-core/src/raw/expression.rs",
         "crates/better-duck-core/src/types/array.rs",
         "crates/better-duck-core/src/types/duck_struct.rs",
         "crates/better-duck-core/src/types/logical_type.rs",
@@ -2571,34 +2582,42 @@
     {
       "category": "Scalar Functions",
       "symbol": "duckdb_scalar_function_set_bind",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
     },
     {
       "category": "Scalar Functions",
       "symbol": "duckdb_scalar_function_set_bind_data",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
     },
     {
       "category": "Scalar Functions",
       "symbol": "duckdb_scalar_function_set_bind_data_copy",
-      "current_state": "pending",
-      "target_disposition": "production_used",
-      "owner_task": "X4",
-      "evidence": []
+      "current_state": "safe_alternative",
+      "target_disposition": "safe_alternative",
+      "owner_task": null,
+      "evidence": [
+        "Scalar bind data is stored as an owned Box with a destroy callback (duckdb_scalar_function_set_bind_data) and is read-only/shared per the C-API contract, so DuckDB shares the pointer and no deep-copy callback is needed. Retained as a documented safe alternative."
+      ]
     },
     {
       "category": "Scalar Functions",
       "symbol": "duckdb_scalar_function_bind_set_error",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
     },
     {
       "category": "Scalar Functions",
@@ -2631,26 +2650,32 @@
     {
       "category": "Scalar Functions",
       "symbol": "duckdb_scalar_function_bind_get_extra_info",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
     },
     {
       "category": "Scalar Functions",
       "symbol": "duckdb_scalar_function_get_bind_data",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
     },
     {
       "category": "Scalar Functions",
       "symbol": "duckdb_scalar_function_get_client_context",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
     },
     {
       "category": "Scalar Functions",
@@ -2705,18 +2730,22 @@
     {
       "category": "Scalar Functions",
       "symbol": "duckdb_scalar_function_bind_get_argument_count",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
     },
     {
       "category": "Scalar Functions",
       "symbol": "duckdb_scalar_function_bind_get_argument",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/scalar/function.rs"
+      ]
     },
     {
       "category": "Selection Vector Interface",
@@ -3909,34 +3938,42 @@
     {
       "category": "Expression Interface",
       "symbol": "duckdb_destroy_expression",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/expression.rs"
+      ]
     },
     {
       "category": "Expression Interface",
       "symbol": "duckdb_expression_return_type",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/expression.rs"
+      ]
     },
     {
       "category": "Expression Interface",
       "symbol": "duckdb_expression_is_foldable",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/expression.rs"
+      ]
     },
     {
       "category": "Expression Interface",
       "symbol": "duckdb_expression_fold",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/expression.rs"
+      ]
     }
   ]
 }

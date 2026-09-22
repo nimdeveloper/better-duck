@@ -44,6 +44,13 @@ impl<'owner> ClientContext<'owner> {
         // SAFETY: `self.ctx` is a valid, non-null client context owned by `self`.
         unsafe { duckdb_client_context_get_connection_id(self.ctx) as u64 }
     }
+
+    /// The raw handle, borrowed for the duration of `&self` (e.g. for
+    /// `duckdb_expression_fold`). The caller must not destroy it.
+    #[cfg(feature = "udf")]
+    pub(crate) fn as_raw(&self) -> duckdb_client_context {
+        self.ctx
+    }
 }
 
 impl Drop for ClientContext<'_> {

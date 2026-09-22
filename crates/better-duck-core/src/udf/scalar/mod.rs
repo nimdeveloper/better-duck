@@ -8,12 +8,14 @@ use std::ffi::CString;
 use crate::{
     connection::Connection,
     error::Result,
-    ffi::{duckdb_data_chunk, duckdb_function_info, duckdb_vector},
+    ffi::{duckdb_bind_info, duckdb_data_chunk, duckdb_function_info, duckdb_vector},
 };
 
 use self::function::{ScalarFunction, ScalarFunctionInfo, ScalarFunctionSet};
 use super::{callback::contain_callback, data_chunk::DataChunkHandle, vector::VectorMut};
 use crate::types::LogicalType;
+
+pub use self::function::ScalarBindInfo;
 
 /// A DuckDB scalar function: computes one value per row.
 ///
@@ -24,6 +26,10 @@ pub trait VScalar: Sized {
     /// be `'static`; any interior mutation must be synchronized.
     type State: Send + Sync + 'static;
 
+    /// Per-query data produced by [`VScalar::bind`] and shared, read-only, by every
+    /// [`VScalar::invoke`] call for that query. Use `()` if the function needs none.
+    type BindData: Send + Sync + 'static;
+
     /// The possible signatures of this function. Each becomes a DuckDB overload;
     /// [`VScalar::invoke`] must be able to handle every one of them.
     ///
@@ -32,16 +38,29 @@ pub trait VScalar: Sized {
     /// Returns an error if a signature's logical type cannot be built.
     fn signatures() -> Result<Vec<ScalarSignature>>;
 
+    /// Runs once per query that references this function, before any [`invoke`](VScalar::invoke).
+    /// Inspects the call's argument expressions (via [`ScalarBindInfo`] — e.g. to
+    /// fold a constant argument or reject an unsupported one) and produces the
+    /// per-query [`BindData`](VScalar::BindData). Functions needing no bind data
+    /// return `Ok(())` (with `type BindData = ()`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error to reject the query at bind time with that message.
+    fn bind(bind: &ScalarBindInfo) -> super::UdfResult<Self::BindData>;
+
     /// Computes `output[row]` for every `row` in `0..input.len()`.
     ///
     /// DuckDB guarantees `input` and `output` stay live for the duration of this
-    /// call, and that `output`'s capacity is at least `input.len()`.
+    /// call, and that `output`'s capacity is at least `input.len()`. `bind_data` is
+    /// the value [`bind`](VScalar::bind) produced for this query.
     ///
     /// # Errors
     ///
     /// Returns an error to fail the query with that message.
     fn invoke(
         state: &Self::State,
+        bind_data: &Self::BindData,
         input: &DataChunkHandle,
         output: &mut VectorMut<'_>,
     ) -> super::UdfResult<()>;
@@ -134,7 +153,23 @@ unsafe extern "C" fn scalar_trampoline<S: VScalar>(
         // always call `ScalarFunction::set_extra_info::<S::State>`, so the state
         // stored for this catalog entry always has type `S::State`.
         let state = unsafe { sink.state::<S::State>() };
-        S::invoke(state, &chunk, &mut out)
+        // SAFETY: `scalar_bind_trampoline::<S>` runs before any invoke and stores a
+        // `Box<S::BindData>` via `set_bind_data`, so the bind data has type
+        // `S::BindData` and is live for every invocation of this query.
+        let bind_data = unsafe { sink.bind_data::<S::BindData>() };
+        S::invoke(state, bind_data, &chunk, &mut out)
+    });
+}
+
+/// The C trampoline installed via `duckdb_scalar_function_set_bind`. Runs `S::bind`
+/// and stores its result as the query's bind data. See [`scalar_trampoline`] for why
+/// containment is the outermost thing here.
+unsafe extern "C" fn scalar_bind_trampoline<S: VScalar>(info: duckdb_bind_info) {
+    let bind = ScalarBindInfo::from(info);
+    contain_callback(&bind, || {
+        let data = S::bind(&bind)?;
+        bind.set_bind_data(data);
+        Ok(())
     });
 }
 
@@ -190,6 +225,7 @@ fn register_scalar_function_impl<S: VScalar>(
         let f = ScalarFunction::new(&c_name);
         signature.apply(&f);
         f.set_function(Some(scalar_trampoline::<S>));
+        f.set_bind(Some(scalar_bind_trampoline::<S>));
         if S::volatile() {
             f.set_volatile();
         }
@@ -213,6 +249,7 @@ mod tests {
 
     impl VScalar for AddOne {
         type State = ();
+        type BindData = ();
 
         fn signatures() -> Result<Vec<ScalarSignature>> {
             Ok(vec![ScalarSignature::exact(
@@ -221,8 +258,13 @@ mod tests {
             )])
         }
 
+        fn bind(_bind: &ScalarBindInfo) -> super::super::UdfResult<()> {
+            Ok(())
+        }
+
         fn invoke(
             _state: &(),
+            _bind_data: &(),
             input: &DataChunkHandle,
             output: &mut VectorMut<'_>,
         ) -> super::super::UdfResult<()> {
@@ -253,6 +295,7 @@ mod tests {
 
     impl VScalar for AlwaysFails {
         type State = ();
+        type BindData = ();
 
         fn signatures() -> Result<Vec<ScalarSignature>> {
             Ok(vec![ScalarSignature::exact(
@@ -261,8 +304,13 @@ mod tests {
             )])
         }
 
+        fn bind(_bind: &ScalarBindInfo) -> super::super::UdfResult<()> {
+            Ok(())
+        }
+
         fn invoke(
             _state: &(),
+            _bind_data: &(),
             _input: &DataChunkHandle,
             _output: &mut VectorMut<'_>,
         ) -> super::super::UdfResult<()> {
@@ -290,6 +338,7 @@ mod tests {
 
     impl VScalar for AlwaysPanics {
         type State = ();
+        type BindData = ();
 
         fn signatures() -> Result<Vec<ScalarSignature>> {
             Ok(vec![ScalarSignature::exact(
@@ -298,8 +347,13 @@ mod tests {
             )])
         }
 
+        fn bind(_bind: &ScalarBindInfo) -> super::super::UdfResult<()> {
+            Ok(())
+        }
+
         fn invoke(
             _state: &(),
+            _bind_data: &(),
             _input: &DataChunkHandle,
             _output: &mut VectorMut<'_>,
         ) -> super::super::UdfResult<()> {
@@ -319,6 +373,92 @@ mod tests {
             Err(e) => e,
         };
         assert!(err.to_string().contains("deliberate panic"), "{err}");
+        conn.execute_batch("INSERT INTO t VALUES (2)").unwrap();
+    }
+
+    /// `add_const(x, c)`: the second argument must be a *constant*. `bind` inspects
+    /// the argument expressions, folds the constant to an `i64`, and stores it as
+    /// bind data; `invoke` adds it to every row. This exercises the whole bind/fold
+    /// path: set_bind, argument_count/argument, Expression::is_foldable/fold (via the
+    /// bind client context), set_bind_data, and get_bind_data.
+    struct AddConst;
+
+    impl VScalar for AddConst {
+        type State = ();
+        type BindData = i64;
+
+        fn signatures() -> Result<Vec<ScalarSignature>> {
+            Ok(vec![ScalarSignature::exact(
+                vec![LogicalType::of::<i32>()?, LogicalType::of::<i32>()?],
+                LogicalType::of::<i32>()?,
+            )])
+        }
+
+        fn bind(bind: &ScalarBindInfo) -> super::super::UdfResult<i64> {
+            // Registration state is readable at bind time too (here it is `()`).
+            // SAFETY: this function is registered with `State = ()`, so the stored
+            // extra-info has type `()`.
+            let _state: &() = unsafe { bind.extra_info::<()>() };
+            assert_eq!(bind.argument_count(), 2, "add_const has two arguments");
+            let arg = bind.argument(1).ok_or("add_const needs a second argument")?;
+            if !arg.is_foldable() {
+                return Err("add_const's second argument must be a constant".into());
+            }
+            let ctx = bind.client_context().ok_or("no client context for folding")?;
+            let folded = arg.fold(&ctx).map_err(|e| format!("fold failed: {e:?}"))?;
+            match folded {
+                crate::types::value::DuckValue::Int(n) => Ok(i64::from(n)),
+                crate::types::value::DuckValue::BigInt(n) => Ok(n),
+                other => Err(format!("expected an integer constant, got {other:?}").into()),
+            }
+        }
+
+        fn invoke(
+            _state: &(),
+            bind_data: &i64,
+            input: &DataChunkHandle,
+            output: &mut VectorMut<'_>,
+        ) -> super::super::UdfResult<()> {
+            let col = input.vector(0)?;
+            let c = i32::try_from(*bind_data).map_err(|_| "constant out of range")?;
+            for row in 0..input.len() {
+                let v: i32 = col.get(row)?;
+                output.set(row, v + c)?;
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn bind_folds_a_constant_argument_and_invoke_uses_it() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.register_scalar_function::<AddConst>("add_const").unwrap();
+        conn.execute_batch("CREATE TABLE t (v INTEGER)").unwrap();
+        conn.execute_batch("INSERT INTO t VALUES (1), (2), (40)").unwrap();
+        // The second argument (10) is folded at bind time and added to every row.
+        let rows: Vec<_> = conn
+            .execute("SELECT add_const(v, 2 + 8) AS r FROM t ORDER BY v")
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].get("r"), Some(&crate::types::value::DuckValue::Int(11)));
+        assert_eq!(rows[2].get("r"), Some(&crate::types::value::DuckValue::Int(50)));
+    }
+
+    #[test]
+    fn bind_rejects_a_non_constant_argument() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.register_scalar_function::<AddConst>("add_const").unwrap();
+        conn.execute_batch("CREATE TABLE t (v INTEGER)").unwrap();
+        conn.execute_batch("INSERT INTO t VALUES (1)").unwrap();
+        // The second argument references a column, so it is not foldable — bind
+        // rejects the query with our error message, and the connection stays usable.
+        let err = match conn.execute("SELECT add_const(v, v) FROM t") {
+            Ok(_) => panic!("expected a bind error"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("must be a constant"), "{err}");
         conn.execute_batch("INSERT INTO t VALUES (2)").unwrap();
     }
 }

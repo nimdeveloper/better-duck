@@ -5,17 +5,23 @@ use std::ffi::{c_void, CStr};
 use crate::{
     error::{Error, Result},
     ffi::{
-        duckdb_add_scalar_function_to_set, duckdb_connection, duckdb_create_scalar_function,
-        duckdb_create_scalar_function_set, duckdb_destroy_scalar_function,
-        duckdb_destroy_scalar_function_set, duckdb_function_info,
+        duckdb_add_scalar_function_to_set, duckdb_bind_info, duckdb_client_context,
+        duckdb_connection, duckdb_create_scalar_function, duckdb_create_scalar_function_set,
+        duckdb_destroy_scalar_function, duckdb_destroy_scalar_function_set, duckdb_function_info,
         duckdb_register_scalar_function_set, duckdb_scalar_function,
-        duckdb_scalar_function_add_parameter, duckdb_scalar_function_get_extra_info,
-        duckdb_scalar_function_set, duckdb_scalar_function_set_error,
-        duckdb_scalar_function_set_extra_info, duckdb_scalar_function_set_function,
-        duckdb_scalar_function_set_name, duckdb_scalar_function_set_return_type,
-        duckdb_scalar_function_set_special_handling, duckdb_scalar_function_set_varargs,
-        duckdb_scalar_function_set_volatile, duckdb_scalar_function_t,
+        duckdb_scalar_function_add_parameter, duckdb_scalar_function_bind_get_argument,
+        duckdb_scalar_function_bind_get_argument_count, duckdb_scalar_function_bind_get_extra_info,
+        duckdb_scalar_function_bind_set_error, duckdb_scalar_function_bind_t,
+        duckdb_scalar_function_get_bind_data, duckdb_scalar_function_get_client_context,
+        duckdb_scalar_function_get_extra_info, duckdb_scalar_function_set,
+        duckdb_scalar_function_set_bind, duckdb_scalar_function_set_bind_data,
+        duckdb_scalar_function_set_error, duckdb_scalar_function_set_extra_info,
+        duckdb_scalar_function_set_function, duckdb_scalar_function_set_name,
+        duckdb_scalar_function_set_return_type, duckdb_scalar_function_set_special_handling,
+        duckdb_scalar_function_set_varargs, duckdb_scalar_function_set_volatile,
+        duckdb_scalar_function_t, idx_t,
     },
+    raw::{client_context::ClientContext, expression::Expression},
 };
 
 use super::super::{
@@ -84,6 +90,17 @@ impl ScalarFunction {
         // SAFETY: `self.ptr` is valid; `f`, if `Some`, is a valid
         // `extern "C"` function pointer with the expected signature.
         unsafe { duckdb_scalar_function_set_function(self.ptr, f) };
+    }
+
+    /// Sets the function's bind callback, invoked once per query that references
+    /// the function to inspect argument expressions and produce per-query bind data.
+    pub(crate) fn set_bind(
+        &self,
+        f: duckdb_scalar_function_bind_t,
+    ) {
+        // SAFETY: `self.ptr` is valid; `f`, if `Some`, is a valid `extern "C"`
+        // function pointer with the expected bind signature.
+        unsafe { duckdb_scalar_function_set_bind(self.ptr, f) };
     }
 
     /// Stores `state`, retrievable inside the execution callback via
@@ -216,6 +233,108 @@ impl ScalarFunctionInfo {
         // SAFETY: `raw` was produced by `Box::into_raw::<T>` in `set_extra_info`
         // and has not been freed (guaranteed by the caller per the above).
         unsafe { &*raw.cast::<T>() }
+    }
+
+    /// Retrieves the per-query bind data stored via
+    /// [`ScalarBindInfo::set_bind_data`].
+    ///
+    /// # Safety
+    ///
+    /// `T` must be the same type the function's bind callback stored, and the bind
+    /// callback must have run for this query (DuckDB guarantees bind precedes
+    /// execution).
+    pub(crate) unsafe fn bind_data<T>(&self) -> &T {
+        // SAFETY: `self.ptr` is valid for the callback; bind ran first and stored a
+        // `Box<T>`, which DuckDB keeps alive for every invocation of this query.
+        let raw = unsafe { duckdb_scalar_function_get_bind_data(self.ptr) };
+        // SAFETY: `raw` came from `Box::into_raw::<T>` in `set_bind_data` and is live.
+        unsafe { &*raw.cast::<T>() }
+    }
+}
+
+/// The bind-time handle passed to [`super::VScalar::bind`]: reads the call's
+/// argument expressions and stores per-query bind data.
+pub struct ScalarBindInfo {
+    ptr: duckdb_bind_info,
+}
+
+impl ScalarBindInfo {
+    pub(crate) fn from(ptr: duckdb_bind_info) -> Self {
+        Self { ptr }
+    }
+
+    /// The number of argument expressions passed to this call.
+    #[must_use]
+    pub fn argument_count(&self) -> u64 {
+        // SAFETY: `self.ptr` is a valid bind info for the duration of the callback.
+        unsafe { duckdb_scalar_function_bind_get_argument_count(self.ptr) as u64 }
+    }
+
+    /// The argument [`Expression`] at `index`, or `None` if out of range.
+    #[must_use]
+    pub fn argument(
+        &self,
+        index: u64,
+    ) -> Option<Expression> {
+        // SAFETY: `self.ptr` is valid; the returned expression is owned (destroy
+        // once) and wrapped in RAII. Out-of-range → null → None.
+        unsafe {
+            Expression::from_raw(duckdb_scalar_function_bind_get_argument(self.ptr, index as idx_t))
+        }
+    }
+
+    /// The registration-time state stored via `set_extra_info`, readable at bind
+    /// time (the same value [`ScalarFunctionInfo::state`] exposes during execution).
+    ///
+    /// # Safety
+    ///
+    /// `T` must match the type stored at registration time (the function's
+    /// `VScalar::State`).
+    pub unsafe fn extra_info<T>(&self) -> &T {
+        // SAFETY: `self.ptr` is valid for the callback; the caller guarantees `T`
+        // matches the registered type, which outlives the bind call.
+        let raw = unsafe { duckdb_scalar_function_bind_get_extra_info(self.ptr) };
+        // SAFETY: `raw` came from `Box::into_raw::<T>` in `set_extra_info`.
+        unsafe { &*raw.cast::<T>() }
+    }
+
+    /// The client context of the connection binding this call, for folding
+    /// constant argument expressions ([`Expression::fold`]). `None` if unavailable.
+    #[must_use]
+    pub fn client_context(&self) -> Option<ClientContext<'_>> {
+        let mut ctx: duckdb_client_context = std::ptr::null_mut();
+        // SAFETY: `self.ptr` is valid; `ctx` is a valid out-pointer DuckDB writes an
+        // owned client-context handle into.
+        unsafe { duckdb_scalar_function_get_client_context(self.ptr, &mut ctx) };
+        // SAFETY: `ctx` is null or an owned handle whose owner (this bind call)
+        // outlives the returned borrow.
+        unsafe { ClientContext::from_raw(ctx) }
+    }
+
+    /// Stores per-query bind data, retrievable in the execution callback via
+    /// [`ScalarFunctionInfo::bind_data`]. Freed automatically when DuckDB drops the
+    /// query's bind data.
+    pub(crate) fn set_bind_data<T: Send + Sync + 'static>(
+        &self,
+        data: T,
+    ) {
+        let ptr = Box::into_raw(Box::new(data)).cast::<c_void>();
+        // SAFETY: `self.ptr` is valid; `ptr` was just created by `Box::into_raw::<T>`,
+        // and `drop_boxed::<T>` frees it with the matching type exactly once when
+        // DuckDB drops the bind data. Bind data is read-only and shared, so no copy
+        // callback (`duckdb_scalar_function_set_bind_data_copy`) is needed.
+        unsafe { duckdb_scalar_function_set_bind_data(self.ptr, ptr, Some(drop_boxed::<T>)) };
+    }
+}
+
+impl CallbackErrorSink for ScalarBindInfo {
+    fn set_c_error(
+        &self,
+        error: &CStr,
+    ) {
+        // SAFETY: `self.ptr` is a valid bind-info handle for the duration of the
+        // callback; `error` is a valid, NUL-terminated C string.
+        unsafe { duckdb_scalar_function_bind_set_error(self.ptr, error.as_ptr()) };
     }
 }
 

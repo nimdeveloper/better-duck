@@ -78,6 +78,9 @@ pub use raw::data_chunk::DataChunk;
 pub use raw::profiling::ProfilingNode;
 
 pub use raw::client_context::ClientContext;
+
+#[cfg(feature = "udf")]
+pub use raw::expression::Expression;
 /// An owned, thread-safe, fully materialized query result.
 pub use result_set::ResultSet;
 /// Trait for binding values to DuckDB prepared statements and appenders.

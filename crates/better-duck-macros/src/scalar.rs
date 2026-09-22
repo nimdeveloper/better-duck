@@ -119,6 +119,7 @@ pub(crate) fn expand(
 
             impl __p::VScalar for Udf {
                 type State = #state_ty;
+                type BindData = ();
 
                 fn signatures() -> __p::Result<__p::Vec<__p::ScalarSignature>> {
                     Ok(__p::Vec::from([__p::ScalarSignature::exact(
@@ -135,8 +136,13 @@ pub(crate) fn expand(
                     #volatile
                 }
 
+                fn bind(_bind: &__p::ScalarBindInfo) -> __p::UdfResult<()> {
+                    __p::StdResult::Ok(())
+                }
+
                 fn invoke(
                     state: &#state_ty,
+                    _bind_data: &(),
                     input: &__p::DataChunkHandle,
                     output: &mut __p::VectorMut<'_>,
                 ) -> __p::UdfResult<()> {
