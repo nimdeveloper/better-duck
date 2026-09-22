@@ -122,7 +122,7 @@ mod vector;
 /// An owned DuckDB logical type handle.
 pub use crate::types::LogicalType;
 /// The trait behind DuckDB scalar functions, and its signature type.
-pub use aggregate::VAggregate;
+pub use aggregate::{AggregateSetBuilder, VAggregate};
 /// An owned-or-borrowed DuckDB data chunk.
 pub use data_chunk::DataChunkHandle;
 /// The trait behind DuckDB replacement scans, and its callback-info type.

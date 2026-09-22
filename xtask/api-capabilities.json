@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 342,
-  "expected_pending": 57,
+  "expected_production_used": 346,
+  "expected_pending": 53,
   "methods": [
     {
       "category": "Open Connect",
@@ -2937,34 +2937,42 @@
     {
       "category": "Aggregate Functions",
       "symbol": "duckdb_create_aggregate_function_set",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X6",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/aggregate/function.rs"
+      ]
     },
     {
       "category": "Aggregate Functions",
       "symbol": "duckdb_destroy_aggregate_function_set",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X6",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/aggregate/function.rs"
+      ]
     },
     {
       "category": "Aggregate Functions",
       "symbol": "duckdb_add_aggregate_function_to_set",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X6",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/aggregate/function.rs"
+      ]
     },
     {
       "category": "Aggregate Functions",
       "symbol": "duckdb_register_aggregate_function_set",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "X6",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/udf/aggregate/function.rs"
+      ]
     },
     {
       "category": "Table Functions",

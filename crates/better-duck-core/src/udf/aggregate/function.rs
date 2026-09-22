@@ -5,14 +5,18 @@ use std::ffi::{c_void, CStr};
 use crate::{
     error::{Error, Result},
     ffi::{
-        duckdb_aggregate_combine_t, duckdb_aggregate_finalize_t, duckdb_aggregate_function,
+        duckdb_add_aggregate_function_to_set, duckdb_aggregate_combine_t,
+        duckdb_aggregate_finalize_t, duckdb_aggregate_function,
         duckdb_aggregate_function_add_parameter, duckdb_aggregate_function_get_extra_info,
-        duckdb_aggregate_function_set_error, duckdb_aggregate_function_set_extra_info,
-        duckdb_aggregate_function_set_functions, duckdb_aggregate_function_set_name,
-        duckdb_aggregate_function_set_return_type, duckdb_aggregate_function_set_special_handling,
-        duckdb_aggregate_init_t, duckdb_aggregate_state_size, duckdb_aggregate_update_t,
-        duckdb_connection, duckdb_create_aggregate_function, duckdb_destroy_aggregate_function,
+        duckdb_aggregate_function_set, duckdb_aggregate_function_set_error,
+        duckdb_aggregate_function_set_extra_info, duckdb_aggregate_function_set_functions,
+        duckdb_aggregate_function_set_name, duckdb_aggregate_function_set_return_type,
+        duckdb_aggregate_function_set_special_handling, duckdb_aggregate_init_t,
+        duckdb_aggregate_state_size, duckdb_aggregate_update_t, duckdb_connection,
+        duckdb_create_aggregate_function, duckdb_create_aggregate_function_set,
+        duckdb_destroy_aggregate_function, duckdb_destroy_aggregate_function_set,
         duckdb_function_info, duckdb_register_aggregate_function,
+        duckdb_register_aggregate_function_set,
     },
 };
 
@@ -117,6 +121,11 @@ impl AggregateFunction {
         }
         Ok(())
     }
+
+    /// The raw handle (borrowed) for adding this overload to a set.
+    pub(crate) fn as_raw(&self) -> duckdb_aggregate_function {
+        self.ptr
+    }
 }
 
 impl Drop for AggregateFunction {
@@ -126,6 +135,78 @@ impl Drop for AggregateFunction {
             // `duckdb_create_aggregate_function` and not yet destroyed; destroyed once.
             // Registration copies it, so destroying our handle afterward is correct.
             unsafe { duckdb_destroy_aggregate_function(&mut self.ptr) };
+        }
+    }
+}
+
+/// A named collection of aggregate-function overloads, registered together.
+pub(crate) struct AggregateFunctionSet {
+    ptr: duckdb_aggregate_function_set,
+}
+
+impl AggregateFunctionSet {
+    pub(crate) fn new(name: &CStr) -> Self {
+        // SAFETY: `name` is a valid NUL-terminated C string for the duration of the call.
+        let ptr = unsafe { duckdb_create_aggregate_function_set(name.as_ptr()) };
+        Self { ptr }
+    }
+
+    /// Adds `function` as a new overload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the overload conflicts with one already in the set.
+    pub(crate) fn add_function(
+        &self,
+        function: &AggregateFunction,
+    ) -> Result<()> {
+        // SAFETY: `self.ptr` and `function.as_raw()` are both valid; this copies the
+        // function into the set.
+        let rc = unsafe { duckdb_add_aggregate_function_to_set(self.ptr, function.as_raw()) };
+        if rc != crate::ffi::DuckDBSuccess {
+            return Err(Error::DuckDBFailure(
+                crate::ffi::Error::new(rc),
+                Some(
+                    "failed to add overload to aggregate function set (conflicting signature?)"
+                        .to_owned(),
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Registers this set with `con`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if registration fails, e.g. a name conflict.
+    pub(crate) fn register(
+        &self,
+        con: duckdb_connection,
+        name: &str,
+    ) -> Result<()> {
+        // SAFETY: `con` is a valid connection; `self.ptr` is a non-empty set (the caller
+        // adds overloads before calling this).
+        let rc = unsafe { duckdb_register_aggregate_function_set(con, self.ptr) };
+        if rc != crate::ffi::DuckDBSuccess {
+            return Err(Error::DuckDBFailure(
+                crate::ffi::Error::new(rc),
+                Some(format!(
+                    "failed to register aggregate function set `{name}` (name conflict?)"
+                )),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for AggregateFunctionSet {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            // SAFETY: `self.ptr` is a valid, non-null set allocated by
+            // `duckdb_create_aggregate_function_set` and not yet destroyed; destroyed
+            // once. Registration copies it, so destroying our handle afterward is correct.
+            unsafe { duckdb_destroy_aggregate_function_set(&mut self.ptr) };
         }
     }
 }

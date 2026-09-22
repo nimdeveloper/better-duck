@@ -20,7 +20,7 @@ use crate::{
     ffi::{duckdb_aggregate_state, duckdb_data_chunk, duckdb_function_info, duckdb_vector, idx_t},
 };
 
-use self::function::{AggregateFunction, AggregateFunctionInfo};
+use self::function::{AggregateFunction, AggregateFunctionInfo, AggregateFunctionSet};
 use super::{callback::contain_callback, data_chunk::DataChunkHandle, vector::VectorMut};
 use crate::types::LogicalType;
 
@@ -278,24 +278,93 @@ impl Connection {
         shared: A::Shared,
     ) -> Result<()> {
         let c_name = CString::new(name)?;
-        let f = AggregateFunction::new(&c_name);
-        for p in A::parameters()? {
-            f.add_parameter(&p);
-        }
-        f.set_return_type(&A::return_type()?);
-        f.set_extra_info(shared);
-        f.set_functions(
-            Some(agg_state_size::<A>),
-            Some(agg_init::<A>),
-            Some(agg_update::<A>),
-            Some(agg_combine::<A>),
-            Some(agg_finalize::<A>),
-        );
-        f.set_destructor(Some(agg_destroy::<A>));
-        if A::special_handling() {
-            f.set_special_handling();
-        }
+        let f = build_aggregate::<A>(&c_name, shared)?;
         f.register(self.raw_con(), name)
+    }
+
+    /// Registers several `VAggregate` overloads under one SQL name as an aggregate
+    /// function set (DuckDB dispatches on argument types). Each `(name-independent)`
+    /// overload `A_i` is built with its own default shared state.
+    ///
+    /// This takes a closure that adds overloads to a builder, so overloads of
+    /// *different* Rust types can share one SQL name.
+    ///
+    /// # Errors
+    ///
+    /// As [`register_aggregate_function`](Connection::register_aggregate_function),
+    /// plus a conflict between two overloads in the set.
+    pub fn register_aggregate_function_set(
+        &mut self,
+        name: &str,
+        build: impl FnOnce(&mut AggregateSetBuilder) -> Result<()>,
+    ) -> Result<()> {
+        let c_name = CString::new(name)?;
+        let set = AggregateFunctionSet::new(&c_name);
+        let mut builder = AggregateSetBuilder { set: &set, name };
+        build(&mut builder)?;
+        set.register(self.raw_con(), name)
+    }
+}
+
+/// Builds a configured [`AggregateFunction`] for `A` with shared state `shared`.
+fn build_aggregate<A: VAggregate>(
+    c_name: &std::ffi::CStr,
+    shared: A::Shared,
+) -> Result<AggregateFunction> {
+    let f = AggregateFunction::new(c_name);
+    for p in A::parameters()? {
+        f.add_parameter(&p);
+    }
+    f.set_return_type(&A::return_type()?);
+    f.set_extra_info(shared);
+    f.set_functions(
+        Some(agg_state_size::<A>),
+        Some(agg_init::<A>),
+        Some(agg_update::<A>),
+        Some(agg_combine::<A>),
+        Some(agg_finalize::<A>),
+    );
+    f.set_destructor(Some(agg_destroy::<A>));
+    if A::special_handling() {
+        f.set_special_handling();
+    }
+    Ok(f)
+}
+
+/// Collects aggregate overloads into a function set (see
+/// [`Connection::register_aggregate_function_set`]).
+pub struct AggregateSetBuilder<'a> {
+    set: &'a AggregateFunctionSet,
+    name: &'a str,
+}
+
+impl AggregateSetBuilder<'_> {
+    /// Adds overload `A` (with a default shared state) to the set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a logical type cannot be built or the overload conflicts
+    /// with one already in the set.
+    pub fn add<A: VAggregate>(&mut self) -> Result<&mut Self>
+    where
+        A::Shared: Default,
+    {
+        self.add_with_state::<A>(A::Shared::default())
+    }
+
+    /// Adds overload `A` with an explicit shared state to the set.
+    ///
+    /// # Errors
+    ///
+    /// As [`add`](AggregateSetBuilder::add).
+    pub fn add_with_state<A: VAggregate>(
+        &mut self,
+        shared: A::Shared,
+    ) -> Result<&mut Self> {
+        let c_name = CString::new(self.name)?;
+        let f = build_aggregate::<A>(&c_name, shared)?;
+        self.set.add_function(&f)?;
+        Ok(self)
     }
 }
 
@@ -372,5 +441,78 @@ mod tests {
         assert_eq!(g0.get("s"), Some(&DuckValue::BigInt(30)));
         let g1 = grouped.next().unwrap().unwrap();
         assert_eq!(g1.get("s"), Some(&DuckValue::BigInt(112)));
+    }
+
+    /// A second overload over BIGINT inputs, so a set can dispatch on argument type.
+    struct BigIntSum;
+
+    impl VAggregate for BigIntSum {
+        type State = i64;
+        type Shared = ();
+
+        fn parameters() -> Result<Vec<LogicalType>> {
+            Ok(vec![LogicalType::of::<i64>()?])
+        }
+
+        fn return_type() -> Result<LogicalType> {
+            LogicalType::of::<i64>()
+        }
+
+        fn init() -> i64 {
+            0
+        }
+
+        fn update(
+            _shared: &(),
+            state: &mut i64,
+            input: &DataChunkHandle,
+            row: usize,
+        ) -> super::super::UdfResult<()> {
+            let v: i64 = input.vector(0)?.get(row)?;
+            *state += v;
+            Ok(())
+        }
+
+        fn combine(
+            _shared: &(),
+            source: &i64,
+            target: &mut i64,
+        ) {
+            *target += *source;
+        }
+
+        fn finalize(
+            _shared: &(),
+            state: &i64,
+            output: &mut VectorMut<'_>,
+            row: usize,
+        ) -> super::super::UdfResult<()> {
+            output.set(row, *state)?;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn aggregate_set_dispatches_on_argument_type() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // One SQL name `my_sum` with INTEGER and BIGINT overloads.
+        conn.register_aggregate_function_set("my_sum", |b| {
+            b.add::<IntSum>()?;
+            b.add::<BigIntSum>()?;
+            Ok(())
+        })
+        .unwrap();
+
+        // INTEGER overload.
+        let mut r_int = conn
+            .execute("SELECT my_sum(CAST(v AS INTEGER)) AS s FROM (VALUES (1),(2),(3)) t(v)")
+            .unwrap();
+        assert_eq!(r_int.next().unwrap().unwrap().get("s"), Some(&DuckValue::BigInt(6)));
+
+        // BIGINT overload.
+        let mut r_big = conn
+            .execute("SELECT my_sum(CAST(v AS BIGINT)) AS s FROM (VALUES (10),(20)) t(v)")
+            .unwrap();
+        assert_eq!(r_big.next().unwrap().unwrap().get("s"), Some(&DuckValue::BigInt(30)));
     }
 }
