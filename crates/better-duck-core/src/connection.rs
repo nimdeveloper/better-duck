@@ -1,9 +1,12 @@
+use std::ffi::{CStr, CString};
+use std::os::raw::c_void;
 use std::path::Path;
 
 use crate::{
     config::Config,
     database::Database,
-    error::Result,
+    error::{Error, Result},
+    ffi,
     helpers::path::path_to_cstring,
     raw::{appender::Appender, connection::RawConnection, result::DuckResult},
     types::appendable::AppendAble,
@@ -170,6 +173,53 @@ impl Connection {
         self.0.execute(sql, binds)
     }
 
+    /// Returns the table names `query` reads from, as determined by DuckDB's own
+    /// parser — no custom SQL parsing. Handles quoted/qualified identifiers, CTEs,
+    /// joins, and subqueries.
+    ///
+    /// With `qualified = true` each name is fully qualified (`catalog.schema.table`);
+    /// with `false` only the bare (unescaped) table name is returned. The order and
+    /// de-duplication follow DuckDB. A query that reads no tables yields an empty
+    /// vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `query` contains an interior NUL. It also returns an error
+    /// if DuckDB reports a parse failure by returning a null value.
+    ///
+    /// # Panics / aborts
+    ///
+    /// `query` **must be syntactically valid SQL.** On a syntax error the underlying
+    /// `duckdb_get_table_names` throws a C++ `ParserException` that unwinds across the
+    /// FFI boundary; Rust cannot catch a foreign exception, so the **process aborts**
+    /// rather than returning an error. This is an upstream DuckDB C-API defect (the
+    /// same one that affects statement extraction), not something this wrapper can
+    /// intercept. Validate untrusted SQL elsewhere before calling this.
+    pub fn table_names(
+        &self,
+        query: impl AsRef<str>,
+        qualified: bool,
+    ) -> Result<Vec<String>> {
+        let c_query = CString::new(query.as_ref())?;
+        // SAFETY: `self.0.handle()` is a valid open connection; `c_query` is a valid
+        // null-terminated string that outlives the call and is not retained. On a
+        // parse failure DuckDB returns a null value.
+        let mut value =
+            unsafe { ffi::duckdb_get_table_names(self.0.handle(), c_query.as_ptr(), qualified) };
+        if value.is_null() {
+            return Err(Error::ConversionError(
+                crate::error::DuckDBConversionError::ConversionError(
+                    "could not determine table names (query failed to parse)".to_owned(),
+                ),
+            ));
+        }
+        // SAFETY: `value` is a valid VARCHAR[] duckdb_value returned above.
+        let names = unsafe { varchar_list_to_vec(value) };
+        // SAFETY: `value` was returned by `duckdb_get_table_names`; destroy exactly once.
+        unsafe { ffi::duckdb_destroy_value(&mut value) };
+        Ok(names)
+    }
+
     /// Creates an appender for bulk-inserting rows into the given table and schema.
     ///
     /// # Errors
@@ -279,6 +329,37 @@ impl Connection {
     }
 }
 
+/// Copies a `LIST(VARCHAR)` `duckdb_value` (e.g. the result of
+/// `duckdb_get_table_names`) into an owned `Vec<String>`.
+///
+/// # Safety
+///
+/// `value` must be a valid `duckdb_value` of type `VARCHAR[]`. The value itself is
+/// only read (the caller still owns and must destroy it); each child value and each
+/// `duckdb_get_varchar` string allocated here is freed before returning.
+unsafe fn varchar_list_to_vec(value: ffi::duckdb_value) -> Vec<String> {
+    // SAFETY: `value` is a valid LIST value per the contract.
+    let n = unsafe { ffi::duckdb_get_list_size(value) };
+    let mut out = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        // SAFETY: `i` is within [0, n); `duckdb_get_list_child` returns a newly
+        // allocated child `duckdb_value` that we destroy below.
+        let mut child = unsafe { ffi::duckdb_get_list_child(value, i) };
+        // SAFETY: `child` is a valid VARCHAR value; `duckdb_get_varchar` returns a
+        // heap `char*` (or null) that must be freed with `duckdb_free`.
+        let c = unsafe { ffi::duckdb_get_varchar(child) };
+        if !c.is_null() {
+            // SAFETY: `c` is a valid, non-null, null-terminated C string.
+            out.push(unsafe { CStr::from_ptr(c) }.to_string_lossy().into_owned());
+            // SAFETY: `c` was allocated by DuckDB and ownership transferred to us.
+            unsafe { ffi::duckdb_free(c as *mut c_void) };
+        }
+        // SAFETY: `child` was allocated by `duckdb_get_list_child`; destroy exactly once.
+        unsafe { ffi::duckdb_destroy_value(&mut child) };
+    }
+    out
+}
+
 // SAFETY: DuckDB connections are safe to move between threads (they do not hold
 // thread-local state). Each `Connection` owns its `RawConnection` exclusively.
 unsafe impl Send for Connection {}
@@ -294,6 +375,73 @@ mod connection_tests {
         assert!(conn.is_open());
         conn.close().unwrap();
     }
+
+    #[test]
+    fn table_names_simple_join_and_no_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Simple single-table read.
+        assert_eq!(conn.table_names("SELECT * FROM foo", false).unwrap(), vec!["foo".to_owned()]);
+        // Join across two tables (order/dedup follow DuckDB — compare as a set).
+        let mut joined = conn.table_names("SELECT * FROM a JOIN b ON a.id = b.id", false).unwrap();
+        joined.sort();
+        assert_eq!(joined, vec!["a".to_owned(), "b".to_owned()]);
+        // A query that reads no tables.
+        assert!(conn.table_names("SELECT 1", false).unwrap().is_empty());
+    }
+
+    #[test]
+    fn table_names_quoted_cte_and_subquery() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Quoted identifier with a space is returned unescaped.
+        assert_eq!(
+            conn.table_names("SELECT * FROM \"My Table\"", false).unwrap(),
+            vec!["My Table".to_owned()]
+        );
+        // A CTE name is not a real table; only the underlying base table is reported.
+        let cte =
+            conn.table_names("WITH c AS (SELECT * FROM base) SELECT * FROM c", false).unwrap();
+        assert_eq!(cte, vec!["base".to_owned()]);
+        // Subquery: the inner table is reported.
+        assert_eq!(
+            conn.table_names("SELECT * FROM (SELECT * FROM inner_t) x", false).unwrap(),
+            vec!["inner_t".to_owned()]
+        );
+    }
+
+    #[test]
+    fn table_names_qualified_flag_is_threaded_through() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (id INTEGER)").unwrap();
+        // Both flag values resolve the referenced table; DuckDB decides how much
+        // qualification to add (a bare reference may stay bare), so we assert the
+        // table is present rather than a specific catalog.schema.table shape.
+        let qualified = conn.table_names("SELECT * FROM t", true).unwrap();
+        assert_eq!(qualified.len(), 1);
+        assert!(qualified[0].ends_with("t"), "expected ...t, got {:?}", qualified[0]);
+        // Unqualified form is the bare name.
+        assert_eq!(conn.table_names("SELECT * FROM t", false).unwrap(), vec!["t".to_owned()]);
+    }
+
+    #[test]
+    fn table_names_rejects_interior_nul_before_ffi() {
+        // An interior NUL is caught while building the CString, before the FFI call,
+        // so it never reaches DuckDB's parser.
+        let conn = Connection::open_in_memory().unwrap();
+        assert!(
+            matches!(conn.table_names("SELECT * FROM t\0x", false), Err(Error::NulError(_))),
+            "interior NUL must be rejected"
+        );
+    }
+
+    // NOTE: malformed SQL (e.g. "SELECT FROM WHERE") is intentionally NOT exercised
+    // here. `duckdb_get_table_names` parses the query internally and, on a syntax
+    // error, throws a C++ ParserException that unwinds across the FFI boundary; Rust
+    // cannot catch a foreign exception, so the process aborts
+    // ("fatal runtime error: Rust cannot catch foreign exceptions"). This is the same
+    // upstream DuckDB C-API defect documented for extract_statements.
+    // `table_names` therefore documents that the caller must pass
+    // syntactically valid SQL; only the interior-NUL guard (which runs before the FFI
+    // call) is testable as a rejection.
 
     #[test]
     fn test_open_with_flags() {
