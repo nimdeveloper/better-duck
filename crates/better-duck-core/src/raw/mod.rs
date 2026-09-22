@@ -17,3 +17,4 @@ pub mod row;
 pub mod selection_vector;
 pub(crate) mod statement;
 pub mod table_description;
+pub mod task_state;

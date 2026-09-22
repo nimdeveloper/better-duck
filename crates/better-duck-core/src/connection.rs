@@ -286,6 +286,17 @@ impl Connection {
         crate::helpers::duck_result::check_state(state)
     }
 
+    /// Whether the current query on this connection has finished executing.
+    ///
+    /// Meaningful while driving execution manually with the external task scheduler
+    /// ([`TaskState`](crate::raw::task_state::TaskState)): a background query is done
+    /// once this returns `true`. (`duckdb_execution_is_finished`.)
+    #[must_use]
+    pub fn execution_is_finished(&self) -> bool {
+        // SAFETY: `self.0.handle()` is a valid open connection.
+        unsafe { ffi::duckdb_execution_is_finished(self.0.handle()) }
+    }
+
     /// Materialises the connection's query-profiling tree into an owned
     /// [`ProfilingNode`], or `None` if profiling is disabled or no query has run.
     ///

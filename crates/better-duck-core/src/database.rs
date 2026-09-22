@@ -104,6 +104,18 @@ impl Database {
     pub(crate) fn raw_db(&self) -> crate::ffi::duckdb_database {
         self.inner.0
     }
+
+    /// The raw `duckdb_database` handle, for internal FFI use by the external task
+    /// scheduler ([`crate::raw::task_state`]).
+    pub(crate) fn handle(&self) -> crate::ffi::duckdb_database {
+        self.inner.0
+    }
+
+    /// A cloned `Arc` to the underlying database, so a resource (e.g. a task state)
+    /// can keep the database alive for its own lifetime.
+    pub(crate) fn arc(&self) -> Arc<RawDatabase> {
+        Arc::clone(&self.inner)
+    }
 }
 
 impl std::fmt::Debug for Database {
