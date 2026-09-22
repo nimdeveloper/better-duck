@@ -275,6 +275,27 @@ impl LogicalType {
         unsafe { owned_c_string(duckdb_logical_type_get_alias(self.0)) }
     }
 
+    /// Sets this type's user-defined alias (`duckdb_logical_type_set_alias`).
+    ///
+    /// DuckDB copies the name, so it need not outlive the call. Read it back with
+    /// [`alias`](LogicalType::alias).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `alias` contains an interior NUL.
+    pub fn set_alias(
+        &mut self,
+        alias: &str,
+    ) -> Result<()> {
+        let c_alias = CString::new(alias).map_err(|e| {
+            Error::ConversionError(DuckDBConversionError::ConversionError(e.to_string()))
+        })?;
+        // SAFETY: `self.0` is a valid logical type; `c_alias` is a valid, NUL-terminated
+        // C string that outlives the call, and DuckDB copies it.
+        unsafe { crate::ffi::duckdb_logical_type_set_alias(self.0, c_alias.as_ptr()) };
+        Ok(())
+    }
+
     /// The child type of a `LIST` (also accepts `MAP`).
     #[must_use]
     pub fn list_child(&self) -> Option<LogicalType> {
@@ -534,6 +555,16 @@ mod tests {
     #[test]
     fn null_handle_is_rejected() {
         assert!(LogicalType::from_raw(std::ptr::null_mut()).is_err());
+    }
+
+    #[test]
+    fn set_alias_round_trips_and_rejects_interior_nul() {
+        let mut lt = LogicalType::of::<i32>().unwrap();
+        assert_eq!(lt.alias(), None, "a fresh scalar type has no alias");
+        lt.set_alias("my_int").unwrap();
+        assert_eq!(lt.alias().as_deref(), Some("my_int"));
+        // An interior NUL is rejected before the FFI call.
+        assert!(lt.set_alias("bad\0alias").is_err());
     }
 
     #[test]

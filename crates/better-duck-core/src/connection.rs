@@ -258,6 +258,34 @@ impl Connection {
         TableDescription::create_ext(self.0.handle(), catalog, schema, table)
     }
 
+    /// Registers `ty` as a custom (aliased) logical type in this connection's
+    /// catalog, so its alias can be used as a type name in SQL. Give `ty` a name
+    /// first with [`LogicalType::set_alias`](crate::types::LogicalType::set_alias).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `ty` has no alias, or DuckDB rejects the registration
+    /// (e.g. a name conflict).
+    pub fn register_logical_type(
+        &self,
+        ty: &crate::types::LogicalType,
+    ) -> Result<()> {
+        if ty.alias().is_none() {
+            return Err(Error::ConversionError(
+                crate::error::DuckDBConversionError::ConversionError(
+                    "a logical type must have an alias before it can be registered".to_owned(),
+                ),
+            ));
+        }
+        // SAFETY: `self.0.handle()` is a valid open connection; `ty.as_raw()` is a valid
+        // logical type owned by `ty` for the call (DuckDB copies it). The `info` arg is
+        // optional and DuckDB accepts a null handle (no extra create-type metadata).
+        let state = unsafe {
+            ffi::duckdb_register_logical_type(self.0.handle(), ty.as_raw(), std::ptr::null_mut())
+        };
+        crate::helpers::duck_result::check_state(state)
+    }
+
     /// Materialises the connection's query-profiling tree into an owned
     /// [`ProfilingNode`], or `None` if profiling is disabled or no query has run.
     ///
@@ -497,6 +525,31 @@ mod connection_tests {
         let conn = Connection::open_in_memory().unwrap();
         assert!(conn.is_open());
         conn.close().unwrap();
+    }
+
+    #[test]
+    fn register_logical_type_makes_an_alias_usable_as_a_sql_type() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // An aliased INTEGER type registers and can then be used as a SQL type name.
+        let mut ty = crate::types::LogicalType::of::<i32>().unwrap();
+        ty.set_alias("my_int").unwrap();
+        conn.register_logical_type(&ty).unwrap();
+        // The registered alias is now a usable column/cast type.
+        conn.execute_batch("CREATE TABLE t (v my_int)").unwrap();
+        conn.execute_batch("INSERT INTO t VALUES (7)").unwrap();
+        let mut rows = conn.execute("SELECT v FROM t").unwrap();
+        assert_eq!(
+            rows.next().unwrap().unwrap().get("v"),
+            Some(&crate::types::value::DuckValue::Int(7))
+        );
+    }
+
+    #[test]
+    fn register_logical_type_requires_an_alias() {
+        let conn = Connection::open_in_memory().unwrap();
+        let ty = crate::types::LogicalType::of::<i32>().unwrap();
+        // No alias set → rejected before touching DuckDB.
+        assert!(conn.register_logical_type(&ty).is_err());
     }
 
     #[test]
