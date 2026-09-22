@@ -16,15 +16,16 @@ use crate::types::decimal::DuckDecimal;
 use crate::{
     ffi::{
         duckdb_create_logical_type, duckdb_create_null_value, duckdb_create_uhugeint, duckdb_date,
-        duckdb_destroy_logical_type, duckdb_interval, duckdb_logical_type, duckdb_string_t,
-        duckdb_string_t_data, duckdb_string_t_length, duckdb_time, duckdb_time_ns, duckdb_time_tz,
-        duckdb_timestamp, duckdb_timestamp_ms, duckdb_timestamp_ns, duckdb_timestamp_s,
-        duckdb_type, duckdb_uhugeint, duckdb_validity_row_is_valid, duckdb_value, duckdb_vector,
-        duckdb_vector_get_column_type, duckdb_vector_get_data, duckdb_vector_get_validity,
-        DUCKDB_TYPE_DUCKDB_TYPE_ARRAY, DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
-        DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM, DUCKDB_TYPE_DUCKDB_TYPE_BIT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB,
-        DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN, DUCKDB_TYPE_DUCKDB_TYPE_DATE,
-        DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_ENUM,
+        duckdb_destroy_logical_type, duckdb_interval, duckdb_is_finite_date,
+        duckdb_is_finite_timestamp, duckdb_is_finite_timestamp_ms, duckdb_is_finite_timestamp_ns,
+        duckdb_is_finite_timestamp_s, duckdb_logical_type, duckdb_string_t, duckdb_string_t_data,
+        duckdb_string_t_length, duckdb_time, duckdb_time_ns, duckdb_time_tz, duckdb_timestamp,
+        duckdb_timestamp_ms, duckdb_timestamp_ns, duckdb_timestamp_s, duckdb_type, duckdb_uhugeint,
+        duckdb_validity_row_is_valid, duckdb_value, duckdb_vector, duckdb_vector_get_column_type,
+        duckdb_vector_get_data, duckdb_vector_get_validity, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
+        DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM,
+        DUCKDB_TYPE_DUCKDB_TYPE_BIT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN,
+        DUCKDB_TYPE_DUCKDB_TYPE_DATE, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_ENUM,
         DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT,
         DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL,
         DUCKDB_TYPE_DUCKDB_TYPE_INVALID, DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP,
@@ -120,6 +121,17 @@ pub enum DuckValue {
     /// The value is a date.
     #[cfg(not(feature = "chrono"))]
     Date(crate::types::date_native::DuckDate),
+
+    /// The value is a `DATE`/`TIMESTAMP` ±infinity — DuckDB's reserved extreme
+    /// sentinel, which no finite `NaiveDate`/`NaiveDateTime` can represent. Tagged
+    /// with the temporal family it came from and its sign so it round-trips
+    /// losslessly into the same column type. Feature-independent (no chrono type).
+    TemporalInfinity {
+        /// Which temporal family (`DATE`, `TIMESTAMP`, `TIMESTAMP_S/MS/NS`, `TIMESTAMP_TZ`).
+        kind: crate::types::temporal::TemporalKind,
+        /// `+infinity` or `-infinity`.
+        sign: crate::types::temporal::Sign,
+    },
 
     /// The value is a time.
     #[cfg(feature = "chrono")]
@@ -258,6 +270,9 @@ impl PartialEq for DuckValue {
             (Struct(a), Struct(b)) => a == b,
             (Map(a), Map(b)) => a == b,
             (Union(a), Union(b)) => a == b,
+            (TemporalInfinity { kind: ka, sign: sa }, TemporalInfinity { kind: kb, sign: sb }) => {
+                ka == kb && sa == sb
+            },
             (Uuid(a), Uuid(b)) => a == b,
             (Bit(a), Bit(b)) => a == b,
             (Bignum(a), Bignum(b)) => a == b,
@@ -344,6 +359,10 @@ impl Hash for DuckValue {
                 map::map_entries_hash(m.iter(), m.len(), state);
             },
             DuckValue::Union(u) => u.hash(state),
+            DuckValue::TemporalInfinity { kind, sign } => {
+                kind.hash(state);
+                sign.hash(state);
+            },
             DuckValue::Uuid(u) => u.hash(state),
             DuckValue::Bit(b) => b.hash(state),
             DuckValue::Bignum(b) => b.hash(state),
@@ -395,6 +414,9 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
             DuckValueRef::Date(d) => DuckValue::Date(*d),
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::Date(d) => DuckValue::Date(*d),
+            DuckValueRef::TemporalInfinity { kind, sign } => {
+                DuckValue::TemporalInfinity { kind: *kind, sign: *sign }
+            },
             #[cfg(feature = "chrono")]
             DuckValueRef::Time(t) => DuckValue::Time(*t),
             #[cfg(not(feature = "chrono"))]
@@ -468,6 +490,30 @@ macro_rules! read_packed {
     }};
 }
 
+/// Guards a temporal read: if the raw sentinel is ±infinity (per DuckDB's
+/// `duckdb_is_finite_*` check), returns a [`DuckValue::TemporalInfinity`] tagged
+/// with `$kind` and the sign of `$field`; otherwise falls through to the finite
+/// conversion. `$field` is the raw struct's integer (`days`/`micros`/…).
+macro_rules! temporal_infinity_guard {
+    ($val:expr, $row_idx:expr, $raw_ty:ty, $is_finite:path, $field:ident, $kind:expr) => {{
+        let raw: $raw_ty = {
+            // SAFETY: the column stores `$raw_ty` inline in packed layout; `$row_idx`
+            // is within [0, chunk_size), so the read is in-bounds and aligned.
+            unsafe { *(duckdb_vector_get_data($val) as *const $raw_ty).add($row_idx as usize) }
+        };
+        let is_finite = {
+            // SAFETY: `raw` is a valid `$raw_ty` read from the column above.
+            unsafe { $is_finite(raw) }
+        };
+        if !is_finite {
+            return Ok(DuckValue::TemporalInfinity {
+                kind: $kind,
+                sign: crate::types::temporal::sign_of(raw.$field as i64),
+            });
+        }
+    }};
+}
+
 impl DuckValue {
     pub(crate) fn from_duckdb_vec(
         val: duckdb_vector,
@@ -530,6 +576,14 @@ impl DuckValue {
                 read_packed!(val, row_idx, duckdb_hugeint, i128).map(DuckValue::HugeInt)
             },
             DUCKDB_TYPE_DUCKDB_TYPE_DATE => {
+                temporal_infinity_guard!(
+                    val,
+                    row_idx,
+                    duckdb_date,
+                    duckdb_is_finite_date,
+                    days,
+                    crate::types::temporal::TemporalKind::Date
+                );
                 #[cfg(feature = "chrono")]
                 {
                     read_packed!(val, row_idx, duckdb_date, chrono::NaiveDate).map(DuckValue::Date)
@@ -552,6 +606,14 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP => {
+                temporal_infinity_guard!(
+                    val,
+                    row_idx,
+                    duckdb_timestamp,
+                    duckdb_is_finite_timestamp,
+                    micros,
+                    crate::types::temporal::TemporalKind::Timestamp
+                );
                 #[cfg(feature = "chrono")]
                 {
                     read_packed!(val, row_idx, duckdb_timestamp, chrono::NaiveDateTime)
@@ -576,6 +638,14 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_S => {
+                temporal_infinity_guard!(
+                    val,
+                    row_idx,
+                    duckdb_timestamp_s,
+                    duckdb_is_finite_timestamp_s,
+                    seconds,
+                    crate::types::temporal::TemporalKind::TimestampS
+                );
                 #[cfg(feature = "chrono")]
                 {
                     read_packed!(
@@ -606,6 +676,14 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_MS => {
+                temporal_infinity_guard!(
+                    val,
+                    row_idx,
+                    duckdb_timestamp_ms,
+                    duckdb_is_finite_timestamp_ms,
+                    millis,
+                    crate::types::temporal::TemporalKind::TimestampMs
+                );
                 #[cfg(feature = "chrono")]
                 {
                     read_packed!(
@@ -636,6 +714,14 @@ impl DuckValue {
                 }
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_NS => {
+                temporal_infinity_guard!(
+                    val,
+                    row_idx,
+                    duckdb_timestamp_ns,
+                    duckdb_is_finite_timestamp_ns,
+                    nanos,
+                    crate::types::temporal::TemporalKind::TimestampNs
+                );
                 #[cfg(feature = "chrono")]
                 {
                     read_packed!(
@@ -795,6 +881,14 @@ impl DuckValue {
             },
             DUCKDB_TYPE_DUCKDB_TYPE_TIMESTAMP_TZ => {
                 // TIMESTAMP_TZ uses the same duckdb_timestamp wire format as TIMESTAMP.
+                temporal_infinity_guard!(
+                    val,
+                    row_idx,
+                    duckdb_timestamp,
+                    duckdb_is_finite_timestamp,
+                    micros,
+                    crate::types::temporal::TemporalKind::TimestampTz
+                );
                 #[cfg(feature = "chrono")]
                 {
                     read_packed!(
@@ -989,6 +1083,10 @@ impl DuckValue {
             DuckValue::Struct(m) => crate::types::duck_struct::struct_to_duck(m),
             DuckValue::Map(m) => crate::types::map::map_to_duck(m),
             DuckValue::Union(u) => u.to_duck(),
+            // Rebuild the exact ±infinity sentinel for the original temporal family.
+            DuckValue::TemporalInfinity { kind, sign } => {
+                Ok(crate::types::temporal::infinity_to_duck(*kind, *sign))
+            },
             DuckValue::Uuid(u) => u.to_duck(),
             DuckValue::Bit(b) => b.to_duck(),
             DuckValue::Bignum(b) => b.to_duck(),
@@ -1049,6 +1147,8 @@ impl DuckValue {
             DuckValue::Struct(m) => crate::types::duck_struct::struct_logical_type(m),
             DuckValue::Map(m) => crate::types::map::map_logical_type(m),
             DuckValue::Union(u) => u.logical_type(),
+            // The infinite value's declared type is its original temporal family.
+            DuckValue::TemporalInfinity { kind, .. } => scalar_lt!(kind.type_id()),
             DuckValue::Uuid(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_UUID),
             DuckValue::Bit(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_BIT),
             DuckValue::Bignum(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM),

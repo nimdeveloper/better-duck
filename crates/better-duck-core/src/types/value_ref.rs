@@ -93,6 +93,16 @@ pub enum DuckValueRef<'a> {
     #[cfg(not(feature = "chrono"))]
     Date(crate::types::date_native::DuckDate),
 
+    /// The value is a `DATE`/`TIMESTAMP` ±infinity sentinel — see
+    /// [`DuckValue::TemporalInfinity`](crate::types::value::DuckValue::TemporalInfinity).
+    /// Feature-independent (`Copy`, no chrono type).
+    TemporalInfinity {
+        /// Which temporal family this infinity belongs to.
+        kind: crate::types::temporal::TemporalKind,
+        /// `+infinity` or `-infinity`.
+        sign: crate::types::temporal::Sign,
+    },
+
     /// The value is a time.
     #[cfg(feature = "chrono")]
     Time(NaiveTime),
@@ -228,6 +238,9 @@ impl<'a> PartialEq for DuckValueRef<'a> {
             (Uuid(a), Uuid(b)) => a == b,
             (Bit(a), Bit(b)) => a == b,
             (Bignum(a), Bignum(b)) => a == b,
+            (TemporalInfinity { kind: ka, sign: sa }, TemporalInfinity { kind: kb, sign: sb }) => {
+                ka == kb && sa == sb
+            },
             _ => false,
         }
     }
@@ -280,6 +293,10 @@ impl<'a> Hash for DuckValueRef<'a> {
             DuckValueRef::Date(d) => d.hash(state),
             #[cfg(not(feature = "chrono"))]
             DuckValueRef::Date(d) => d.hash(state),
+            DuckValueRef::TemporalInfinity { kind, sign } => {
+                kind.hash(state);
+                sign.hash(state);
+            },
             #[cfg(feature = "chrono")]
             DuckValueRef::Time(t) => t.hash(state),
             #[cfg(not(feature = "chrono"))]
@@ -372,6 +389,9 @@ impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
             DuckValue::Date(d) => DuckValueRef::Date(*d),
             #[cfg(not(feature = "chrono"))]
             DuckValue::Date(d) => DuckValueRef::Date(*d),
+            DuckValue::TemporalInfinity { kind, sign } => {
+                DuckValueRef::TemporalInfinity { kind: *kind, sign: *sign }
+            },
             #[cfg(feature = "chrono")]
             DuckValue::Time(t) => DuckValueRef::Time(*t),
             #[cfg(not(feature = "chrono"))]
@@ -463,6 +483,9 @@ impl<'a> From<DuckValue> for DuckValueRef<'a> {
             DuckValue::Date(d) => DuckValueRef::Date(d),
             #[cfg(not(feature = "chrono"))]
             DuckValue::Date(d) => DuckValueRef::Date(d),
+            DuckValue::TemporalInfinity { kind, sign } => {
+                DuckValueRef::TemporalInfinity { kind, sign }
+            },
             #[cfg(feature = "chrono")]
             DuckValue::Time(t) => DuckValueRef::Time(t),
             #[cfg(not(feature = "chrono"))]
@@ -653,6 +676,7 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             | DuckValueRef::Struct(_)
             | DuckValueRef::Map(_)
             | DuckValueRef::Union(_)
+            | DuckValueRef::TemporalInfinity { .. }
             | DuckValueRef::Uuid(_)
             | DuckValueRef::Bit(_)
             | DuckValueRef::Bignum(_) => {
@@ -763,6 +787,7 @@ impl crate::types::appendable::AppendAble for DuckValueRef<'_> {
             | DuckValueRef::Struct(_)
             | DuckValueRef::Map(_)
             | DuckValueRef::Union(_)
+            | DuckValueRef::TemporalInfinity { .. }
             | DuckValueRef::Uuid(_)
             | DuckValueRef::Bit(_)
             | DuckValueRef::Bignum(_) => {

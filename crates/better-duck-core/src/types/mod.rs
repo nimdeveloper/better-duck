@@ -30,6 +30,10 @@ pub use duck_enum::DuckEnum;
 /// Metadata-preserving UNION value (`DuckUnion`), full member schema + tag.
 pub mod duck_union;
 pub use duck_union::DuckUnion;
+
+/// Lossless ±infinity for `DATE`/`TIMESTAMP` values (`TemporalKind`, `Sign`).
+pub mod temporal;
+pub use temporal::{Sign, TemporalKind};
 /// Float canonicalization for `DuckValue` `Eq` + `Hash`.
 pub(crate) mod cmp;
 /// Chrono date/time types and `DuckDialect` implementations for the `chrono` feature.
