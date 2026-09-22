@@ -4,14 +4,17 @@ use std::sync::Arc;
 
 use crate::error::{EngineError, Error, Result};
 use crate::ffi::{
-    duckdb_appender, duckdb_appender_begin_row, duckdb_appender_close, duckdb_appender_create,
-    duckdb_appender_destroy, duckdb_appender_end_row, duckdb_appender_error_data,
-    duckdb_appender_flush, DuckDBSuccess,
+    duckdb_appender, duckdb_appender_add_column, duckdb_appender_begin_row,
+    duckdb_appender_clear_columns, duckdb_appender_close, duckdb_appender_column_count,
+    duckdb_appender_column_type, duckdb_appender_create, duckdb_appender_create_ext,
+    duckdb_appender_create_query, duckdb_appender_destroy, duckdb_appender_end_row,
+    duckdb_appender_error_data, duckdb_appender_flush, duckdb_logical_type, idx_t, DuckDBSuccess,
 };
 use crate::helpers::duck_result::result_from_duckdb_appender;
 use crate::raw::connection::ConnectionInner;
 use crate::raw::error_data::ErrorData;
 use crate::types::appendable::AppendAble;
+use crate::types::LogicalType;
 
 /// Lifecycle state of an [`Appender`].
 ///
@@ -51,6 +54,10 @@ pub struct Appender {
     _connection: Arc<ConnectionInner>,
     inn: duckdb_appender,
     state: AppenderState,
+    /// Whether any row has been appended yet. The active-column-list builders
+    /// ([`add_column`](Appender::add_column)/[`clear_columns`](Appender::clear_columns))
+    /// must run *before* the first row, so this gates them.
+    rows_appended: bool,
 }
 
 impl Appender {
@@ -90,7 +97,174 @@ impl Appender {
             _connection: connection,
             inn: appender,
             state: AppenderState::Ready,
+            rows_appended: false,
         })
+    }
+
+    /// Creates an `Appender` for `[catalog.]schema.table`, addressing a table in a
+    /// specific attached catalog. A `None` catalog uses DuckDB's default.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a name contains an interior NUL, or if DuckDB cannot
+    /// create the appender (e.g. the table or catalog does not exist).
+    pub(crate) fn new_ext(
+        connection: Arc<ConnectionInner>,
+        catalog: Option<&str>,
+        schema: &str,
+        table: &str,
+    ) -> Result<Appender> {
+        let c_catalog = catalog.map(CString::new).transpose()?;
+        let c_schema = CString::new(schema)?;
+        let c_table = CString::new(table)?;
+        let catalog_ptr = c_catalog.as_ref().map_or(ptr::null(), |c| c.as_ptr());
+        let mut appender: duckdb_appender = ptr::null_mut();
+        // SAFETY: `connection`'s handle is valid and kept alive by the retained `Arc`.
+        // The (optional) catalog/schema/table pointers are valid null-terminated
+        // strings (or null for the default catalog) that outlive the call; `appender`
+        // is a valid out-pointer.
+        let res = unsafe {
+            duckdb_appender_create_ext(
+                connection.handle(),
+                catalog_ptr,
+                c_schema.as_ptr() as *const c_char,
+                c_table.as_ptr() as *const c_char,
+                &mut appender,
+            )
+        };
+        result_from_duckdb_appender(res, &mut appender).map(|_| Appender {
+            _connection: connection,
+            inn: appender,
+            state: AppenderState::Ready,
+            rows_appended: false,
+        })
+    }
+
+    /// Creates a *query* appender: rows appended to it feed `query` (an `INSERT`,
+    /// `UPDATE`, `DELETE`, or `MERGE INTO`), which refers to the appended data by
+    /// `table_name` (default `"appended_data"`). `types` gives the appended columns'
+    /// types; `column_names` optionally names them (default `col1`, `col2`, …).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on an interior NUL in any string, or if DuckDB rejects the
+    /// query/columns.
+    pub(crate) fn new_query(
+        connection: Arc<ConnectionInner>,
+        query: &str,
+        types: &[LogicalType],
+        table_name: Option<&str>,
+        column_names: Option<&[&str]>,
+    ) -> Result<Appender> {
+        let c_query = CString::new(query)?;
+        let c_table = table_name.map(CString::new).transpose()?;
+        let table_ptr = c_table.as_ref().map_or(ptr::null(), |c| c.as_ptr());
+
+        // DuckDB copies the type handles; collect the raw pointers into a temporary.
+        let mut raw_types: Vec<duckdb_logical_type> =
+            types.iter().map(LogicalType::as_raw).collect();
+
+        // Optional column names: build owned CStrings, then a pointer array over them.
+        let c_names: Option<Vec<CString>> = column_names
+            .map(|names| names.iter().map(|n| CString::new(*n)).collect::<Result<_, _>>())
+            .transpose()?;
+        let mut name_ptrs: Option<Vec<*const c_char>> =
+            c_names.as_ref().map(|cs| cs.iter().map(|c| c.as_ptr()).collect());
+        let names_ptr = name_ptrs.as_mut().map_or(ptr::null_mut(), |v| v.as_mut_ptr());
+
+        let mut appender: duckdb_appender = ptr::null_mut();
+        // SAFETY: `connection`'s handle is valid (kept alive by the retained `Arc`).
+        // `c_query`/`table_ptr` are valid (or null) null-terminated strings; `raw_types`
+        // holds `types.len()` valid handles DuckDB copies; `names_ptr` is null or points
+        // at `types.len()`-ish valid name pointers that outlive the call; `appender` is a
+        // valid out-pointer.
+        let res = unsafe {
+            duckdb_appender_create_query(
+                connection.handle(),
+                c_query.as_ptr(),
+                raw_types.len() as idx_t,
+                raw_types.as_mut_ptr(),
+                table_ptr,
+                names_ptr,
+                &mut appender,
+            )
+        };
+        result_from_duckdb_appender(res, &mut appender).map(|_| Appender {
+            _connection: connection,
+            inn: appender,
+            state: AppenderState::Ready,
+            rows_appended: false,
+        })
+    }
+
+    /// The number of columns in the appender's active column list (or, with no
+    /// projection set, the receiving table's column count).
+    #[must_use]
+    pub fn column_count(&self) -> u64 {
+        // SAFETY: `self.inn` is a valid, non-null duckdb_appender.
+        unsafe { duckdb_appender_column_count(self.inn) as u64 }
+    }
+
+    /// The logical type of the appender column at `col_idx`, or `None` if DuckDB
+    /// returns no type (e.g. index out of range).
+    #[must_use]
+    pub fn column_type(
+        &self,
+        col_idx: u64,
+    ) -> Option<LogicalType> {
+        // SAFETY: `self.inn` is valid; `duckdb_appender_column_type` returns an owned
+        // logical type (destroy once) that the RAII `LogicalType` wraps; null → None.
+        LogicalType::from_raw(unsafe { duckdb_appender_column_type(self.inn, col_idx as idx_t) })
+            .ok()
+    }
+
+    /// Adds `name` to the appender's *active column list*, so subsequent rows supply
+    /// only the projected columns (the rest take their `DEFAULT`).
+    ///
+    /// Must be called before the first row is appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a row has already been appended, on an interior NUL in
+    /// `name`, or if DuckDB rejects the column.
+    pub fn add_column(
+        &mut self,
+        name: &str,
+    ) -> Result<()> {
+        self.ensure_configurable()?;
+        let c_name = CString::new(name)?;
+        // SAFETY: `self.inn` is valid; `c_name` is a valid null-terminated string that
+        // outlives the call and is not retained.
+        let rc = unsafe { duckdb_appender_add_column(self.inn, c_name.as_ptr()) };
+        self.check(rc)
+    }
+
+    /// Clears any active column-list projection, so subsequent rows supply every
+    /// column of the receiving table again.
+    ///
+    /// Must be called before the first row is appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a row has already been appended, or if DuckDB reports a
+    /// failure.
+    pub fn clear_columns(&mut self) -> Result<()> {
+        self.ensure_configurable()?;
+        // SAFETY: `self.inn` is a valid, non-null duckdb_appender.
+        let rc = unsafe { duckdb_appender_clear_columns(self.inn) };
+        self.check(rc)
+    }
+
+    /// Returns `Ok(())` only if the active column list may still be reconfigured —
+    /// i.e. the appender is Ready and no row has been appended yet.
+    fn ensure_configurable(&self) -> Result<()> {
+        self.ensure_ready()?;
+        if self.rows_appended {
+            return Err(Error::Engine(EngineError::unavailable(Some(
+                "appender columns must be configured before the first row is appended".to_owned(),
+            ))));
+        }
+        Ok(())
     }
 
     /// Appends a row to the table.
@@ -121,7 +295,10 @@ impl Appender {
         // or a panic inside `appender_append` — so DuckDB is never left mid-row.
         let guard = RowGuard { appender: self, ended: false };
         guard.appender.row_result(row.appender_append(guard.appender.inn))?;
-        guard.end()
+        guard.end()?;
+        // A row now exists, so the active column list may no longer be reconfigured.
+        self.rows_appended = true;
+        Ok(())
     }
 
     /// Flushes all buffered rows to the database.
@@ -671,5 +848,123 @@ mod appender_tests {
         let mut rows = con.query("SELECT count(*) AS n FROM drop_fail").unwrap();
         let row = rows.next().unwrap().unwrap();
         assert_eq!(row.get("n").unwrap(), &DuckValue::BigInt(1), "only the valid row persisted");
+    }
+
+    // Catalog-aware / query appenders, schema introspection, projected columns.
+    mod builders {
+        use crate::connection::Connection;
+        use crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER;
+        use crate::types::value::DuckValue;
+        use crate::types::LogicalType;
+
+        #[test]
+        fn appender_ext_default_and_named_catalog() {
+            let mut conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("CREATE TABLE t (id INTEGER)").unwrap();
+
+            // Default catalog (None).
+            {
+                let mut app = conn.appender_ext(None, "main", "t").unwrap();
+                app.append(&mut DuckValue::Int(1)).unwrap();
+                app.save().unwrap();
+            }
+            // Explicit in-memory catalog name.
+            {
+                let mut app = conn.appender_ext(Some("memory"), "main", "t").unwrap();
+                app.append(&mut DuckValue::Int(2)).unwrap();
+                app.save().unwrap();
+            }
+            let rows: Vec<_> = conn
+                .execute("SELECT id FROM t ORDER BY id")
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0].get("id"), Some(&DuckValue::Int(1)));
+            assert_eq!(rows[1].get("id"), Some(&DuckValue::Int(2)));
+        }
+
+        #[test]
+        fn column_count_and_type_reflect_the_table() {
+            let mut conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("CREATE TABLE t (id INTEGER, name VARCHAR)").unwrap();
+            let app = conn.appender("t", "main").unwrap();
+            assert_eq!(app.column_count(), 2);
+            let ty = app.column_type(0).expect("column 0 type");
+            assert_eq!(ty.type_id(), DUCKDB_TYPE_DUCKDB_TYPE_INTEGER);
+        }
+
+        #[test]
+        fn add_column_projects_and_fills_defaults() {
+            let mut conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("CREATE TABLE t (a INTEGER, b INTEGER DEFAULT 99)").unwrap();
+            {
+                let mut app = conn.appender("t", "main").unwrap();
+                // Project only `a`; `b` should take its DEFAULT.
+                app.add_column("a").unwrap();
+                assert_eq!(app.column_count(), 1, "active column list is just `a`");
+                app.append(&mut DuckValue::Int(7)).unwrap();
+                app.save().unwrap();
+            }
+            let mut rows = conn.execute("SELECT a, b FROM t").unwrap();
+            let row = rows.next().unwrap().unwrap();
+            assert_eq!(row.get("a"), Some(&DuckValue::Int(7)));
+            assert_eq!(
+                row.get("b"),
+                Some(&DuckValue::Int(99)),
+                "DEFAULT filled the unprojected column"
+            );
+        }
+
+        #[test]
+        fn clear_columns_restores_full_projection() {
+            let mut conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("CREATE TABLE t (a INTEGER, b INTEGER)").unwrap();
+            let mut app = conn.appender("t", "main").unwrap();
+            app.add_column("a").unwrap();
+            assert_eq!(app.column_count(), 1);
+            app.clear_columns().unwrap();
+            assert_eq!(app.column_count(), 2, "clear_columns restores every column");
+        }
+
+        #[test]
+        fn configuration_after_first_row_is_rejected() {
+            let mut conn = Connection::open_in_memory().unwrap();
+            // Single column so a bare-value row supplies every column and succeeds.
+            conn.execute_batch("CREATE TABLE t (a INTEGER)").unwrap();
+            let mut app = conn.appender("t", "main").unwrap();
+            app.append(&mut DuckValue::Int(1)).unwrap();
+            // A row exists, so the active column list can no longer be reconfigured.
+            assert!(app.add_column("a").is_err(), "add_column after a row must be rejected");
+            assert!(app.clear_columns().is_err(), "clear_columns after a row must be rejected");
+        }
+
+        #[test]
+        fn appender_query_feeds_an_insert() {
+            let mut conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch("CREATE TABLE dest (v INTEGER)").unwrap();
+            let types = [LogicalType::of::<i32>().unwrap()];
+            {
+                let mut app = conn
+                    .appender_query(
+                        "INSERT INTO dest SELECT * FROM appended_data",
+                        &types,
+                        None,
+                        None,
+                    )
+                    .unwrap();
+                app.append(&mut DuckValue::Int(42)).unwrap();
+                app.append(&mut DuckValue::Int(43)).unwrap();
+                app.save().unwrap();
+            }
+            let rows: Vec<_> = conn
+                .execute("SELECT v FROM dest ORDER BY v")
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0].get("v"), Some(&DuckValue::Int(42)));
+            assert_eq!(rows[1].get("v"), Some(&DuckValue::Int(43)));
+        }
     }
 }

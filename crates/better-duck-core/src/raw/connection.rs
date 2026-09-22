@@ -548,6 +548,43 @@ impl RawConnection {
         Appender::new(Arc::clone(self.inner()), table, schema)
     }
 
+    /// Creates an appender for `[catalog.]schema.table`, addressing a specific
+    /// attached catalog (`None` uses the default catalog).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a name contains an interior NUL, or the appender cannot be
+    /// created (e.g. the table/catalog does not exist).
+    #[must_use = "appender returns an Appender that must be used to insert rows"]
+    pub fn appender_ext(
+        &mut self,
+        catalog: Option<&str>,
+        schema: &str,
+        table: &str,
+    ) -> Result<Appender> {
+        Appender::new_ext(Arc::clone(self.inner()), catalog, schema, table)
+    }
+
+    /// Creates a query appender: appended rows feed `query` (INSERT/UPDATE/DELETE/
+    /// MERGE), which refers to the appended data by `table_name` (default
+    /// `"appended_data"`). `types` are the appended columns' types; `column_names`
+    /// optionally names them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on an interior NUL in any string, or if DuckDB rejects the
+    /// query or column set.
+    #[must_use = "appender returns an Appender that must be used to insert rows"]
+    pub fn appender_query(
+        &mut self,
+        query: &str,
+        types: &[crate::types::LogicalType],
+        table_name: Option<&str>,
+        column_names: Option<&[&str]>,
+    ) -> Result<Appender> {
+        Appender::new_query(Arc::clone(self.inner()), query, types, table_name, column_names)
+    }
+
     /// Executes a parameterized INSERT statement for each value in `values`.
     ///
     /// # Errors
