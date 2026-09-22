@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 318,
-  "expected_pending": 82,
+  "expected_production_used": 323,
+  "expected_pending": 77,
   "methods": [
     {
       "category": "Open Connect",
@@ -2344,6 +2344,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
+        "crates/better-duck-core/src/raw/owned_vector.rs",
         "crates/better-duck-core/src/types/array.rs",
         "crates/better-duck-core/src/types/value.rs",
         "crates/better-duck-core/src/udf/vector.rs"
@@ -2356,6 +2357,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
+        "crates/better-duck-core/src/raw/owned_vector.rs",
         "crates/better-duck-core/src/udf/vector.rs"
       ]
     },
@@ -2391,26 +2393,32 @@
     {
       "category": "Vector Interface",
       "symbol": "duckdb_list_vector_get_size",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V2",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_vector.rs"
+      ]
     },
     {
       "category": "Vector Interface",
       "symbol": "duckdb_list_vector_set_size",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V2",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_vector.rs"
+      ]
     },
     {
       "category": "Vector Interface",
       "symbol": "duckdb_list_vector_reserve",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V2",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_vector.rs"
+      ]
     },
     {
       "category": "Vector Interface",
@@ -2481,10 +2489,12 @@
     {
       "category": "Validity Mask Functions",
       "symbol": "duckdb_validity_set_row_validity",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V2",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_vector.rs"
+      ]
     },
     {
       "category": "Validity Mask Functions",
@@ -2499,10 +2509,12 @@
     {
       "category": "Validity Mask Functions",
       "symbol": "duckdb_validity_set_row_valid",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V2",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_vector.rs"
+      ]
     },
     {
       "category": "Scalar Functions",
