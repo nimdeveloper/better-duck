@@ -12,21 +12,25 @@
 // FFI pointer arguments are used safely inside `unsafe` blocks.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use std::ffi::{c_void, CStr};
+use std::ffi::{c_void, CStr, CString};
+use std::os::raw::c_char;
 
 use crate::{
     error::{DuckDBConversionError, Error, Result},
     ffi::{
-        duckdb_array_type_array_size, duckdb_array_type_child_type, duckdb_destroy_logical_type,
-        duckdb_enum_dictionary_size, duckdb_enum_dictionary_value, duckdb_enum_internal_type,
-        duckdb_free, duckdb_get_type_id, duckdb_list_type_child_type, duckdb_logical_type,
-        duckdb_logical_type_get_alias, duckdb_map_type_key_type, duckdb_map_type_value_type,
-        duckdb_struct_type_child_count, duckdb_struct_type_child_name,
-        duckdb_struct_type_child_type, duckdb_type, duckdb_union_type_member_count,
-        duckdb_union_type_member_name, duckdb_union_type_member_type, idx_t,
-        DUCKDB_TYPE_DUCKDB_TYPE_ARRAY, DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
-        DUCKDB_TYPE_DUCKDB_TYPE_ENUM, DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP,
-        DUCKDB_TYPE_DUCKDB_TYPE_STRUCT, DUCKDB_TYPE_DUCKDB_TYPE_UNION,
+        duckdb_array_type_array_size, duckdb_array_type_child_type, duckdb_create_array_type,
+        duckdb_create_decimal_type, duckdb_create_enum_type, duckdb_create_list_type,
+        duckdb_create_logical_type, duckdb_create_map_type, duckdb_create_struct_type,
+        duckdb_create_union_type, duckdb_destroy_logical_type, duckdb_enum_dictionary_size,
+        duckdb_enum_dictionary_value, duckdb_enum_internal_type, duckdb_free, duckdb_get_type_id,
+        duckdb_list_type_child_type, duckdb_logical_type, duckdb_logical_type_get_alias,
+        duckdb_map_type_key_type, duckdb_map_type_value_type, duckdb_struct_type_child_count,
+        duckdb_struct_type_child_name, duckdb_struct_type_child_type, duckdb_type,
+        duckdb_union_type_member_count, duckdb_union_type_member_name,
+        duckdb_union_type_member_type, idx_t, DUCKDB_TYPE_DUCKDB_TYPE_ARRAY,
+        DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL, DUCKDB_TYPE_DUCKDB_TYPE_ENUM,
+        DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP, DUCKDB_TYPE_DUCKDB_TYPE_STRUCT,
+        DUCKDB_TYPE_DUCKDB_TYPE_UNION,
     },
     types::{
         decimal::{decimal_scale, decimal_width},
@@ -40,7 +44,7 @@ use crate::{
 /// preserves every parameter DuckDB attaches to a type, recursively, so a nested
 /// schema (e.g. `STRUCT(a DECIMAL(6,2), b LIST(INTEGER))`) round-trips without
 /// losing width/scale, field order, array size, or aliases.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeInfo {
     /// A scalar type fully described by its id (INTEGER, VARCHAR, DATE, …).
     Scalar(duckdb_type),
@@ -73,6 +77,140 @@ pub enum TypeInfo {
     Struct(Vec<(String, TypeInfo)>),
     /// `UNION(name type, …)` — ordered, named members.
     Union(Vec<(String, TypeInfo)>),
+}
+
+impl TypeInfo {
+    /// Rebuilds an owned [`LogicalType`] from this descriptor — the inverse of
+    /// [`LogicalType::describe`].
+    ///
+    /// This lets a metadata-preserving value (e.g. a typed `UNION`) reconstruct its
+    /// full declared type on write, so a read→write round trip keeps every member's
+    /// name/type, DECIMAL precision, ENUM dictionary, and nesting rather than
+    /// degrading to a single-arm or scalar approximation. It uses only the DuckDB
+    /// type *constructors*, recursively.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuckDBConversionError::ConversionError`] if DuckDB rejects a
+    /// reconstructed type (e.g. an out-of-range DECIMAL, an ENUM label with an
+    /// interior NUL, or an empty STRUCT/UNION member set).
+    pub(crate) fn to_logical_type(&self) -> Result<LogicalType, DuckDBConversionError> {
+        match self {
+            TypeInfo::Scalar(id) => {
+                // SAFETY: `id` is a duckdb_type constant; the constructor returns an
+                // owned handle (or null for a non-primitive id, rejected by from_raw).
+                LogicalType::from_raw(unsafe { duckdb_create_logical_type(*id) })
+                    .map_err(map_reconstruct_err)
+            },
+            TypeInfo::Decimal { width, scale } => {
+                // SAFETY: width/scale are copied by value; a rejected pair yields null.
+                LogicalType::from_raw(unsafe { duckdb_create_decimal_type(*width, *scale) })
+                    .map_err(|_| {
+                        DuckDBConversionError::ConversionError(format!(
+                            "DuckDB rejected DECIMAL({width},{scale})"
+                        ))
+                    })
+            },
+            TypeInfo::Enum(dict) => build_enum_type(dict),
+            TypeInfo::List(child) => {
+                let child_lt = child.to_logical_type()?;
+                // SAFETY: `child_lt` is valid; `duckdb_create_list_type` copies it.
+                LogicalType::from_raw(unsafe { duckdb_create_list_type(child_lt.as_raw()) })
+                    .map_err(map_reconstruct_err)
+            },
+            TypeInfo::Array { child, size } => {
+                let child_lt = child.to_logical_type()?;
+                // SAFETY: `child_lt` is valid; the constructor copies it.
+                LogicalType::from_raw(unsafe {
+                    duckdb_create_array_type(child_lt.as_raw(), *size as idx_t)
+                })
+                .map_err(map_reconstruct_err)
+            },
+            TypeInfo::Map { key, value } => {
+                let key_lt = key.to_logical_type()?;
+                let value_lt = value.to_logical_type()?;
+                // SAFETY: both handles are valid; the constructor copies them.
+                LogicalType::from_raw(unsafe {
+                    duckdb_create_map_type(key_lt.as_raw(), value_lt.as_raw())
+                })
+                .map_err(map_reconstruct_err)
+            },
+            TypeInfo::Struct(fields) => build_member_type(fields, MemberKind::Struct),
+            TypeInfo::Union(members) => build_member_type(members, MemberKind::Union),
+        }
+    }
+}
+
+/// Whether a named-member type array builds a `STRUCT` or a `UNION`.
+enum MemberKind {
+    Struct,
+    Union,
+}
+
+/// Builds a `STRUCT`/`UNION` logical type from ordered `(name, type)` members.
+fn build_member_type(
+    members: &[(String, TypeInfo)],
+    kind: MemberKind,
+) -> Result<LogicalType, DuckDBConversionError> {
+    if members.is_empty() {
+        return Err(DuckDBConversionError::ConversionError(
+            "STRUCT/UNION must have at least one member".to_owned(),
+        ));
+    }
+    // Reconstruct each member type first; keep the RAII handles alive until the
+    // constructor (which copies them) returns.
+    let child_lts: Vec<LogicalType> =
+        members.iter().map(|(_, ty)| ty.to_logical_type()).collect::<Result<_, _>>()?;
+    let mut child_raw: Vec<duckdb_logical_type> =
+        child_lts.iter().map(LogicalType::as_raw).collect();
+    let c_names: Vec<CString> = members
+        .iter()
+        .map(|(name, _)| {
+            CString::new(name.as_str())
+                .map_err(|e| DuckDBConversionError::ConversionError(e.to_string()))
+        })
+        .collect::<Result<_, _>>()?;
+    let mut name_ptrs: Vec<*const c_char> = c_names.iter().map(|c| c.as_ptr()).collect();
+    let count = members.len() as idx_t;
+    // SAFETY: `child_raw`/`name_ptrs` are parallel arrays of `count` valid entries
+    // that outlive the call; DuckDB copies both the member types and names.
+    let raw = unsafe {
+        match kind {
+            MemberKind::Struct => {
+                duckdb_create_struct_type(child_raw.as_mut_ptr(), name_ptrs.as_mut_ptr(), count)
+            },
+            MemberKind::Union => {
+                duckdb_create_union_type(child_raw.as_mut_ptr(), name_ptrs.as_mut_ptr(), count)
+            },
+        }
+    };
+    // The child handles have now been copied by DuckDB; dropping `child_lts` here
+    // destroys our originals exactly once.
+    drop(child_lts);
+    LogicalType::from_raw(raw).map_err(map_reconstruct_err)
+}
+
+/// Builds an `ENUM` logical type from an ordered dictionary of labels.
+fn build_enum_type(dict: &[String]) -> Result<LogicalType, DuckDBConversionError> {
+    let c_labels: Vec<CString> = dict
+        .iter()
+        .map(|l| {
+            CString::new(l.as_str())
+                .map_err(|e| DuckDBConversionError::ConversionError(e.to_string()))
+        })
+        .collect::<Result<_, _>>()?;
+    let mut ptrs: Vec<*const c_char> = c_labels.iter().map(|c| c.as_ptr()).collect();
+    // SAFETY: `ptrs` holds `c_labels.len()` valid null-terminated pointers that
+    // outlive the call; DuckDB copies the names into the new logical type.
+    let raw = unsafe { duckdb_create_enum_type(ptrs.as_mut_ptr(), ptrs.len() as idx_t) };
+    LogicalType::from_raw(raw).map_err(map_reconstruct_err)
+}
+
+/// Maps a null-handle error from a type constructor to a conversion error.
+fn map_reconstruct_err(_: Error) -> DuckDBConversionError {
+    DuckDBConversionError::ConversionError(
+        "DuckDB rejected a reconstructed logical type".to_owned(),
+    )
 }
 
 /// An owned DuckDB logical type handle with recursive introspection.

@@ -1085,8 +1085,8 @@
         "crates/better-duck-core/src/types/appendable.rs",
         "crates/better-duck-core/src/types/array.rs",
         "crates/better-duck-core/src/types/duck_struct.rs",
+        "crates/better-duck-core/src/types/duck_union.rs",
         "crates/better-duck-core/src/types/map.rs",
-        "crates/better-duck-core/src/types/union.rs",
         "crates/better-duck-core/src/udf/replacement.rs",
         "crates/better-duck-core/src/udf/table/function.rs"
       ]
@@ -1719,7 +1719,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/union.rs"
+        "crates/better-duck-core/src/types/duck_union.rs"
       ]
     },
     {
@@ -1829,6 +1829,7 @@
         "crates/better-duck-core/src/types/date_chrono.rs",
         "crates/better-duck-core/src/types/date_native.rs",
         "crates/better-duck-core/src/types/decimal.rs",
+        "crates/better-duck-core/src/types/logical_type.rs",
         "crates/better-duck-core/src/types/mod.rs",
         "crates/better-duck-core/src/types/numeric.rs",
         "crates/better-duck-core/src/types/uuid.rs",
@@ -1861,7 +1862,8 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/array.rs"
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/logical_type.rs"
       ]
     },
     {
@@ -1871,7 +1873,8 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/array.rs"
+        "crates/better-duck-core/src/types/array.rs",
+        "crates/better-duck-core/src/types/logical_type.rs"
       ]
     },
     {
@@ -1881,6 +1884,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
+        "crates/better-duck-core/src/types/logical_type.rs",
         "crates/better-duck-core/src/types/map.rs"
       ]
     },
@@ -1891,7 +1895,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/union.rs"
+        "crates/better-duck-core/src/types/logical_type.rs"
       ]
     },
     {
@@ -1901,7 +1905,8 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/duck_struct.rs"
+        "crates/better-duck-core/src/types/duck_struct.rs",
+        "crates/better-duck-core/src/types/logical_type.rs"
       ]
     },
     {
@@ -1911,7 +1916,8 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/duck_enum.rs"
+        "crates/better-duck-core/src/types/duck_enum.rs",
+        "crates/better-duck-core/src/types/logical_type.rs"
       ]
     },
     {
@@ -1921,7 +1927,8 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/decimal.rs"
+        "crates/better-duck-core/src/types/decimal.rs",
+        "crates/better-duck-core/src/types/logical_type.rs"
       ]
     },
     {
@@ -2091,8 +2098,7 @@
       "target_disposition": "production_used",
       "owner_task": null,
       "evidence": [
-        "crates/better-duck-core/src/types/logical_type.rs",
-        "crates/better-duck-core/src/types/union.rs"
+        "crates/better-duck-core/src/types/logical_type.rs"
       ]
     },
     {

@@ -150,8 +150,14 @@ fn read_union_integer_member() -> better_duck_core::error::Result<()> {
     let mut result = stmt.execute()?;
 
     let row = result.next().expect("expected row")?;
-    // Integer member: active variant holds Int(1)
-    assert_eq!(row.get("u"), Some(&DuckValue::Union(Box::new(DuckValue::Int(1)))));
+    // Integer member: active variant holds Int(1); full 2-member schema preserved.
+    match row.get("u") {
+        Some(DuckValue::Union(u)) => {
+            assert_eq!(u.value(), &DuckValue::Int(1));
+            assert_eq!(u.members().len(), 2);
+        },
+        other => panic!("expected Union, got {other:?}"),
+    }
     assert!(result.next().is_none());
     Ok(())
 }
@@ -166,8 +172,14 @@ fn read_union_text_member() -> better_duck_core::error::Result<()> {
     let mut result = stmt.execute()?;
 
     let row = result.next().expect("expected row")?;
-    // Text member: active variant holds Text("two")
-    assert_eq!(row.get("u"), Some(&DuckValue::Union(Box::new(DuckValue::Text("two".to_string())))));
+    // Text member: active variant holds Text("two"); full 2-member schema preserved.
+    match row.get("u") {
+        Some(DuckValue::Union(u)) => {
+            assert_eq!(u.value(), &DuckValue::Text("two".to_string()));
+            assert_eq!(u.members().len(), 2);
+        },
+        other => panic!("expected Union, got {other:?}"),
+    }
     assert!(result.next().is_none());
     Ok(())
 }
@@ -182,14 +194,12 @@ fn read_union_multiple_rows() -> better_duck_core::error::Result<()> {
     let rows: Vec<_> = stmt.execute()?.collect::<Result<_, _>>()?;
     assert_eq!(rows.len(), 3);
 
-    assert_eq!(rows[0].get("u"), Some(&DuckValue::Union(Box::new(DuckValue::Int(1)))));
-    assert_eq!(
-        rows[1].get("u"),
-        Some(&DuckValue::Union(Box::new(DuckValue::Text("two".to_string()))))
-    );
-    assert_eq!(
-        rows[2].get("u"),
-        Some(&DuckValue::Union(Box::new(DuckValue::Text("three".to_string()))))
-    );
+    let active = |row: &better_duck_core::DuckRow| match row.get("u") {
+        Some(DuckValue::Union(u)) => Some(u.value().clone()),
+        _ => None,
+    };
+    assert_eq!(active(&rows[0]), Some(DuckValue::Int(1)));
+    assert_eq!(active(&rows[1]), Some(DuckValue::Text("two".to_string())));
+    assert_eq!(active(&rows[2]), Some(DuckValue::Text("three".to_string())));
     Ok(())
 }

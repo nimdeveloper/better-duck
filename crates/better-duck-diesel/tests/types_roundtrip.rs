@@ -1334,6 +1334,37 @@ fn rt_union_active_member() {
 }
 
 #[test]
+fn rt_union_full_schema() {
+    use better_duck_core::types::{value::DuckValue, DuckUnion, TypeInfo};
+    use better_duck_diesel::sql_types::DuckUnion as DuckUnionSql;
+
+    #[derive(diesel::QueryableByName, Debug)]
+    struct Row {
+        #[diesel(sql_type = DuckUnionSql)]
+        val: DuckUnion,
+    }
+
+    let mut conn = conn_with("CREATE TABLE t_union2 (val UNION(n INTEGER, s VARCHAR))");
+    // A 2-member union whose active member is `s` — the full schema must survive a
+    // bind → read round trip rather than degrading to a single-arm union.
+    let members = std::sync::Arc::from([
+        ("n".to_owned(), TypeInfo::Scalar(better_duck_core::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER)),
+        ("s".to_owned(), TypeInfo::Scalar(better_duck_core::ffi::DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR)),
+    ]);
+    let expected = DuckUnion::new(members, 1, DuckValue::text("duck")).unwrap();
+    diesel::sql_query("INSERT INTO t_union2 VALUES ($1)")
+        .bind::<DuckUnionSql, _>(expected.clone())
+        .execute(&mut conn)
+        .unwrap();
+    let row: Row =
+        diesel::sql_query("SELECT val FROM t_union2 LIMIT 1").get_result(&mut conn).unwrap();
+    assert_eq!(row.val.active_name(), "s");
+    assert_eq!(row.val.value(), &DuckValue::text("duck"));
+    assert_eq!(row.val.members().len(), 2);
+    assert_eq!(row.val, expected);
+}
+
+#[test]
 fn rt_array_elements() {
     use better_duck_core::types::value::DuckValue;
     use better_duck_diesel::sql_types::DuckArray;

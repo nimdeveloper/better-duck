@@ -165,8 +165,9 @@ pub enum DuckValue {
     Array(Box<[DuckValue]>),
     /// The value is a map (arbitrary key → value pairs with a dynamic schema).
     Map(HashMap<DuckValue, DuckValue>),
-    /// The value is a union (tagged sum type; holds the active member value).
-    Union(Box<DuckValue>),
+    /// The value is a `UNION` (tagged sum type), preserving its full member schema,
+    /// the selected tag, and the active member value.
+    Union(crate::types::duck_union::DuckUnion),
     /// The value is a UUID.
     Uuid(crate::types::uuid::DuckUuid),
     /// The value is a bitstring (`BIT`).
@@ -427,7 +428,7 @@ impl<'a> From<&DuckValueRef<'a>> for DuckValue {
             DuckValueRef::Map(m) => DuckValue::Map(
                 m.iter().map(|(k, v)| (DuckValue::from(k), DuckValue::from(v))).collect(),
             ),
-            DuckValueRef::Union(u) => DuckValue::Union(Box::new(DuckValue::from(u.as_ref()))),
+            DuckValueRef::Union(u) => DuckValue::Union(u.clone().into_owned()),
             DuckValueRef::Uuid(u) => DuckValue::Uuid(*u),
             DuckValueRef::Bit(b) => DuckValue::Bit(b.clone()),
             DuckValueRef::Bignum(b) => DuckValue::Bignum(b.clone()),
@@ -987,7 +988,7 @@ impl DuckValue {
             DuckValue::Array(items) => crate::types::array::array_to_duck(items),
             DuckValue::Struct(m) => crate::types::duck_struct::struct_to_duck(m),
             DuckValue::Map(m) => crate::types::map::map_to_duck(m),
-            DuckValue::Union(inner) => crate::types::union::union_to_duck(inner),
+            DuckValue::Union(u) => u.to_duck(),
             DuckValue::Uuid(u) => u.to_duck(),
             DuckValue::Bit(b) => b.to_duck(),
             DuckValue::Bignum(b) => b.to_duck(),
@@ -1047,7 +1048,7 @@ impl DuckValue {
             DuckValue::Array(items) => crate::types::array::array_logical_type(items),
             DuckValue::Struct(m) => crate::types::duck_struct::struct_logical_type(m),
             DuckValue::Map(m) => crate::types::map::map_logical_type(m),
-            DuckValue::Union(inner) => crate::types::union::union_logical_type(inner),
+            DuckValue::Union(u) => u.logical_type(),
             DuckValue::Uuid(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_UUID),
             DuckValue::Bit(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_BIT),
             DuckValue::Bignum(_) => scalar_lt!(DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM),
@@ -1209,6 +1210,20 @@ impl From<DuckValue> for i32 {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    /// A single-member `DuckUnion` (member `name` of scalar type `id`, active).
+    fn union1(
+        name: &str,
+        id: crate::ffi::duckdb_type,
+        value: DuckValue,
+    ) -> crate::types::duck_union::DuckUnion {
+        crate::types::duck_union::DuckUnion::new(
+            std::sync::Arc::from([(name.to_owned(), crate::types::TypeInfo::Scalar(id))]),
+            0,
+            value,
+        )
+        .unwrap()
+    }
 
     // DuckValue::text constructor
 
@@ -1502,7 +1517,11 @@ mod tests {
                 DuckValue::Int(1),
                 DuckValue::Array(vec![DuckValue::Boolean(true)].into_boxed_slice()),
             )])),
-            DuckValue::Union(Box::new(DuckValue::text("active"))),
+            DuckValue::Union(union1(
+                "v",
+                crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR,
+                DuckValue::text("active"),
+            )),
         ];
 
         for value in values {
@@ -1518,7 +1537,11 @@ mod tests {
             DuckValue::Array(vec![DuckValue::Int(2)].into_boxed_slice()),
             DuckValue::Struct(HashMap::from([("field".to_owned(), DuckValue::Int(3))])),
             DuckValue::Map(HashMap::from([(DuckValue::Int(4), DuckValue::Int(5))])),
-            DuckValue::Union(Box::new(DuckValue::Int(6))),
+            DuckValue::Union(union1(
+                "v",
+                crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
+                DuckValue::Int(6),
+            )),
         ];
 
         for value in values {
@@ -1550,7 +1573,14 @@ mod tests {
         assert_eq!(hash(&first), hash(&second));
         assert_ne!(DuckValue::List(vec![]), DuckValue::Array(Box::new([])));
         assert_ne!(DuckValue::Int(1), DuckValue::BigInt(1));
-        assert_ne!(DuckValue::Union(Box::new(DuckValue::Int(1))), DuckValue::Int(1));
+        assert_ne!(
+            DuckValue::Union(union1(
+                "v",
+                crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
+                DuckValue::Int(1)
+            )),
+            DuckValue::Int(1)
+        );
     }
 
     #[test]

@@ -137,8 +137,9 @@ pub enum DuckValueRef<'a> {
     Array(Box<[DuckValueRef<'a>]>),
     /// The value is a map (arbitrary key → value pairs with a dynamic schema).
     Map(HashMap<DuckValueRef<'a>, DuckValueRef<'a>>),
-    /// The value is a union (tagged sum type; holds the active member value).
-    Union(Box<DuckValueRef<'a>>),
+    /// The value is a `UNION` (tagged sum type), borrowing its full member schema,
+    /// selected tag, and active member value.
+    Union(Cow<'a, crate::types::duck_union::DuckUnion>),
     /// The value is a UUID.
     Uuid(crate::types::uuid::DuckUuid),
     /// The value is a bitstring (`BIT`).
@@ -402,7 +403,7 @@ impl<'a> From<&'a DuckValue> for DuckValueRef<'a> {
             DuckValue::Map(m) => DuckValueRef::Map(
                 m.iter().map(|(k, v)| (DuckValueRef::from(k), DuckValueRef::from(v))).collect(),
             ),
-            DuckValue::Union(u) => DuckValueRef::Union(Box::new(DuckValueRef::from(u.as_ref()))),
+            DuckValue::Union(u) => DuckValueRef::Union(Cow::Borrowed(u)),
             DuckValue::Uuid(u) => DuckValueRef::Uuid(*u),
             DuckValue::Bit(b) => DuckValueRef::Bit(b.clone()),
             DuckValue::Bignum(b) => DuckValueRef::Bignum(b.clone()),
@@ -501,7 +502,7 @@ impl<'a> From<DuckValue> for DuckValueRef<'a> {
                     .map(|(k, v)| (DuckValueRef::from(k), DuckValueRef::from(v)))
                     .collect(),
             ),
-            DuckValue::Union(b) => DuckValueRef::Union(Box::new(DuckValueRef::from(*b))),
+            DuckValue::Union(u) => DuckValueRef::Union(Cow::Owned(u)),
             DuckValue::Uuid(u) => DuckValueRef::Uuid(u),
             DuckValue::Bit(b) => DuckValueRef::Bit(b),
             DuckValue::Bignum(b) => DuckValueRef::Bignum(b),
@@ -885,6 +886,19 @@ mod tests {
     use super::*;
     use std::hash::{Hash, Hasher};
 
+    /// A single-member (`INTEGER`) `DuckUnion` wrapping `value`, for round-trip tests.
+    fn union1(value: DuckValue) -> crate::types::duck_union::DuckUnion {
+        crate::types::duck_union::DuckUnion::new(
+            std::sync::Arc::from([(
+                "v".to_owned(),
+                crate::types::TypeInfo::Scalar(crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER),
+            )]),
+            0,
+            value,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_value_ref_conversion() {
         let value = DuckValue::Int(42);
@@ -982,7 +996,7 @@ mod tests {
                     DuckValue::Array(vec![DuckValue::Boolean(true)].into_boxed_slice()),
                 )])),
             ),
-            ("union".to_owned(), DuckValue::Union(Box::new(DuckValue::Int(9)))),
+            ("union".to_owned(), DuckValue::Union(union1(DuckValue::Int(9)))),
         ]));
 
         let borrowed = DuckValueRef::from(&value);
@@ -1013,7 +1027,10 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(hash(&first), hash(&second));
         assert_ne!(DuckValueRef::List(vec![]), DuckValueRef::Array(Box::new([])));
-        assert_ne!(DuckValueRef::Union(Box::new(DuckValueRef::Int(1))), DuckValueRef::Int(1));
+        assert_ne!(
+            DuckValueRef::Union(std::borrow::Cow::Owned(union1(DuckValue::Int(1)))),
+            DuckValueRef::Int(1)
+        );
     }
 
     #[test]

@@ -327,7 +327,16 @@ fn union_struct_member() -> better_duck_core::error::Result<()> {
         ("x".to_string(), DuckValue::Int(10)),
         ("y".to_string(), DuckValue::Int(20)),
     ]));
-    assert_eq!(row.get("u"), Some(&DuckValue::Union(Box::new(expected_inner))));
+    match row.get("u") {
+        Some(DuckValue::Union(u)) => {
+            // Full schema preserved: both members `n` and `p`, active is `p`.
+            assert_eq!(u.active_name(), "p");
+            assert_eq!(u.value(), &expected_inner);
+            let names: Vec<_> = u.members().iter().map(|(n, _)| n.as_str()).collect();
+            assert_eq!(names, ["n", "p"]);
+        },
+        other => panic!("expected Union, got {other:?}"),
+    }
     Ok(())
 }
 

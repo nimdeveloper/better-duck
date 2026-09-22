@@ -31,7 +31,7 @@
 | ENUM | `DuckEnum` | `String` | `types_roundtrip.rs` |
 | STRUCT | `DuckStruct` | `HashMap<String, DuckValue>` | `types_roundtrip.rs` |
 | MAP | `DuckMap` | `HashMap<DuckValue, DuckValue>` | `types_roundtrip.rs` |
-| UNION | `DuckUnion` | `Box<DuckValue>` (active member only — see below) | `types_roundtrip.rs` |
+| UNION | `DuckUnion` | `better_duck_core::types::DuckUnion` (full schema) or `Box<DuckValue>` (active member only) | `types_roundtrip.rs` |
 | UUID | `DuckUuid` | `better_duck_core::types::uuid::DuckUuid` | `types_roundtrip.rs` |
 | BIT | `DuckBit` | `better_duck_core::types::bit::DuckBit` | `types_roundtrip.rs` |
 | BIGNUM | `DuckBignum` | `better_duck_core::types::bignum::DuckBignum` | `types_roundtrip.rs` |
@@ -42,11 +42,12 @@ Non-chrono date/time (`Date`/`Time`/`Timestamp`/`Interval`/`DuckTimestamptz`/`Du
 
 ## Known gaps
 
-- **Multi-arm UNION.** `DuckUnion`'s Rust mirror is `Box<DuckValue>` — the active member's value
-  only. The member name and tag index are not surfaced, and writing back a value read from a
-  multi-arm union column produces a single-member union rather than round-tripping the original
-  shape. See the core-level roadmap for the `DuckValue::Union` representation change this would
-  require.
+- **Multi-arm UNION** — resolved (T5). Map a `UNION` column to
+  `better_duck_core::types::DuckUnion` to preserve the full member schema, the selected tag, and
+  the active value; a value read from a multi-arm union column now round-trips back as the same
+  union (`rt_union_full_schema`). The `Box<DuckValue>` mirror is still accepted for ergonomics —
+  it yields the active member on read and, having no schema, builds a single-member
+  `UNION(value <type>)` on write (`rt_union_active_member`).
 - **GEOMETRY / VARIANT / ANY / INTEGER_LITERAL.** Not supported — the DuckDB C API has no value
   accessor for these types (unlike UUID/BIT/BIGNUM). Reading a column of these types panics.
 - **DECIMAL precision.** `DECIMAL(18,2)` round-trips through a different declared precision;
