@@ -3,11 +3,20 @@
 //! DuckDB invokes user-defined-function bind/init/execute callbacks through
 //! `extern "C"` function pointers. A Rust panic must not unwind through that
 //! boundary: since Rust 1.81, a panic escaping a plain `extern "C"` frame aborts
-//! the process regardless of panic strategy, and under this workspace's own
-//! `panic = "abort"` release profile it always aborts anyway. [`contain_callback`]
-//! is therefore the outermost thing in every trampoline in [`crate::udf`] — it
-//! converts both ordinary `Err` returns and panics into a DuckDB error string,
+//! the process regardless of panic strategy. [`contain_callback`] is therefore the
+//! outermost thing in every trampoline in [`crate::udf`] — it uses `catch_unwind`
+//! to convert both ordinary `Err` returns and panics into a DuckDB error string,
 //! and never lets a panic escape.
+//!
+//! Containment is only *truthful* under an unwinding runtime: with `panic = "abort"`
+//! a panic aborts before `catch_unwind` can run. This workspace therefore builds its
+//! own artifacts with `panic = "unwind"` (see the release profile in the root
+//! `Cargo.toml`). A downstream application that links these crates picks its own
+//! panic strategy: under its `unwind` a callback panic is contained and surfaced as a
+//! query error with the connection left usable; under its `abort` the same panic
+//! terminates the process. That is a property of the final binary's profile, which
+//! only the downstream application controls — this crate cannot and does not override
+//! it.
 //!
 //! Adapted from the `duckdb` crate's `callback.rs`, which is hardened against
 //! panicking `Display` impls, panicking destructors, deeply nested and cyclic

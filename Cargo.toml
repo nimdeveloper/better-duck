@@ -54,7 +54,14 @@ multiple_crate_versions    = "allow"
 opt-level     = 3
 lto           = "fat"
 codegen-units = 1
-panic         = "abort"
+# `unwind` (not `abort`) so the UDF callback containment in `crate::udf` is truthful
+# in binaries built from THIS workspace: `contain_callback` relies on `catch_unwind`
+# to stop a Rust panic before it crosses DuckDB's `extern "C"` boundary, and
+# `catch_unwind` only catches under an unwinding runtime. This setting governs the
+# workspace's own artifacts (its tests, benches, examples); a downstream application
+# that depends on these crates chooses its OWN panic strategy in its own profile, and
+# under `panic = "abort"` a callback panic aborts the process — see `crate::udf`.
+panic         = "unwind"
 strip         = true
 
 [profile.bench]

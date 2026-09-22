@@ -227,3 +227,84 @@ fn table_function_panic_surfaces_as_query_error_and_connection_stays_usable() {
 
     let _ = conn.execute("SELECT 1").unwrap();
 }
+
+// --- panic-containment stress + panic-policy subprocess harness ---
+//
+// Background: an earlier revision's `udf_table_macro` binary segfaulted intermittently under
+// repetition (2–8/40) on the panic-across-a-C-frame path. On the current tree it no
+// longer reproduces — a 360-run process-level stress found 0 crashes — so the RAII
+// hardening since then closed it. These tests turn that into a durable guard: the
+// in-process loop hammers the contained-panic path many times in one process, and
+// the subprocess harness pins the panic policy (contained panic recovers under the
+// workspace's `unwind` profile; a panic that crosses the C ABI aborts).
+
+/// Repeatedly triggers a contained callback panic and then reuses the connection,
+/// guarding against a regression of the old teardown crash on that path.
+#[test]
+fn contained_table_udf_panic_is_stable_under_repetition() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    panic_table::register(&mut conn).unwrap();
+    for i in 0..200 {
+        match conn.execute("SELECT n FROM panic_table()") {
+            Ok(_) => panic!("iteration {i}: expected the UDF panic to surface as an error"),
+            Err(err) => assert!(err.to_string().contains("intentional table UDF panic"), "{err}"),
+        }
+        // The connection must stay usable after every contained panic.
+        let mut ok = conn.execute("SELECT 1 AS v").unwrap();
+        assert_eq!(ok.next().unwrap().unwrap().get("v"), Some(&DuckValue::Int(1)));
+    }
+}
+
+/// A deliberately *uncontained* `extern "C"` callback that panics. Calling it lets a
+/// panic unwind out of a C ABI frame, which aborts the process since Rust 1.81 —
+/// used only by the abort-policy subprocess below.
+extern "C" fn uncontained_extern_c_panic() {
+    panic!("uncontained panic crossing the extern \"C\" boundary");
+}
+
+/// Subprocess scenario: a *contained* table-UDF panic surfaces as a query error and
+/// the connection stays usable, so the process exits cleanly (0). Run only when
+/// spawned by [`contained_panic_recovers_in_a_subprocess`].
+#[test]
+#[ignore = "spawned as a subprocess by the panic-policy harness"]
+fn scenario_contained_panic_recovers() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    panic_table::register(&mut conn).unwrap();
+    assert!(conn.execute("SELECT n FROM panic_table()").is_err());
+    let _ = conn.execute("SELECT 1").unwrap();
+}
+
+/// Subprocess scenario: a panic crossing the `extern "C"` boundary aborts the
+/// process. Run only when spawned by [`uncontained_panic_aborts_the_subprocess`].
+#[test]
+#[ignore = "spawned as a subprocess by the panic-policy harness"]
+fn scenario_uncontained_panic_aborts() {
+    let f: extern "C" fn() = uncontained_extern_c_panic;
+    f();
+}
+
+/// Runs one `#[ignore]`d scenario test of *this* binary as a fresh subprocess.
+fn run_scenario_subprocess(name: &str) -> std::process::ExitStatus {
+    std::process::Command::new(std::env::current_exe().expect("current exe"))
+        .args([name, "--exact", "--ignored", "--test-threads=1"])
+        .env("RUST_BACKTRACE", "0")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("spawn scenario subprocess")
+}
+
+#[test]
+fn contained_panic_recovers_in_a_subprocess() {
+    // Under the workspace `unwind` profile, containment holds: the scenario exits 0.
+    let status = run_scenario_subprocess("scenario_contained_panic_recovers");
+    assert!(status.success(), "contained-panic scenario should exit cleanly, got {status:?}");
+}
+
+#[test]
+fn uncontained_panic_aborts_the_subprocess() {
+    // A panic that escapes an `extern "C"` frame aborts regardless of panic strategy
+    // (Rust >= 1.81): the scenario process must terminate abnormally.
+    let status = run_scenario_subprocess("scenario_uncontained_panic_aborts");
+    assert!(!status.success(), "uncontained extern-C panic must abort, got {status:?}");
+}
