@@ -107,6 +107,7 @@
 /// `WHERE` clause.
 pub mod aggregate;
 pub(crate) mod callback;
+pub mod cast;
 mod context;
 mod data_chunk;
 /// DuckDB replacement scans: rewrite an unresolved table reference into a
@@ -123,6 +124,7 @@ mod vector;
 pub use crate::types::LogicalType;
 /// The trait behind DuckDB scalar functions, and its signature type.
 pub use aggregate::{AggregateSetBuilder, VAggregate};
+pub use cast::VCast;
 /// An owned-or-borrowed DuckDB data chunk.
 pub use data_chunk::DataChunkHandle;
 /// The trait behind DuckDB replacement scans, and its callback-info type.
