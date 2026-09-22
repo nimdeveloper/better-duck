@@ -85,6 +85,8 @@ pub use raw::owned_vector::OwnedVector;
 
 pub use raw::selection_vector::SelectionVector;
 
+pub use raw::instance_cache::InstanceCache;
+
 #[cfg(feature = "udf")]
 pub use raw::expression::Expression;
 /// An owned, thread-safe, fully materialized query result.

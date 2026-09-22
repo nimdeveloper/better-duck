@@ -2,32 +2,38 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 360,
-  "expected_pending": 39,
+  "expected_production_used": 363,
+  "expected_pending": 36,
   "methods": [
     {
       "category": "Open Connect",
       "symbol": "duckdb_create_instance_cache",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "R1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/instance_cache.rs"
+      ]
     },
     {
       "category": "Open Connect",
       "symbol": "duckdb_get_or_create_from_cache",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "R1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/instance_cache.rs"
+      ]
     },
     {
       "category": "Open Connect",
       "symbol": "duckdb_destroy_instance_cache",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "R1",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/instance_cache.rs"
+      ]
     },
     {
       "category": "Open Connect",
@@ -376,6 +382,7 @@
         "crates/better-duck-core/src/connection.rs",
         "crates/better-duck-core/src/raw/connection.rs",
         "crates/better-duck-core/src/raw/expression.rs",
+        "crates/better-duck-core/src/raw/instance_cache.rs",
         "crates/better-duck-core/src/raw/owned_value.rs",
         "crates/better-duck-core/src/raw/profiling.rs",
         "crates/better-duck-core/src/raw/statement.rs",
