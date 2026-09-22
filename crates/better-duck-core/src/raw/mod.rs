@@ -4,6 +4,7 @@ pub mod data_chunk;
 pub(crate) mod error_data;
 pub(crate) mod extracted;
 pub(crate) mod pending;
+pub mod profiling;
 pub mod result;
 pub mod row;
 pub(crate) mod statement;

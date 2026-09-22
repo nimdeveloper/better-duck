@@ -9,8 +9,8 @@ use crate::{
     ffi,
     helpers::path::path_to_cstring,
     raw::{
-        appender::Appender, connection::RawConnection, result::DuckResult,
-        table_description::TableDescription,
+        appender::Appender, connection::RawConnection, profiling::ProfilingNode,
+        result::DuckResult, table_description::TableDescription,
     },
     types::appendable::AppendAble,
 };
@@ -256,6 +256,39 @@ impl Connection {
         table: &str,
     ) -> Result<TableDescription> {
         TableDescription::create_ext(self.0.handle(), catalog, schema, table)
+    }
+
+    /// Materialises the connection's query-profiling tree into an owned
+    /// [`ProfilingNode`], or `None` if profiling is disabled or no query has run.
+    ///
+    /// The tree is copied out eagerly, so it stays valid after later queries and
+    /// after the connection is dropped. Enable profiling with
+    /// `PRAGMA enable_profiling = 'no_output'` (and optionally `PRAGMA profiling_mode`).
+    #[must_use]
+    pub fn profiling_info(&self) -> Option<ProfilingNode> {
+        // SAFETY: `self.0.handle()` is a valid open connection.
+        unsafe { crate::raw::profiling::profiling_info(self.0.handle()) }
+    }
+
+    /// Fetches a single metric from the root profiling node, or `None` if profiling
+    /// is disabled or no query has run.
+    ///
+    /// # Panics / aborts
+    ///
+    /// `key` **must be a metric that exists** (e.g. one returned by
+    /// [`profiling_info`](Connection::profiling_info)'s
+    /// [`metrics`](ProfilingNode::metrics)). Despite its C-API docs, DuckDB's
+    /// `duckdb_profiling_info_get_value` throws a C++ exception for an unknown key
+    /// that unwinds across the FFI boundary and **aborts the process** — an upstream
+    /// defect this wrapper cannot intercept. For a safe all-metrics snapshot use
+    /// [`profiling_info`](Connection::profiling_info) instead.
+    #[must_use]
+    pub fn profiling_metric(
+        &self,
+        key: &str,
+    ) -> Option<String> {
+        // SAFETY: `self.0.handle()` is a valid open connection.
+        unsafe { crate::raw::profiling::profiling_metric(self.0.handle(), key) }
     }
 
     /// Creates an appender for bulk-inserting rows into the given table and schema.

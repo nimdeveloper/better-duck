@@ -74,6 +74,8 @@ pub use raw::statement::{CachedStatement, StatementType};
 pub use raw::table_description::TableDescription;
 
 pub use raw::data_chunk::DataChunk;
+
+pub use raw::profiling::ProfilingNode;
 /// An owned, thread-safe, fully materialized query result.
 pub use result_set::ResultSet;
 /// Trait for binding values to DuckDB prepared statements and appenders.

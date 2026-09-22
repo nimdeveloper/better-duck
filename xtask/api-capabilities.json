@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 288,
-  "expected_pending": 114,
+  "expected_production_used": 296,
+  "expected_pending": 106,
   "methods": [
     {
       "category": "Open Connect",
@@ -367,6 +367,7 @@
       "evidence": [
         "crates/better-duck-core/src/connection.rs",
         "crates/better-duck-core/src/raw/connection.rs",
+        "crates/better-duck-core/src/raw/profiling.rs",
         "crates/better-duck-core/src/raw/statement.rs",
         "crates/better-duck-core/src/raw/table_description.rs",
         "crates/better-duck-core/src/types/bignum.rs",
@@ -1103,6 +1104,7 @@
       "owner_task": null,
       "evidence": [
         "crates/better-duck-core/src/connection.rs",
+        "crates/better-duck-core/src/raw/profiling.rs",
         "crates/better-duck-core/src/types/appendable.rs",
         "crates/better-duck-core/src/types/array.rs",
         "crates/better-duck-core/src/types/duck_struct.rs",
@@ -1697,6 +1699,7 @@
       "owner_task": null,
       "evidence": [
         "crates/better-duck-core/src/connection.rs",
+        "crates/better-duck-core/src/raw/profiling.rs",
         "crates/better-duck-core/src/types/varchar.rs"
       ]
     },
@@ -1753,26 +1756,32 @@
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_map_size",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T7",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/profiling.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_map_key",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T7",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/profiling.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_map_value",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T7",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/profiling.rs"
+      ]
     },
     {
       "category": "Value Interface",
@@ -3226,42 +3235,52 @@
     {
       "category": "Profiling Info",
       "symbol": "duckdb_get_profiling_info",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/profiling.rs"
+      ]
     },
     {
       "category": "Profiling Info",
       "symbol": "duckdb_profiling_info_get_value",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/profiling.rs"
+      ]
     },
     {
       "category": "Profiling Info",
       "symbol": "duckdb_profiling_info_get_metrics",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/profiling.rs"
+      ]
     },
     {
       "category": "Profiling Info",
       "symbol": "duckdb_profiling_info_get_child_count",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/profiling.rs"
+      ]
     },
     {
       "category": "Profiling Info",
       "symbol": "duckdb_profiling_info_get_child",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "C4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/profiling.rs"
+      ]
     },
     {
       "category": "Appender",
