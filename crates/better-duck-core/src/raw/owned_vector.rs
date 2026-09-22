@@ -11,14 +11,16 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use crate::{
-    error::Result,
+    error::{EngineError, Error, Result},
     ffi::{
         duckdb_create_vector, duckdb_destroy_vector, duckdb_list_vector_get_size,
-        duckdb_list_vector_reserve, duckdb_list_vector_set_size, duckdb_validity_set_row_valid,
-        duckdb_validity_set_row_validity, duckdb_vector, duckdb_vector_ensure_validity_writable,
+        duckdb_list_vector_reserve, duckdb_list_vector_set_size, duckdb_slice_vector,
+        duckdb_validity_set_row_valid, duckdb_validity_set_row_validity, duckdb_vector,
+        duckdb_vector_copy_sel, duckdb_vector_ensure_validity_writable,
         duckdb_vector_get_column_type, duckdb_vector_get_validity, idx_t,
     },
     helpers::duck_result::check_state,
+    raw::selection_vector::SelectionVector,
     types::LogicalType,
 };
 
@@ -132,6 +134,66 @@ impl OwnedVector {
         // SAFETY: `self.ptr` is valid and its validity mask is now writable.
         unsafe { duckdb_vector_get_validity(self.ptr) }
     }
+
+    /// Destructively re-orders this vector in place so its first `len` logical rows
+    /// are `sel`'s selected rows (`duckdb_slice_vector`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `len` exceeds `sel`'s length.
+    pub fn slice(
+        &mut self,
+        sel: &SelectionVector,
+        len: u64,
+    ) -> Result<()> {
+        if len > sel.len() {
+            return Err(Error::Engine(EngineError::unavailable(Some(format!(
+                "slice len {len} exceeds selection length {}",
+                sel.len()
+            )))));
+        }
+        // SAFETY: `self.ptr` is a valid vector; `sel.raw()` is a valid selection of at
+        // least `len` entries (checked above); `duckdb_slice_vector` remaps in place.
+        unsafe { duckdb_slice_vector(self.ptr, sel.raw(), len as idx_t) };
+        Ok(())
+    }
+
+    /// Copies `src_count` rows from `self` (starting at `src_offset`) into `dst`
+    /// (starting at `dst_offset`), picking rows through `sel`
+    /// (`duckdb_vector_copy_sel`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `sel` holds fewer than `src_count` indices.
+    pub fn copy_sel_into(
+        &self,
+        dst: &mut OwnedVector,
+        sel: &SelectionVector,
+        src_count: u64,
+        src_offset: u64,
+        dst_offset: u64,
+    ) -> Result<()> {
+        if sel.len() < src_count {
+            return Err(Error::Engine(EngineError::unavailable(Some(format!(
+                "selection length {} is smaller than src_count {src_count}",
+                sel.len()
+            )))));
+        }
+        // SAFETY: `self.ptr`/`dst.ptr` are valid vectors of the same type; `sel` has at
+        // least `src_count` indices (checked above); the offsets/count are copied by
+        // value and DuckDB bounds them against the vectors' own capacities.
+        unsafe {
+            duckdb_vector_copy_sel(
+                self.ptr,
+                dst.ptr,
+                sel.raw(),
+                src_count as idx_t,
+                src_offset as idx_t,
+                dst_offset as idx_t,
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Drop for OwnedVector {
@@ -147,8 +209,37 @@ impl Drop for OwnedVector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ffi::{duckdb_validity_row_is_valid, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER};
+    use crate::ffi::{
+        duckdb_validity_row_is_valid, duckdb_vector_get_data, DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
+    };
     use crate::types::TypeInfo;
+
+    /// Writes `values` into an `INTEGER` vector's flat data buffer.
+    fn write_i32s(
+        v: &mut OwnedVector,
+        values: &[i32],
+    ) {
+        // SAFETY: `v` is a valid INTEGER vector with capacity >= values.len(); its data
+        // buffer holds `i32` inline, so writing `values.len()` in-bounds `i32`s is sound.
+        unsafe {
+            let data = duckdb_vector_get_data(v.raw_mut()) as *mut i32;
+            for (i, &val) in values.iter().enumerate() {
+                *data.add(i) = val;
+            }
+        }
+    }
+
+    /// Reads `n` `i32`s out of a vector's flat data buffer.
+    fn read_i32s(
+        v: &mut OwnedVector,
+        n: usize,
+    ) -> Vec<i32> {
+        // SAFETY: `v` is a valid INTEGER vector with at least `n` rows written.
+        unsafe {
+            let data = duckdb_vector_get_data(v.raw_mut()) as *const i32;
+            (0..n).map(|i| *data.add(i)).collect()
+        }
+    }
 
     #[test]
     fn creates_and_reports_its_type() {
@@ -193,5 +284,51 @@ mod tests {
         assert!(!is_valid(&mut v, 0), "row 0 is NULL");
         v.set_row_valid(0);
         assert!(is_valid(&mut v, 0), "row 0 is valid again");
+    }
+
+    #[test]
+    fn copy_sel_picks_selected_rows_into_the_destination() {
+        use crate::raw::selection_vector::SelectionVector;
+        let ty = LogicalType::of::<i32>().unwrap();
+        let mut src = OwnedVector::new(&ty, 4).unwrap();
+        write_i32s(&mut src, &[10, 20, 30, 40]);
+        let mut dst = OwnedVector::new(&ty, 4).unwrap();
+
+        // Pick rows 3 and 1 of src into dst[0], dst[1].
+        let mut sel = SelectionVector::new(2).unwrap();
+        sel.set(0, 3);
+        sel.set(1, 1);
+        src.copy_sel_into(&mut dst, &sel, 2, 0, 0).unwrap();
+        assert_eq!(read_i32s(&mut dst, 2), vec![40, 20]);
+
+        // A selection shorter than src_count is rejected before the FFI call.
+        assert!(src.copy_sel_into(&mut dst, &sel, 3, 0, 0).is_err());
+    }
+
+    #[test]
+    fn slice_reorders_the_vector_in_place() {
+        use crate::raw::selection_vector::SelectionVector;
+        let ty = LogicalType::of::<i32>().unwrap();
+        let mut v = OwnedVector::new(&ty, 4).unwrap();
+        write_i32s(&mut v, &[10, 20, 30, 40]);
+
+        // Reverse the four rows: v[i] becomes original[3 - i].
+        let mut rev = SelectionVector::new(4).unwrap();
+        for i in 0..4u64 {
+            rev.set(i, (3 - i) as u32);
+        }
+        v.slice(&rev, 4).unwrap();
+
+        // The sliced (dictionary) vector's logical values, copied out flat, are reversed.
+        let mut flat = OwnedVector::new(&ty, 4).unwrap();
+        let mut identity = SelectionVector::new(4).unwrap();
+        for i in 0..4u64 {
+            identity.set(i, i as u32);
+        }
+        v.copy_sel_into(&mut flat, &identity, 4, 0, 0).unwrap();
+        assert_eq!(read_i32s(&mut flat, 4), vec![40, 30, 20, 10]);
+
+        // `len` beyond the selection is rejected.
+        assert!(v.slice(&rev, 5).is_err());
     }
 }

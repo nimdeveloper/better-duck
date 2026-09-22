@@ -13,5 +13,6 @@ pub(crate) mod pending;
 pub mod profiling;
 pub mod result;
 pub mod row;
+pub mod selection_vector;
 pub(crate) mod statement;
 pub mod table_description;

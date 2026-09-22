@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 323,
-  "expected_pending": 76,
+  "expected_production_used": 328,
+  "expected_pending": 71,
   "methods": [
     {
       "category": "Open Connect",
@@ -2447,18 +2447,22 @@
     {
       "category": "Vector Interface",
       "symbol": "duckdb_slice_vector",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_vector.rs"
+      ]
     },
     {
       "category": "Vector Interface",
       "symbol": "duckdb_vector_copy_sel",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_vector.rs"
+      ]
     },
     {
       "category": "Vector Interface",
@@ -2779,26 +2783,32 @@
     {
       "category": "Selection Vector Interface",
       "symbol": "duckdb_create_selection_vector",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/selection_vector.rs"
+      ]
     },
     {
       "category": "Selection Vector Interface",
       "symbol": "duckdb_destroy_selection_vector",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/selection_vector.rs"
+      ]
     },
     {
       "category": "Selection Vector Interface",
       "symbol": "duckdb_selection_vector_get_data_ptr",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "V4",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/selection_vector.rs"
+      ]
     },
     {
       "category": "Aggregate Functions",

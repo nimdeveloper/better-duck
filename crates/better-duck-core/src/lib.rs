@@ -83,6 +83,8 @@ pub use raw::owned_value::OwnedValue;
 
 pub use raw::owned_vector::OwnedVector;
 
+pub use raw::selection_vector::SelectionVector;
+
 #[cfg(feature = "udf")]
 pub use raw::expression::Expression;
 /// An owned, thread-safe, fully materialized query result.
