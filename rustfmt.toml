@@ -1,36 +1,30 @@
 # rustfmt.toml
+#
+# Stable-channel options only. This project builds and formats on stable Rust, where
+# rustfmt ignores nightly-only options (and warns about them). Every option below is
+# accepted on the stable channel, so `cargo fmt` runs cleanly with no warnings.
+#
+# Nightly-only options that were previously listed here (and silently ignored on stable)
+# have been removed: wrap_comments, comment_width, format_code_in_doc_comments,
+# imports_granularity, group_imports, condense_wildcard_suffixes, overflow_delimited_expr,
+# where_single_line, control_brace_style, match_arm_blocks, error_on_line_overflow, and
+# the unrecognised license_template_path / reorder_imports_in_group. To use any of those,
+# run `cargo +nightly fmt` with them re-added locally.
 
-# Maximum line width (community standard)
+# Maximum line width (community standard).
 max_width = 100
 
-# Indentation
+# Indentation.
 tab_spaces = 4
 
-# Import organization
-imports_granularity = "Crate"  # Group imports from same crate together
-group_imports = "StdExternalCrate"  # Order: std > external > current crate
+# Sort `use` declarations within each import block.
 reorder_imports = true
-reorder_imports_in_group = true
 
-# Formatting heuristics
-use_small_heuristics = "Max"     # Prefer compact formatting where possible
-condense_wildcard_suffixes = true # Format `_..` as `..`
-overflow_delimited_expr = true    # Improve delimited expression formatting
+# Prefer compact formatting where it fits within max_width.
+use_small_heuristics = "Max"
 
-# Function styling
-fn_params_layout = "Vertical"     # Always break function params if multiline
-where_single_line = false          # Always break `where` clauses
+# Always lay out multiline function parameters vertically.
+fn_params_layout = "Vertical"
 
-# Control flow
-control_brace_style = "AlwaysSameLine"  # K&R-style braces
-match_arm_blocks = true            # Newline between match arms with blocks
-match_block_trailing_comma = true  # Trailing comma in multi-line match blocks
-
-# Comments
-wrap_comments = true              # Rewrap comments to max_width
-format_code_in_doc_comments = true # Format code blocks in docs
-comment_width = 80                # Wrap comments at 80 columns
-
-# Advanced
-error_on_line_overflow = false    # Don't fail on long lines (warn only)
-license_template_path = "LICENSE_HEADER" # File with license header
+# Keep a trailing comma after a block-bodied match arm.
+match_block_trailing_comma = true
