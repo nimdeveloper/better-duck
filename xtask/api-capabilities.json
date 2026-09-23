@@ -3,7 +3,7 @@
   "api_version": "1.5.5",
   "expected_total": 403,
   "expected_production_used": 393,
-  "expected_pending": 6,
+  "expected_pending": 0,
   "methods": [
     {
       "category": "Open Connect",
@@ -38,10 +38,12 @@
     {
       "category": "Open Connect",
       "symbol": "duckdb_open",
-      "current_state": "pending",
+      "current_state": "safe_alternative",
       "target_disposition": "safe_alternative",
-      "owner_task": "R3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "Superseded by the strictly more capable duckdb_open_ext path (config + error message), which RawDatabase::open_with_flags uses for every open. Retained as a documented safe alternative; not called from production (only a doc example and a test)."
+      ]
     },
     {
       "category": "Open Connect",
@@ -367,10 +369,12 @@
     {
       "category": "Helpers",
       "symbol": "duckdb_malloc",
-      "current_state": "pending",
+      "current_state": "safe_alternative",
       "target_disposition": "safe_alternative",
-      "owner_task": "R3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "This driver owns all its buffers with Rust Box/Vec and never needs DuckDB's allocator for memory it manages; the only DuckDB-allocated pointers it receives are freed with the matching duckdb_free. Retained as a documented safe alternative, not called from production."
+      ]
     },
     {
       "category": "Helpers",
@@ -407,10 +411,12 @@
     {
       "category": "Helpers",
       "symbol": "duckdb_string_is_inlined",
-      "current_state": "pending",
+      "current_state": "safe_alternative",
       "target_disposition": "safe_alternative",
-      "owner_task": "R3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "String length + duckdb_string_t_data (both production_used) already abstract the inline/heap string_t layout without exposing the is-inlined predicate; the length-aware readers cover every read. Retained as a documented safe alternative, not called from production."
+      ]
     },
     {
       "category": "Helpers",
@@ -976,10 +982,12 @@
     {
       "category": "Bind Values to Prepared Statements",
       "symbol": "duckdb_bind_varchar",
-      "current_state": "pending",
+      "current_state": "safe_alternative",
       "target_disposition": "safe_alternative",
-      "owner_task": "R3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "Superseded by the length-aware duckdb_bind_varchar_length (production_used), which preserves interior NULs and exact lengths; the NUL-terminated bind truncates at an interior NUL. Retained as a documented safe alternative, not called from production."
+      ]
     },
     {
       "category": "Bind Values to Prepared Statements",
@@ -2726,10 +2734,12 @@
     {
       "category": "Scalar Functions",
       "symbol": "duckdb_register_scalar_function",
-      "current_state": "pending",
+      "current_state": "safe_alternative",
       "target_disposition": "safe_alternative",
-      "owner_task": "R3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "Superseded by one-member function-set registration (duckdb_register_scalar_function_set, production_used): every scalar UDF is registered as a set so overloads share one path. Retained as a documented safe alternative, not called from production."
+      ]
     },
     {
       "category": "Scalar Functions",
@@ -3781,10 +3791,12 @@
     {
       "category": "Appender",
       "symbol": "duckdb_append_varchar",
-      "current_state": "pending",
+      "current_state": "safe_alternative",
       "target_disposition": "safe_alternative",
-      "owner_task": "R3",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "Superseded by the length-aware duckdb_append_varchar_length (production_used), which preserves interior NULs and exact lengths; the NUL-terminated append truncates at an interior NUL. Retained as a documented safe alternative, not called from production."
+      ]
     },
     {
       "category": "Appender",
