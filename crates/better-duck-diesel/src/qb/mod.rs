@@ -48,12 +48,6 @@ impl QueryBuilder<DuckDb> for DuckDbQueryBuilder {
     }
 }
 
-//
-//
-// TODO: Check below
-//
-//
-
 /// A helper for concatenating multiple things separated by a delimiter
 #[derive(Debug, Default)]
 pub struct Comma<'a, T> {

@@ -127,6 +127,43 @@ impl Connection {
         self.0.query(sql).map(|_| ())
     }
 
+    /// Parses a (possibly multi-statement) SQL string into a batch of individually
+    /// preparable statements.
+    ///
+    /// DuckDB performs the parsing — there is no Rust-side statement splitting, so
+    /// semicolons inside string literals, comments, or dollar-quoted bodies do not
+    /// cause a false split. Each statement in the returned
+    /// [`ExtractedStatements`](crate::raw::extracted::ExtractedStatements) batch is
+    /// prepared on demand via
+    /// [`prepare`](crate::raw::extracted::ExtractedStatements::prepare).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `sql` contains an interior nul byte, or if DuckDB cannot
+    /// parse the batch.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use better_duck_core::connection::Connection;
+    /// # fn main() -> better_duck_core::error::Result<()> {
+    /// let conn = Connection::open_in_memory()?;
+    /// let batch = conn.extract_statements("SELECT 1 AS a; SELECT 2 AS b")?;
+    /// assert_eq!(batch.len(), 2);
+    /// let mut second = batch.prepare(1)?;
+    /// let mut rows = second.execute()?;
+    /// assert!(rows.next().is_some());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use = "extract_statements returns a batch; prepare its statements to run them"]
+    pub fn extract_statements(
+        &self,
+        sql: impl AsRef<str>,
+    ) -> Result<crate::raw::extracted::ExtractedStatements> {
+        self.0.extract_statements(sql)
+    }
+
     /// Prepares and executes a SQL statement, returning the result.
     ///
     /// Works for all statement types:
@@ -160,6 +197,41 @@ impl Connection {
         sql: impl AsRef<str>,
     ) -> Result<DuckResult> {
         self.0.execute(sql, &mut [])
+    }
+
+    /// Prepares `sql`, binds each value in `values` as consecutive positional
+    /// parameters (`$1`, `$2`, …), and executes the statement once.
+    ///
+    /// All values share a single type `T`, so this suits a parameterized DML
+    /// statement filled from a homogeneous iterator. For heterogeneous binds use
+    /// [`execute_with`](Connection::execute_with).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if preparation, binding, or execution fails, or if the
+    /// statement reports that no rows changed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use better_duck_core::connection::Connection;
+    /// # fn main() -> better_duck_core::error::Result<()> {
+    /// let mut conn = Connection::open_in_memory()?;
+    /// conn.execute("CREATE TABLE t (a INTEGER, b INTEGER)")?;
+    /// conn.insert::<i32, _>("INSERT INTO t VALUES ($1, $2)", [10, 20])?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use = "insert result should be checked"]
+    pub fn insert<T: AppendAble, I>(
+        &mut self,
+        sql: &str,
+        values: I,
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = T>,
+    {
+        self.0.insert(sql, values)
     }
 
     /// Prepares and executes a parameterized SQL statement, returning the result.

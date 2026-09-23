@@ -164,8 +164,7 @@ impl DuckDialect for DuckUnion {
         // path (which has the vector's logical type) builds a `DuckUnion` directly in
         // `types::union::read_union` instead.
         Err(DuckDBConversionError::ConversionError(
-            "reconstructing a standalone UNION value requires owned-value introspection"
-                .to_owned(),
+            "reconstructing a standalone UNION value requires owned-value introspection".to_owned(),
         ))
     }
 

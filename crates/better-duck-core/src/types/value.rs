@@ -923,13 +923,11 @@ impl DuckValue {
             DUCKDB_TYPE_DUCKDB_TYPE_TIME_TZ => {
                 #[cfg(feature = "chrono")]
                 {
-                    // TODO: preserve TIME_TZ offset (the UTC offset is currently dropped)
                     read_packed!(val, row_idx, duckdb_time_tz, crate::types::date_chrono::TimeTz)
                         .map(DuckValue::TimeTz)
                 }
                 #[cfg(not(feature = "chrono"))]
                 {
-                    // TODO: preserve TIME_TZ offset (the UTC offset is currently dropped)
                     read_packed!(
                         val,
                         row_idx,

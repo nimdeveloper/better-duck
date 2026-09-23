@@ -523,7 +523,6 @@ impl RawConnection {
     ///
     /// Returns an error if `sql` contains a nul byte or cannot be parsed.
     #[must_use = "extract_statements returns a batch; prepare its statements to run them"]
-    #[allow(unused)]
     pub fn extract_statements(
         &self,
         sql: impl AsRef<str>,
@@ -591,7 +590,6 @@ impl RawConnection {
     ///
     /// Returns an error if the statement fails to execute or if no rows were inserted.
     #[must_use = "insert result should be checked"]
-    #[allow(unused)]
     pub fn insert<T: AppendAble, I>(
         &mut self,
         sql: &str,

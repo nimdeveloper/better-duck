@@ -469,10 +469,13 @@ pub struct CachedStatement {
     /// other direction: that opens a separate DuckDB connection, which would silently
     /// run cached statements outside the caller's transaction.
     _connection: Arc<ConnectionInner>,
-    /// SQL source retained for statement-cache key comparisons.
+    /// The SQL text this statement was prepared from, retained alongside the handle.
     ///
-    /// Not read within `better-duck-core` itself; consumed by
-    /// `StatementCache` implementation in `better-duck-diesel`.
+    /// This is `pub(crate)`, so it is not visible outside `better-duck-core`. The
+    /// Diesel `StatementCache` keys its entries by its own query fragment and passes
+    /// the SQL *into* [`prepare`](CachedStatement::prepare) rather than reading it
+    /// back from here. Within the crate it is currently only inspected by tests,
+    /// hence `#[allow(dead_code)]` for non-test builds.
     #[allow(dead_code)]
     pub(crate) sql: Box<str>,
     /// Raw prepared-statement handle.
@@ -536,7 +539,6 @@ impl CachedStatement {
     /// # Errors
     ///
     /// Returns an error if DuckDB cannot create the pending result.
-    #[allow(dead_code)]
     pub fn pending(&self) -> Result<crate::raw::pending::PendingResult<'_>> {
         crate::raw::pending::PendingResult::new(self)
     }
@@ -869,6 +871,16 @@ mod tests {
         let mut second = CheckedI32(200);
         stmt.bind(1, &mut second).unwrap();
         assert_single_value(stmt.execute().unwrap(), "value", DuckValue::Int(200));
+    }
+
+    #[test]
+    fn borrowing_pending_execution_runs_the_statement() {
+        // `pending()` borrows the statement (unlike `into_pending`, which consumes
+        // it) and drives the query to completion via `execute()`.
+        let con = get_test_connection();
+        let stmt = CachedStatement::prepare(&con, "SELECT 1 AS v").unwrap();
+        let result = stmt.pending().unwrap().execute().unwrap();
+        assert_single_value(result, "v", DuckValue::Int(1));
     }
 
     #[test]

@@ -89,7 +89,6 @@ impl ExtractedStatements {
 
     /// The number of statements parsed from the query.
     #[must_use]
-    #[allow(dead_code)]
     pub fn len(&self) -> u64 {
         self.count
     }
@@ -100,7 +99,6 @@ impl ExtractedStatements {
     /// error by [`extract`](ExtractedStatements::extract) — but provided so the
     /// type satisfies the usual `len`/`is_empty` pairing.
     #[must_use]
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
@@ -112,7 +110,6 @@ impl ExtractedStatements {
     ///
     /// [`Error::DuckDBFailure`] if `index` is out of range, or if DuckDB fails to
     /// prepare the statement.
-    #[allow(dead_code)]
     pub fn prepare(
         &self,
         index: u64,
