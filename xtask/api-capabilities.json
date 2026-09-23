@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 380,
-  "expected_pending": 19,
+  "expected_production_used": 393,
+  "expected_pending": 6,
   "methods": [
     {
       "category": "Open Connect",
@@ -1560,18 +1560,22 @@
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_hugeint",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_uhugeint",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
@@ -1617,82 +1621,102 @@
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_date",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_time",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_time_ns",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_time_tz",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_timestamp",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_timestamp_tz",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_timestamp_s",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_timestamp_ms",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_timestamp_ns",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_interval",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
@@ -1702,6 +1726,7 @@
       "owner_task": null,
       "evidence": [
         "crates/better-duck-core/src/raw/expression.rs",
+        "crates/better-duck-core/src/raw/owned_value.rs",
         "crates/better-duck-core/src/types/duck_enum.rs"
       ]
     },
@@ -1728,10 +1753,12 @@
     {
       "category": "Value Interface",
       "symbol": "duckdb_get_uuid",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T10",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/raw/owned_value.rs"
+      ]
     },
     {
       "category": "Value Interface",
@@ -2031,6 +2058,7 @@
       "owner_task": null,
       "evidence": [
         "crates/better-duck-core/src/raw/expression.rs",
+        "crates/better-duck-core/src/raw/owned_value.rs",
         "crates/better-duck-core/src/types/array.rs",
         "crates/better-duck-core/src/types/duck_struct.rs",
         "crates/better-duck-core/src/types/logical_type.rs",
