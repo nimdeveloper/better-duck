@@ -1,0 +1,10 @@
+[package]
+name = "ex23-diesel-pool"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+better-duck-diesel = { workspace = true }
+diesel = { workspace = true }
+tempfile = { workspace = true }

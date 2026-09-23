@@ -2,6 +2,9 @@
 [workspace]
 resolver = "2"
 members = ["crates/better-duck-core", "crates/better-duck-diesel", "crates/better-duck-macros", "crates/better-duck-sys", "xtask"]
+# The example suite is its own detached workspace (examples/Cargo.toml) so its feature
+# sets never unify with the library's build/test gate. Keep it out of this workspace.
+exclude = ["examples"]
 
 [workspace.package]
 version       = "0.1.0-beta.4"

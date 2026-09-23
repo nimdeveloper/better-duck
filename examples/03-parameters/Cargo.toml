@@ -1,0 +1,9 @@
+[package]
+name = "ex03-parameters"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+better-duck-core = { workspace = true }
+common = { workspace = true }

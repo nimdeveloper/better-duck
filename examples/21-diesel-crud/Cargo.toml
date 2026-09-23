@@ -1,0 +1,9 @@
+[package]
+name = "ex21-diesel-crud"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+better-duck-diesel = { workspace = true }
+diesel = { workspace = true }

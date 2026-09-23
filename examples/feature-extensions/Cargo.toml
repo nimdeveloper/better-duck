@@ -1,0 +1,11 @@
+[workspace]
+
+[package]
+name = "feat-extensions"
+edition = "2021"
+version = "0.0.0"
+publish = false
+
+[dependencies]
+better-duck-core = { path = "../../crates/better-duck-core", default-features = false, features = ["chrono", "decimal", "json", "parquet"] }
+tempfile = "3.27.0"

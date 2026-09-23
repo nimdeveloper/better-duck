@@ -1,0 +1,13 @@
+[workspace]
+
+[package]
+name = "feat-native-datetime"
+edition = "2021"
+version = "0.0.0"
+publish = false
+
+[dependencies]
+better-duck-core = { path = "../../crates/better-duck-core", default-features = false, features = ["decimal"] }
+better-duck-diesel = { path = "../../crates/better-duck-diesel", default-features = false, features = ["decimal"] }
+diesel = { version = "2.3.11", default-features = false, features = ["i-implement-a-third-party-backend-and-opt-into-breaking-changes", "uuid"] }
+tempfile = "3.27.0"

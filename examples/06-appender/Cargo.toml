@@ -1,0 +1,9 @@
+[package]
+name = "ex06-appender"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+better-duck-core = { workspace = true }
+common = { workspace = true }

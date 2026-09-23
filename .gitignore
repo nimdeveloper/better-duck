@@ -8,3 +8,5 @@
 # deliverable itself (docs/benchmarks/{results.json,REPORT.md,*.svg} are).
 /docs/benchmarks/_raw_core.json
 /docs/benchmarks/_raw_reference.json
+/examples/*/target
+/examples/target

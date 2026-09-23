@@ -1,0 +1,12 @@
+[package]
+name = "ex22-diesel-types"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+better-duck-diesel = { workspace = true }
+better-duck-core = { workspace = true }
+diesel = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }

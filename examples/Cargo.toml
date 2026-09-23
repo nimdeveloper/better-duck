@@ -1,0 +1,28 @@
+# Detached workspace for the better-duck example suite.
+#
+# This is intentionally NOT a member of the root workspace (the root excludes it), so its
+# feature set never unifies with the library's build/test gate. Group crates are named
+# `NN-topic` and are members via the glob below. The `feature-*` crates are their OWN
+# detached workspaces (mutually-exclusive feature sets) and are excluded here.
+[workspace]
+resolver = "2"
+members = ["common", "[0-9]*-*"]
+exclude = ["feature-native-datetime", "feature-minimal", "feature-extensions"]
+
+[workspace.package]
+edition = "2021"
+version = "0.0.0"
+publish = false
+
+[workspace.dependencies]
+# The additive superset used by every non-feature-fork group. chrono + decimal are the
+# "default side" of the two exclusive forks; pool/async/udf are purely additive.
+better-duck-core = { path = "../crates/better-duck-core", default-features = false, features = ["chrono", "decimal", "pool", "async", "udf"] }
+better-duck-diesel = { path = "../crates/better-duck-diesel", default-features = false, features = ["chrono", "decimal", "r2d2"] }
+diesel = { version = "2.3.11", default-features = false, features = ["i-implement-a-third-party-backend-and-opt-into-breaking-changes", "uuid", "chrono", "r2d2"] }
+common = { path = "common" }
+tokio = { version = "1.52.4", features = ["rt-multi-thread", "macros", "time"] }
+chrono = { version = "0.4.45", default-features = false }
+rust_decimal = { version = "1.42.1", default-features = false }
+uuid = "1.24.0"
+tempfile = "3.27.0"

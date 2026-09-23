@@ -1,0 +1,11 @@
+[package]
+name = "ex05-types"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+better-duck-core = { workspace = true }
+common = { workspace = true }
+rust_decimal = { workspace = true }
+chrono = { workspace = true }

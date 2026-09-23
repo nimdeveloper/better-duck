@@ -1,0 +1,10 @@
+[workspace]
+
+[package]
+name = "feat-minimal"
+edition = "2021"
+version = "0.0.0"
+publish = false
+
+[dependencies]
+better-duck-core = { path = "../../crates/better-duck-core", default-features = false }
