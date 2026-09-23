@@ -2,8 +2,8 @@
   "schema_version": 1,
   "api_version": "1.5.5",
   "expected_total": 403,
-  "expected_production_used": 371,
-  "expected_pending": 28,
+  "expected_production_used": 374,
+  "expected_pending": 25,
   "methods": [
     {
       "category": "Open Connect",
@@ -598,18 +598,22 @@
     {
       "category": "Decimal Helpers",
       "symbol": "duckdb_double_to_decimal",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T8",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/decimal.rs"
+      ]
     },
     {
       "category": "Decimal Helpers",
       "symbol": "duckdb_decimal_to_double",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T8",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/decimal.rs"
+      ]
     },
     {
       "category": "Prepared Statements",
@@ -836,10 +840,12 @@
     {
       "category": "Bind Values to Prepared Statements",
       "symbol": "duckdb_bind_decimal",
-      "current_state": "pending",
+      "current_state": "production_used",
       "target_disposition": "production_used",
-      "owner_task": "T8",
-      "evidence": []
+      "owner_task": null,
+      "evidence": [
+        "crates/better-duck-core/src/types/decimal.rs"
+      ]
     },
     {
       "category": "Bind Values to Prepared Statements",

@@ -17,8 +17,9 @@ use crate::{
     error::{DuckDBConversionError, Result},
     ffi::{
         duckdb_create_decimal, duckdb_create_decimal_type, duckdb_create_logical_type,
-        duckdb_decimal, duckdb_decimal_scale, duckdb_decimal_width, duckdb_get_decimal,
-        duckdb_logical_type, duckdb_value, DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
+        duckdb_decimal, duckdb_decimal_scale, duckdb_decimal_to_double, duckdb_decimal_width,
+        duckdb_double_to_decimal, duckdb_get_decimal, duckdb_logical_type, duckdb_value,
+        DUCKDB_TYPE_DUCKDB_TYPE_DECIMAL,
     },
     types::{
         appendable::AppendAble,
@@ -105,6 +106,50 @@ impl DuckDecimal {
         }
         Ok(lt)
     }
+
+    /// Converts an `f64` to a `DECIMAL(width, scale)` via DuckDB's own rounding
+    /// (`duckdb_double_to_decimal`).
+    ///
+    /// DuckDB rounds `value` to `scale` fractional digits. A non-finite input
+    /// (`NaN`/`±∞`) or a magnitude that does not fit the declared `width` cannot be
+    /// represented and is rejected here rather than silently truncated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuckDBConversionError::ConversionError`] if `width`/`scale` are out
+    /// of range, `value` is non-finite, or the rounded result overflows `width`.
+    pub fn from_double(
+        value: f64,
+        width: u8,
+        scale: u8,
+    ) -> Result<DuckDecimal, DuckDBConversionError> {
+        if !value.is_finite() {
+            return Err(DuckDBConversionError::ConversionError(format!(
+                "cannot represent non-finite value {value} as DECIMAL"
+            )));
+        }
+        // Validate width/scale up front with the same bounds `new` enforces.
+        let _ = DuckDecimal::new(0, width, scale)?;
+        // SAFETY: `width`/`scale` are validated above; `value` is finite.
+        let raw = unsafe { duckdb_double_to_decimal(value, width, scale) };
+        // DuckDB signals an unrepresentable magnitude with a zeroed width; guard it.
+        if raw.width == 0 {
+            return Err(DuckDBConversionError::ConversionError(format!(
+                "{value} does not fit in DECIMAL({width}, {scale})"
+            )));
+        }
+        DuckDecimal::from_ffi(raw)
+    }
+
+    /// Converts this `DECIMAL` to the nearest `f64` (`duckdb_decimal_to_double`).
+    ///
+    /// This is lossy for magnitudes or precisions beyond `f64`'s 53-bit significand;
+    /// use the mantissa/scale fields directly when exactness matters.
+    #[must_use]
+    pub fn to_double(self) -> f64 {
+        // SAFETY: `to_ffi` yields a fully initialised `duckdb_decimal`.
+        unsafe { duckdb_decimal_to_double(self.to_ffi()) }
+    }
 }
 
 /// Reads the declared width of a DECIMAL logical type.
@@ -168,9 +213,13 @@ impl AppendAble for DuckDecimal {
         idx: u64,
         stmt: crate::ffi::duckdb_prepared_statement,
     ) -> Result<()> {
-        let dv = self.to_duck().map_err(crate::error::Error::ConversionError)?;
-        // SAFETY: `stmt`/`idx` are valid; `dv` is an owned value bound and destroyed here.
-        unsafe { crate::types::appendable::bind_owned_value(stmt, idx, dv) }
+        // Bind through DuckDB's dedicated DECIMAL bind, preserving width/scale exactly
+        // (rather than the generic value path).
+        // SAFETY: `stmt` is a valid prepared statement; `idx` is a 1-based parameter
+        // index; `to_ffi()` yields a fully initialised `duckdb_decimal` with validated
+        // width/scale.
+        let rc = unsafe { crate::ffi::duckdb_bind_decimal(stmt, idx, self.to_ffi()) };
+        crate::helpers::duck_result::check_state(rc)
     }
 }
 
@@ -242,6 +291,27 @@ mod tests {
         assert!(DuckDecimal::new(0, 5, 6).is_err(), "scale > width rejected");
         let d = DuckDecimal::new(123456, 6, 2).unwrap();
         assert_eq!((d.value, d.width, d.scale), (123456, 6, 2));
+    }
+
+    #[test]
+    fn double_to_decimal_rounds_to_scale() {
+        // 12.345 into DECIMAL(6,2) rounds to 12.35 (mantissa 1235).
+        let d = DuckDecimal::from_double(12.345, 6, 2).unwrap();
+        assert_eq!((d.value, d.width, d.scale), (1235, 6, 2));
+    }
+
+    #[test]
+    fn double_to_decimal_rejects_non_finite_and_overflow() {
+        assert!(DuckDecimal::from_double(f64::NAN, 6, 2).is_err(), "NaN rejected");
+        assert!(DuckDecimal::from_double(f64::INFINITY, 6, 2).is_err(), "inf rejected");
+        // 12345.6 needs 5 integer digits but DECIMAL(4,1) allows only 3 → overflow.
+        assert!(DuckDecimal::from_double(12345.6, 4, 1).is_err(), "magnitude overflow rejected");
+    }
+
+    #[test]
+    fn decimal_to_double_reverses_the_scale() {
+        let d = DuckDecimal::new(1235, 6, 2).unwrap();
+        assert!((d.to_double() - 12.35).abs() < 1e-9, "12.35, got {}", d.to_double());
     }
 
     #[test]
