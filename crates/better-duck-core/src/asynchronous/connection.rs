@@ -237,14 +237,7 @@ impl AsyncConnection {
             // alongside the resulting state.
             let (next, returned) = self
                 .dispatch(move || {
-                    let mut state = pending.execute_task();
-                    // On a multi-threaded build, `execute_task` can keep reporting
-                    // `NoTasksAvailable` while background workers run the query and never
-                    // itself return `Ready`; consult the authoritative state so the loop
-                    // terminates instead of yielding forever.
-                    if matches!(state, PendingState::NoTasksAvailable) {
-                        state = pending.check_state();
-                    }
+                    let state = pending.execute_task();
                     (state, pending)
                 })
                 .await?;
@@ -252,9 +245,18 @@ impl AsyncConnection {
 
             match next {
                 PendingState::Ready => break,
-                PendingState::NotReady | PendingState::NoTasksAvailable => {
-                    // Yield so the runtime can poll other tasks / observe a drop.
+                PendingState::NotReady => {
+                    // This thread has more of the query to run; yield so the runtime
+                    // can poll other tasks / observe a drop, then step again.
                     tokio::task::yield_now().await;
+                },
+                PendingState::NoTasksAvailable => {
+                    // No task for this thread — the pipeline is owned by background
+                    // workers, or the query is trivial and only finalises in `execute`.
+                    // Stepping would never itself report `Ready` in that case, so stop
+                    // and let `execute` below drive it to completion; cancellation is
+                    // still honoured by the interrupt-on-drop guard around that dispatch.
+                    break;
                 },
                 PendingState::Error => {
                     // Surface DuckDB's error; `execute` below would also, but this

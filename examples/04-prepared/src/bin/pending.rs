@@ -18,14 +18,19 @@ fn main() -> Result<()> {
     let mut steps = 0u32;
     loop {
         let state = pending.execute_task();
-        steps += 1;
-        if state.is_finished() || matches!(state, PendingState::Error) {
+        // Stop stepping once the query is ready, errors, or its remaining work is owned
+        // by background workers (`NoTasksAvailable` — stepping would never itself reach
+        // `Ready` then). `execute()` below finalizes it regardless; this loop just shows
+        // cooperative task stepping.
+        if matches!(
+            state,
+            PendingState::Ready | PendingState::Error | PendingState::NoTasksAvailable
+        ) {
             break;
         }
-        // On a multi-threaded build, execute_task can report NoTasksAvailable while
-        // background workers run the query; check_state is the authoritative readiness.
-        if matches!(state, PendingState::NoTasksAvailable) && pending.check_state().is_finished() {
-            break;
+        steps += 1;
+        if steps > 100_000 {
+            break; // safety bound; a real query finishes in far fewer steps
         }
     }
     show("tasks stepped", steps);
@@ -35,12 +40,12 @@ fn main() -> Result<()> {
 
     section("OwnedPending: Send + 'static, no borrow of the statement");
     let mut owned = CachedStatement::prepare(conn.db(), "SELECT 42 AS v")?.into_pending()?;
-    loop {
+    for _ in 0..100_000 {
         let state = owned.execute_task();
-        if state.is_finished() {
-            break;
-        }
-        if matches!(state, PendingState::NoTasksAvailable) && owned.check_state().is_finished() {
+        if matches!(
+            state,
+            PendingState::Ready | PendingState::Error | PendingState::NoTasksAvailable
+        ) {
             break;
         }
     }
