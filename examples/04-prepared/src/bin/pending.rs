@@ -22,6 +22,11 @@ fn main() -> Result<()> {
         if state.is_finished() || matches!(state, PendingState::Error) {
             break;
         }
+        // On a multi-threaded build, execute_task can report NoTasksAvailable while
+        // background workers run the query; check_state is the authoritative readiness.
+        if matches!(state, PendingState::NoTasksAvailable) && pending.check_state().is_finished() {
+            break;
+        }
     }
     show("tasks stepped", steps);
     let row = pending.execute()?.next().expect("row")?;
@@ -30,7 +35,15 @@ fn main() -> Result<()> {
 
     section("OwnedPending: Send + 'static, no borrow of the statement");
     let mut owned = CachedStatement::prepare(conn.db(), "SELECT 42 AS v")?.into_pending()?;
-    while !owned.execute_task().is_finished() {}
+    loop {
+        let state = owned.execute_task();
+        if state.is_finished() {
+            break;
+        }
+        if matches!(state, PendingState::NoTasksAvailable) && owned.check_state().is_finished() {
+            break;
+        }
+    }
     let row = owned.execute()?.next().expect("row")?;
     assert_eq!(row.get("v"), Some(&DuckValue::Int(42)));
 

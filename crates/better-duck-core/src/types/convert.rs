@@ -4,12 +4,13 @@
 //! behaviour DuckDB uses internally, rather than a Rust re-implementation that might
 //! diverge at the boundaries:
 //!
-//! * 128-bit ↔ `f64`: [`hugeint_to_double`]/[`double_to_hugeint`] and the unsigned
-//!   [`uhugeint_to_double`]/[`double_to_uhugeint`]. DuckDB returns `0` when a double
+//! * 128-bit ↔ `f64`: [`hugeint_to_double`](crate::hugeint_to_double)/[`double_to_hugeint`](crate::double_to_hugeint)
+//!   and the unsigned [`uhugeint_to_double`](crate::uhugeint_to_double)/[`double_to_uhugeint`](crate::double_to_uhugeint).
+//!   DuckDB returns `0` when a double
 //!   is too large to fit, and cannot represent a non-finite double, so the
 //!   double→int direction here rejects `NaN`/`±∞` and surfaces the overflow sentinel
 //!   as an error instead of silently yielding `0`.
-//! * `TIMESTAMP` ↔ broken-down parts: [`timestamp_micros_to_parts`] /
+//! * `TIMESTAMP` ↔ broken-down parts: [`timestamp_micros_to_parts`](crate::timestamp_micros_to_parts) /
 //!   [`parts_to_timestamp_micros`](crate::parts_to_timestamp_micros) via `duckdb_from_timestamp`/`duckdb_to_timestamp`.
 // FFI pointer args are used safely inside `unsafe` blocks.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
