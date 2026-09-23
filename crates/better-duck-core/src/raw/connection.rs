@@ -240,7 +240,8 @@ pub struct QueryProgress {
 
 /// A narrow, thread-safe handle for interrupting or observing one query.
 ///
-/// Minted by [`RawConnection::query_control`]. Unlike the connection itself,
+/// Minted by [`Connection::query_control`](crate::connection::Connection::query_control).
+/// Unlike the connection itself,
 /// `QueryControl` is `Clone + Send + Sync`: DuckDB explicitly permits
 /// `duckdb_interrupt` and `duckdb_query_progress` to be called from a *different*
 /// thread than the one running the query — that is their entire purpose. It

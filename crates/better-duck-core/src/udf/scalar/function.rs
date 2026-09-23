@@ -284,7 +284,7 @@ impl ScalarBindInfo {
     }
 
     /// The registration-time state stored via `set_extra_info`, readable at bind
-    /// time (the same value [`ScalarFunctionInfo::state`] exposes during execution).
+    /// time (the same value `ScalarFunctionInfo::state` exposes during execution).
     ///
     /// # Safety
     ///

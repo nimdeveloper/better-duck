@@ -453,7 +453,7 @@ impl Drop for Statement<'_> {
 /// doing so would execute outside any `BEGIN`/`ROLLBACK` the caller has open.
 ///
 /// The statement retains that connection, so it cannot outlive it. Unlike a
-/// [`Statement`], it carries no Rust lifetime, which lets it live in a
+/// `Statement`, it carries no Rust lifetime, which lets it live in a
 /// `StatementCache` alongside the connection it was prepared on.
 ///
 /// This type is used by Diesel statement cache

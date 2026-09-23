@@ -219,7 +219,7 @@ impl BindInfo {
         unsafe { duckdb_bind_get_parameter_count(self.ptr) }
     }
 
-    /// The [`ClientContext`] of the connection executing this bind, exposing its
+    /// The [`ClientContext`](crate::ClientContext) of the connection executing this bind, exposing its
     /// stable connection id. The returned context borrows `self`, so it cannot
     /// outlive the bind call. Returns `None` if no context is available.
     #[must_use]

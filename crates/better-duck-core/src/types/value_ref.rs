@@ -94,7 +94,7 @@ pub enum DuckValueRef<'a> {
     Date(crate::types::date_native::DuckDate),
 
     /// The value is a `DATE`/`TIMESTAMP` ±infinity sentinel — see
-    /// [`DuckValue::TemporalInfinity`](crate::types::value::DuckValue::TemporalInfinity).
+    /// [`DuckValue::TemporalInfinity`].
     /// Feature-independent (`Copy`, no chrono type).
     TemporalInfinity {
         /// Which temporal family this infinity belongs to.

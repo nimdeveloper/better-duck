@@ -10,7 +10,7 @@
 //!   double→int direction here rejects `NaN`/`±∞` and surfaces the overflow sentinel
 //!   as an error instead of silently yielding `0`.
 //! * `TIMESTAMP` ↔ broken-down parts: [`timestamp_micros_to_parts`] /
-//!   [`parts_to_timestamp_micros`] via `duckdb_from_timestamp`/`duckdb_to_timestamp`.
+//!   [`parts_to_timestamp_micros`](crate::parts_to_timestamp_micros) via `duckdb_from_timestamp`/`duckdb_to_timestamp`.
 // FFI pointer args are used safely inside `unsafe` blocks.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 

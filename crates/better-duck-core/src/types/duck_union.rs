@@ -11,7 +11,7 @@
 //!
 //! [`DuckUnion`] keeps the full ordered member schema, the selected tag, and the
 //! active value, so it round-trips as the *same* `UNION` via
-//! [`TypeInfo::to_logical_type`] + `duckdb_create_union_value`.
+//! `TypeInfo::to_logical_type` + `duckdb_create_union_value`.
 // FFI pointer args are used safely inside `unsafe` blocks.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
@@ -123,7 +123,7 @@ impl DuckUnion {
     /// # Errors
     ///
     /// Returns an error if DuckDB rejects the reconstructed member types (see
-    /// [`TypeInfo::to_logical_type`]).
+    /// `TypeInfo::to_logical_type`).
     pub(crate) fn logical_type(&self) -> Result<duckdb_logical_type, DuckDBConversionError> {
         let lt = TypeInfo::Union(self.members.to_vec()).to_logical_type()?;
         // Transfer ownership of the raw handle to the caller: `forget` skips the RAII

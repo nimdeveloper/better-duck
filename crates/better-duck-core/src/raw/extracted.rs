@@ -27,7 +27,8 @@ use crate::{
 
 /// A parsed batch of SQL statements, each preparable on demand.
 ///
-/// Produced by [`RawConnection::extract_statements`]. Owns the
+/// Produced by [`Connection::extract_statements`](crate::connection::Connection::extract_statements).
+/// Owns the
 /// `duckdb_extracted_statements` handle and destroys it in [`Drop`]; it retains
 /// the connection it parsed against (`Arc<ConnectionInner>`) so a statement
 /// prepared from it cannot outlive that connection — the same ownership rule as
@@ -96,7 +97,7 @@ impl ExtractedStatements {
     /// Returns `true` if no statements were parsed.
     ///
     /// Always `false` in practice — a zero-statement extract is reported as an
-    /// error by [`extract`](ExtractedStatements::extract) — but provided so the
+    /// error at extraction time — but provided so the
     /// type satisfies the usual `len`/`is_empty` pairing.
     #[must_use]
     pub fn is_empty(&self) -> bool {

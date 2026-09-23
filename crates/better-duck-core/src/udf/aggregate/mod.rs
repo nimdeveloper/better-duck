@@ -3,9 +3,9 @@
 //!
 //! An aggregate is defined by a per-group [`State`](VAggregate::State) and four
 //! callbacks — init, update, combine, finalize — plus a destructor. DuckDB allocates
-//! the raw state bytes uninitialised, so the state is wrapped in a [`RawState`] that
+//! the raw state bytes uninitialised, so the state is wrapped in a `RawState` that
 //! pairs the value with an `initialised` flag (a `MaybeUninit` guard), and every
-//! callback that runs user code is wrapped in [`contain_callback`] so a panic can
+//! callback that runs user code is wrapped in `contain_callback` so a panic can
 //! never cross the C boundary.
 
 mod function;

@@ -373,7 +373,7 @@ impl Appender {
     /// Appends a row to the table.
     ///
     /// Opens a row (`duckdb_appender_begin_row`), appends the value, then closes it
-    /// (`duckdb_appender_end_row`). A [`RowGuard`] closes the row even if appending
+    /// (`duckdb_appender_end_row`). A `RowGuard` closes the row even if appending
     /// the value returns early or panics, so a half-written row can never bleed into
     /// the next call.
     ///
