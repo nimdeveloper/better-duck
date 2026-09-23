@@ -79,11 +79,17 @@ pub use raw::profiling::ProfilingNode;
 
 pub use raw::client_context::ClientContext;
 
-pub use raw::owned_value::OwnedValue;
+pub use raw::owned_value::{IntervalParts, OwnedValue};
 
 pub use raw::owned_vector::OwnedVector;
 
 pub use raw::selection_vector::SelectionVector;
+
+/// Numeric/temporal conversion helpers backed by DuckDB's own routines.
+pub use types::convert::{
+    double_to_hugeint, double_to_uhugeint, hugeint_to_double, parts_to_timestamp_micros,
+    timestamp_micros_to_parts, uhugeint_to_double, TimestampParts,
+};
 
 pub use raw::instance_cache::InstanceCache;
 

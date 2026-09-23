@@ -7,11 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.1.0-beta.4] — 2026-07-30
+## [Unreleased]
+
+Completion of full DuckDB v1.5.5 C-API coverage: the retained surface is now
+**403 methods = 393 production-used + 10 documented safe alternatives**, with no
+`pending` rows. This is a pre-1.0 beta, so some value-model contracts changed; the
+breaks are called out below.
 
 ### `better-duck-core`
 
+#### Breaking
+
+- **Metadata-preserving `DuckValue` variants.** `DuckValue::Enum` now carries a
+  `DuckEnum { dict, index }` (the whole ordered dictionary + selected index) instead
+  of a bare `String`; `DuckValue::Union` now carries a `DuckUnion` (full member
+  schema + tag + active value) instead of `Box<DuckValue>`. A value read from an
+  `ENUM`/`UNION` column now round-trips back as the *same* type rather than degrading
+  to `VARCHAR`/a single-arm union. Match arms on these variants must be updated;
+  read the label with `DuckEnum::label()` and the active member with
+  `DuckUnion::value()`/`active_name()`.
+- **New `DuckValue::TemporalInfinity { kind, sign }`.** `DATE`/`TIMESTAMP*` ±infinity
+  is now a first-class, feature-independent variant instead of overflowing a finite
+  `NaiveDate`/`NaiveDateTime` or erroring. Exhaustive matches on `DuckValue` must add
+  an arm (the enum is `#[non_exhaustive]`, so this is a recompile, not a hard break,
+  for external matches).
+- **Scalar UDF bind stage.** `VScalar` gained an associated `type BindData` and a
+  `fn bind(&ScalarBindInfo) -> UdfResult<BindData>`, and `invoke` now receives
+  `&Self::BindData`. Hand-written `VScalar` impls must add `type BindData = ()` +
+  `fn bind(_) { Ok(()) }` and the extra `invoke` parameter; the `#[duckdb_scalar]`
+  macro already generates these.
+- **Release panic strategy.** The workspace `[profile.release]` is now
+  `panic = "unwind"` (was `abort`) so UDF callback containment is truthful in
+  artifacts built here. A downstream application still controls its own panic
+  strategy; under a downstream `abort`, a callback panic terminates the process.
+
 #### Added
+
+- **Typed values & precision.** `DuckDecimal::from_double`/`to_double` (explicit
+  NaN/inf/overflow policy) and dedicated `duckdb_bind_decimal` binding; length-aware
+  string writes preserving interior NULs.
+- **Logical types.** `LogicalType::describe`↔`to_logical_type`, `set_alias`, and
+  `Connection::register_logical_type` for custom named types; `ConfigFlag` discovery
+  (`Config::flag_count`/`flag`/`flags`) and `library_version()`.
+- **Catalog & appenders.** `Connection::table_names` (parser table deps),
+  `TableDescription` (indexed column metadata), catalog-aware/query appenders,
+  appender schema introspection + active-column projection, DEFAULT rows/cells, and
+  whole-`DataChunk` ingestion.
+- **Columnar/ownership.** `OwnedValue` (standalone-value introspection + 13 typed
+  scalar getters), `OwnedVector` (list-size/validity mutation, slice, `copy_sel`,
+  zero-copy references), `SelectionVector`, and `DataChunk::reset`.
+- **UDF surface.** Aggregate functions (`VAggregate`) and overload sets, custom casts
+  (`VCast`, with TRY/normal-mode routing), bound-expression folding (`Expression`),
+  and lifetime-bound client contexts (`ClientContext`).
+- **Runtime.** Opt-in `InstanceCache` (cache-backed opening; never changes default
+  `Database::open`), the external task scheduler (`TaskState`/`execute_tasks`), the
+  query-profiling tree (`ProfilingNode`), and numeric/temporal conversion helpers
+  (`hugeint_to_double`/`double_to_hugeint`, `TimestampParts`, …).
 
 **User-defined functions**
 - **Table function extras** — `VTab::named_parameters()`/`supports_projection_pushdown()` (both
@@ -39,11 +90,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table function rewrites only; there is no way to run SQL from inside the callback (risk of
   deadlocking the connection that's mid-bind for the query triggering the scan).
 
-`udf`'s "Not yet supported" list is now just: `varargs`, LIST/STRUCT columns, a full scalar bind
-phase (`duckdb_scalar_function_bind_*` — the reference `duckdb` crate has no usage of this to model a
-safe design on, and the ergonomic gap is covered by `state`/`duck_state!` above), and
-`duckdb_table_function_get_client_context` (no established need; `duckdb` crate omits it too).
-
 #### Changed
 
 - **Migrated off the external `libduckdb-sys` crate to a new in-house `better-duck-sys`** — vendors
@@ -58,6 +104,19 @@ safe design on, and the ergonomic gap is covered by `state`/`duck_state!` above)
 #### Fixed
 
 - **`duckdb_hugeint` import** — corrected in `types/value.rs`.
+
+#### Notes
+
+- **Documented safe alternatives (never exposed as public writes):** the
+  NUL-terminated `duckdb_create_varchar`/`duckdb_bind_varchar`/`duckdb_append_varchar`/
+  `duckdb_vector_assign_string_element` (superseded by the length-aware variants),
+  `duckdb_open` (→ `duckdb_open_ext`), `duckdb_register_scalar_function` (→ set
+  registration), `duckdb_string_is_inlined`, `duckdb_malloc`, `duckdb_create_error_data`,
+  and `duckdb_scalar_function_set_bind_data_copy`.
+- **Upstream DuckDB C-API defects, documented not worked around** (each avoided by the
+  wrapper's tests): malformed SQL aborts `duckdb_get_table_names` and an unknown metric
+  key aborts `duckdb_profiling_info_get_value` (C++ exceptions unwinding across the FFI
+  boundary); the PK-appender-destroy deadlock on ART-indexed tables.
 
 ### Infrastructure
 
@@ -348,6 +407,6 @@ upgrading.
 
 ---
 
-[0.1.0-beta.4]: https://github.com/nimdeveloper/better-duck/releases/tag/v0.1.0-beta.4
+[Unreleased]: https://github.com/nimdeveloper/better-duck/compare/v0.1.0-beta.3...HEAD
 [0.1.0-beta.3]: https://github.com/nimdeveloper/better-duck/releases/tag/v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/nimdeveloper/better-duck/releases/tag/v0.1.0-beta.2
