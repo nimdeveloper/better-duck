@@ -237,7 +237,14 @@ impl AsyncConnection {
             // alongside the resulting state.
             let (next, returned) = self
                 .dispatch(move || {
-                    let state = pending.execute_task();
+                    let mut state = pending.execute_task();
+                    // On a multi-threaded build, `execute_task` can keep reporting
+                    // `NoTasksAvailable` while background workers run the query and never
+                    // itself return `Ready`; consult the authoritative state so the loop
+                    // terminates instead of yielding forever.
+                    if matches!(state, PendingState::NoTasksAvailable) {
+                        state = pending.check_state();
+                    }
                     (state, pending)
                 })
                 .await?;

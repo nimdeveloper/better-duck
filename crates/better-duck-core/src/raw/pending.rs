@@ -249,6 +249,17 @@ impl OwnedPending {
         PendingState::from_raw(unsafe { duckdb_pending_execute_task(self.pending) })
     }
 
+    /// Returns the current [`PendingState`] without executing a task.
+    ///
+    /// On a multi-threaded build [`execute_task`](OwnedPending::execute_task) can keep
+    /// reporting [`NoTasksAvailable`](PendingState::NoTasksAvailable) while background
+    /// workers run the query; this reports the authoritative readiness in that case.
+    #[must_use]
+    pub fn check_state(&mut self) -> PendingState {
+        // SAFETY: `self.pending` is a valid, live pending result.
+        PendingState::from_raw(unsafe { duckdb_pending_execute_check_state(self.pending) })
+    }
+
     /// Returns DuckDB's current error message, if any.
     #[must_use]
     pub fn error(&self) -> Option<String> {
@@ -338,8 +349,12 @@ mod tests {
             if state.is_finished() {
                 break;
             }
-            state = pending.execute_task();
-            assert_ne!(state, PendingState::Error, "unexpected error: {:?}", pending.error());
+            let stepped = pending.execute_task();
+            assert_ne!(stepped, PendingState::Error, "unexpected error: {:?}", pending.error());
+            // On a multi-threaded build, `execute_task` can report `NoTasksAvailable`
+            // while background workers run the query and never itself return `Ready`;
+            // `check_state` is the authoritative readiness in that case.
+            state = if stepped.is_finished() { stepped } else { pending.check_state() };
         }
         assert!(state.is_finished(), "pending never reached a finished state");
 
