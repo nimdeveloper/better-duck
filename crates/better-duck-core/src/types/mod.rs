@@ -46,6 +46,8 @@ pub mod date_native;
 #[path = "duck_struct.rs"]
 pub mod duck_struct;
 pub use duck_struct::DuckStruct;
+/// DuckDB-backed numeric/temporal conversion helpers (128-bit ↔ f64, timestamp parts).
+pub mod convert;
 /// MAP read/write helpers + generic `AppendAble` impl for `HashMap<K, V>`.
 pub mod map;
 /// Numeric DuckDB type conversions and `AppendAble` implementations.
