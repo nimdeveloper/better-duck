@@ -44,8 +44,10 @@ env:
   # normal repositories unless the repository has a lower setting.
   STATE_RETENTION_DAYS: 90
 
-  # Stable model. Override from repository variable GEMINI_MODEL if desired.
-  GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+  # Rolling alias model. Pinned model names (e.g. `gemini-2.5-flash`) are periodically
+  # retired and then return HTTP 404 from `:generateContent`; the `-latest` alias tracks
+  # the current flash model. Override from repository variable GEMINI_MODEL if desired.
+  GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-flash-latest' }}
 
   # DuckDB introduced its every-other-version LTS cadence at 1.4:
   # 1.4 = LTS, 1.5 = current, 1.6 = LTS, etc.
@@ -896,19 +898,42 @@ jobs:
               '
           )"
 
-          response="$(
+          response_body="$(mktemp)"
+
+          # Capture the HTTP status instead of `--fail` (which collapses every
+          # non-2xx into an opaque `curl: (22) ... 404` with no body). On failure we
+          # surface the API's real error message — for a 404 that names the exact
+          # model/version problem. `--location` is intentionally omitted: the API does
+          # not redirect, and following one could drop the `?key=` query parameter.
+          # The key is sent as a query parameter (not an `x-goog-api-key` header):
+          # `:generateContent` rejects header auth with a 404 for some models.
+          http_code="$(
             curl \
-              --fail \
               --silent \
               --show-error \
-              --location \
               --retry 4 \
               --retry-delay 2 \
+              --retry-connrefused \
               --request POST \
               "https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}" \
               -H "Content-Type: application/json" \
-              --data "$payload"
+              --data "$payload" \
+              --output "$response_body" \
+              --write-out '%{http_code}'
           )"
+
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "::error::Gemini API returned HTTP ${http_code} for model '${GEMINI_MODEL}'."
+            echo "If this is a 404, the model is not served for this API version/key; set the" >&2
+            echo "GEMINI_MODEL repository variable to a currently-served model (e.g. gemini-flash-latest)." >&2
+            echo "Response body:" >&2
+            cat "$response_body" >&2
+            rm -f "$response_body"
+            exit 1
+          fi
+
+          response="$(cat "$response_body")"
+          rm -f "$response_body"
 
           text="$(
             jq -r '
