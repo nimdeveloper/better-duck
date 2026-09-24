@@ -33,9 +33,6 @@ env:
   DUCKDB_REPO: duckdb/duckdb
   DUCKDB_WEB_REPO: duckdb/duckdb-web
 
-  # Upstream "current" C API definition.
-  API_CURRENT_PATH: docs/current/clients/c/api.md
-
   # The artifact is immutable in Actions v4+.
   # Every successful run publishes a new artifact with this logical name.
   STATE_ARTIFACT_NAME: duckdb-monitor-state
@@ -361,7 +358,7 @@ jobs:
 
           printf '%s\n' "$stable_releases" > "$RUNNER_TEMP/stable-releases.json"
 
-      - name: Discover versioned documentation directories
+      - name: Discover documentation channels
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -376,207 +373,104 @@ jobs:
             jq 'add'
           )"
 
-          version_dirs="$(
-            jq '
+          # DuckDB-web keeps frozen numeric snapshots (e.g. `1.0`, `1.3`) next to
+          # rolling named channels (`current`, `lts`, `preview`, and any future name).
+          # Numeric snapshots are previous versions that never change, so we omit them
+          # and monitor every non-numeric channel directory — adapting automatically to
+          # any new channel name with no code change.
+          channels="$(
+            jq -c '
               [
                 .[]
                 | select(.type == "dir")
                 | .name
-                | select(test("^v?[0-9]+\\.[0-9]+$"))
+                | select(test("^v?[0-9]+(\\.[0-9]+)*$") | not)
               ]
               | unique
-              | sort_by(
-                  ltrimstr("v")
-                  | split(".")
-                  | map(tonumber)
-                )
+              | sort
+              | map({ name: ., path: ("docs/" + . + "/clients/c/api.md") })
             ' <<<"$docs_listing"
           )"
 
-          if [ "$(jq 'length' <<<"$version_dirs")" -eq 0 ]; then
-            echo "::error::No versioned documentation directories were found."
+          archived="$(
+            jq -c '
+              [ .[] | select(.type == "dir") | .name
+                | select(test("^v?[0-9]+(\\.[0-9]+)*$")) ]
+              | unique
+              | sort_by(ltrimstr("v") | split(".") | map(tonumber))
+            ' <<<"$docs_listing"
+          )"
+
+          if [ "$(jq 'length' <<<"$channels")" -eq 0 ]; then
+            echo "::error::No documentation channels were found under docs/."
             exit 1
           fi
 
-          echo "Versioned documentation directories:"
-          jq '.' <<<"$version_dirs"
+          jq -n --argjson channels "$channels" --argjson archived "$archived" \
+            '{ channels: $channels, archived: $archived }' \
+            > "$RUNNER_TEMP/doc-channels.json"
 
-          current_line="$(
-            jq -r '.current.line' "$RELEASE_CONTEXT"
-          )"
+          echo "DOC_CHANNELS=$RUNNER_TEMP/doc-channels.json" >> "$GITHUB_ENV"
 
-          lts_line="$(
-            jq -r '.lts.line' "$RELEASE_CONTEXT"
-          )"
-
-          find_doc_dir() {
-            local target_line="$1"
-
-            jq -r \
-              --arg target "$target_line" '
-                .[]
-                | select(
-                    (
-                      ltrimstr("v")
-                    ) == $target
-                  )
-              ' <<<"$version_dirs" |
-              head -n 1
-          }
-
-          current_doc_dir="$(
-            find_doc_dir "$current_line"
-          )"
-
-          lts_doc_dir="$(
-            find_doc_dir "$lts_line"
-          )"
-
-          # A missing exact version directory is meaningful: the release may
-          # have happened before the corresponding docs snapshot was created.
-          current_exists=false
-          lts_exists=false
-
-          if [ -n "$current_doc_dir" ]; then
-            current_exists=true
-          fi
-
-          if [ -n "$lts_doc_dir" ]; then
-            lts_exists=true
-          fi
-
-          current_path=""
-          lts_path=""
-
-          if [ "$current_exists" = "true" ]; then
-            current_path="docs/${current_doc_dir}/clients/c/api.md"
-          fi
-
-          if [ "$lts_exists" = "true" ]; then
-            lts_path="docs/${lts_doc_dir}/clients/c/api.md"
-          fi
-
-          jq -n \
-            --arg currentLine "$current_line" \
-            --arg currentDocDir "$current_doc_dir" \
-            --arg currentPath "$current_path" \
-            --argjson currentExists "$current_exists" \
-            --arg ltsLine "$lts_line" \
-            --arg ltsDocDir "$lts_doc_dir" \
-            --arg ltsPath "$lts_path" \
-            --argjson ltsExists "$lts_exists" \
-            '{
-              current: {
-                line: $currentLine,
-                directory: (if $currentDocDir == "" then null else $currentDocDir end),
-                path: (if $currentPath == "" then null else $currentPath end),
-                exists: $currentExists
-              },
-              lts: {
-                line: $ltsLine,
-                directory: (if $ltsDocDir == "" then null else $ltsDocDir end),
-                path: (if $ltsPath == "" then null else $ltsPath end),
-                exists: $ltsExists
-              },
-              availableDirectories: []
-            }' > "$RUNNER_TEMP/versioned-doc-context.json"
-
-          jq \
-            --argjson dirs "$version_dirs" \
-            '.availableDirectories = $dirs' \
-            "$RUNNER_TEMP/versioned-doc-context.json" \
-            > "$RUNNER_TEMP/versioned-doc-context.updated.json"
-
-          mv \
-            "$RUNNER_TEMP/versioned-doc-context.updated.json" \
-            "$RUNNER_TEMP/versioned-doc-context.json"
-
-          echo "VERSIONED_DOC_CONTEXT=$RUNNER_TEMP/versioned-doc-context.json" >> "$GITHUB_ENV"
-
-          jq '.' "$RUNNER_TEMP/versioned-doc-context.json"
+          echo "Monitored channels (rolling) and omitted archived numeric versions:"
+          jq '.' "$RUNNER_TEMP/doc-channels.json"
 
       - name: Fetch DuckDB C API documents
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          fetch_raw() {
-            local path="$1"
-            local output="$2"
+          mkdir -p "$RUNNER_TEMP/api"
 
-            curl \
-              --fail \
-              --silent \
-              --show-error \
-              --location \
-              --retry 4 \
-              --retry-delay 2 \
-              "https://raw.githubusercontent.com/${DUCKDB_WEB_REPO}/main/${path}" \
-              -o "$output"
-          }
+          hashes="{}"
+          available="[]"
 
-          fetch_raw \
-            "$API_CURRENT_PATH" \
-            "$RUNNER_TEMP/current-api.md"
+          while IFS= read -r channel; do
+            name="$(jq -r '.name' <<<"$channel")"
+            path="$(jq -r '.path' <<<"$channel")"
+            out="$RUNNER_TEMP/api/${name}.md"
 
-          current_exists="$(
-            jq -r '.current.exists' "$VERSIONED_DOC_CONTEXT"
-          )"
-
-          lts_exists="$(
-            jq -r '.lts.exists' "$VERSIONED_DOC_CONTEXT"
-          )"
-
-          if [ "$current_exists" = "true" ]; then
-            current_path="$(
-              jq -r '.current.path' "$VERSIONED_DOC_CONTEXT"
+            # A channel directory may exist without a C API document; a missing file
+            # is skipped (not fatal), so unrelated directories never break the run.
+            http_code="$(
+              curl \
+                --silent \
+                --show-error \
+                --location \
+                --retry 4 \
+                --retry-delay 2 \
+                --retry-connrefused \
+                --write-out '%{http_code}' \
+                --output "$out" \
+                "https://raw.githubusercontent.com/${DUCKDB_WEB_REPO}/main/${path}"
             )"
 
-            fetch_raw \
-              "$current_path" \
-              "$RUNNER_TEMP/current-versioned-api.md"
-          else
-            : > "$RUNNER_TEMP/current-versioned-api.md"
+            if [ "$http_code" != "200" ]; then
+              echo "::notice::No C API document for channel '${name}' (HTTP ${http_code}); skipping."
+              rm -f "$out"
+              continue
+            fi
+
+            sha="$(sha256sum "$out" | cut -d' ' -f1)"
+            hashes="$(jq --arg n "$name" --arg s "$sha" '. + {($n): $s}' <<<"$hashes")"
+            available="$(jq -c --argjson c "$channel" '. + [$c]' <<<"$available")"
+          done < <(
+            jq -c '.channels[]' "$DOC_CHANNELS"
+          )
+
+          if [ "$(jq 'length' <<<"$available")" -eq 0 ]; then
+            echo "::error::No channel exposed a C API document."
+            exit 1
           fi
 
-          if [ "$lts_exists" = "true" ]; then
-            lts_path="$(
-              jq -r '.lts.path' "$VERSIONED_DOC_CONTEXT"
-            )"
+          # Narrow the channel list to those that actually have an api.md.
+          jq --argjson avail "$available" '.channels = $avail' "$DOC_CHANNELS" \
+            > "$RUNNER_TEMP/doc-channels.updated.json"
+          mv "$RUNNER_TEMP/doc-channels.updated.json" "$DOC_CHANNELS"
 
-            fetch_raw \
-              "$lts_path" \
-              "$RUNNER_TEMP/lts-versioned-api.md"
-          else
-            : > "$RUNNER_TEMP/lts-versioned-api.md"
-          fi
+          printf '%s\n' "$hashes" | jq '.' > "$RUNNER_TEMP/api-hashes.json"
 
-          current_hash="$(
-            sha256sum "$RUNNER_TEMP/current-api.md" |
-            cut -d' ' -f1
-          )"
-
-          current_versioned_hash="$(
-            sha256sum "$RUNNER_TEMP/current-versioned-api.md" |
-            cut -d' ' -f1
-          )"
-
-          lts_hash="$(
-            sha256sum "$RUNNER_TEMP/lts-versioned-api.md" |
-            cut -d' ' -f1
-          )"
-
-          jq -n \
-            --arg currentHash "$current_hash" \
-            --arg currentVersionedHash "$current_versioned_hash" \
-            --arg ltsHash "$lts_hash" \
-            '{
-              current: $currentHash,
-              currentVersioned: $currentVersionedHash,
-              ltsVersioned: $ltsHash
-            }' > "$RUNNER_TEMP/api-hashes.json"
-
-          echo "API hashes:"
+          echo "API document hashes (by channel):"
           jq '.' "$RUNNER_TEMP/api-hashes.json"
 
       - name: Compare API snapshots
@@ -586,93 +480,42 @@ jobs:
 
           mkdir -p "$RUNNER_TEMP/diffs"
 
-          api_changed=false
-          versioned_api_changed=false
-          lts_api_changed=false
+          changed="[]"
 
-          compare() {
-            local new_file="$1"
-            local old_file="$2"
-            local diff_file="$3"
+          while IFS= read -r channel; do
+            name="$(jq -r '.name' <<<"$channel")"
+            new_file="$RUNNER_TEMP/api/${name}.md"
+            old_file="$STATE_ROOT/snapshots/${name}.md"
+            diff_file="$RUNNER_TEMP/diffs/${name}.diff"
 
+            # No stored snapshot => first time this channel is seen; establish a
+            # baseline without reporting the whole document as a change. Channels are
+            # stable rolling names, so there is no version-rollover rebaselining to do.
             if [ ! -f "$old_file" ]; then
-              return 0
+              echo "::notice::No previous snapshot for channel '${name}'; establishing baseline."
+              continue
             fi
 
             if cmp -s "$new_file" "$old_file"; then
-              return 0
+              continue
             fi
 
-            diff -u \
-              "$old_file" \
-              "$new_file" \
-              > "$diff_file" || true
+            diff -u "$old_file" "$new_file" > "$diff_file" || true
+            changed="$(jq -c --arg n "$name" '. + [$n]' <<<"$changed")"
+          done < <(
+            jq -c '.channels[]' "$DOC_CHANNELS"
+          )
 
-            return 1
-          }
+          printf '%s\n' "$changed" | jq '.' > "$RUNNER_TEMP/changed-channels.json"
 
-          # A versioned snapshot is only comparable when it was captured from the
-          # same documentation line. When DuckDB rolls the current/LTS line over
-          # (for example 1.4 -> 1.6), the stored snapshot describes a different
-          # release series, so diffing it would report the entire delta between
-          # two versions as an "API change". Treat a line rollover as a fresh
-          # baseline instead.
-          previous_current_line="$(
-            jq -r '.current.line // empty' "$STATE_ROOT/state.json"
-          )"
-
-          previous_lts_line="$(
-            jq -r '.lts.line // empty' "$STATE_ROOT/state.json"
-          )"
-
-          current_line="$(
-            jq -r '.current.line' "$RELEASE_CONTEXT"
-          )"
-
-          lts_line="$(
-            jq -r '.lts.line' "$RELEASE_CONTEXT"
-          )"
-
-          if ! compare \
-            "$RUNNER_TEMP/current-api.md" \
-            "$STATE_ROOT/snapshots/current-api.md" \
-            "$RUNNER_TEMP/diffs/current-api.diff"; then
-            api_changed=true
+          if [ "$(jq 'length' <<<"$changed")" -gt 0 ]; then
+            echo "API_CHANGED=true" >> "$GITHUB_ENV"
+          else
+            echo "API_CHANGED=false" >> "$GITHUB_ENV"
           fi
 
-          if [ -n "$previous_current_line" ] && [ "$previous_current_line" != "$current_line" ]; then
-            echo "::notice::Current line moved ${previous_current_line} -> ${current_line}; rebaselining versioned snapshot."
-          elif ! compare \
-            "$RUNNER_TEMP/current-versioned-api.md" \
-            "$STATE_ROOT/snapshots/current-versioned-api.md" \
-            "$RUNNER_TEMP/diffs/current-versioned-api.diff"; then
-            versioned_api_changed=true
-          fi
-
-          if [ -n "$previous_lts_line" ] && [ "$previous_lts_line" != "$lts_line" ]; then
-            echo "::notice::LTS line moved ${previous_lts_line} -> ${lts_line}; rebaselining versioned snapshot."
-          elif ! compare \
-            "$RUNNER_TEMP/lts-versioned-api.md" \
-            "$STATE_ROOT/snapshots/lts-api.md" \
-            "$RUNNER_TEMP/diffs/lts-api.diff"; then
-            lts_api_changed=true
-          fi
-
-          echo "API_CHANGED=$api_changed" >> "$GITHUB_ENV"
-          echo "VERSIONED_API_CHANGED=$versioned_api_changed" >> "$GITHUB_ENV"
-          echo "LTS_API_CHANGED=$lts_api_changed" >> "$GITHUB_ENV"
-
-          jq -n \
-            --argjson currentChanged "$api_changed" \
-            --argjson currentVersionedChanged "$versioned_api_changed" \
-            --argjson ltsChanged "$lts_api_changed" \
-            '{
-              current: $currentChanged,
-              currentVersioned: $currentVersionedChanged,
-              ltsVersioned: $ltsChanged
-            }' > "$RUNNER_TEMP/api-change-state.json"
-
-          jq '.' "$RUNNER_TEMP/api-change-state.json"
+          echo "Changed channels:"
+          jq '.' "$RUNNER_TEMP/changed-channels.json"
 
       - name: Detect unseen DuckDB releases
         shell: bash
@@ -740,98 +583,50 @@ jobs:
 
       - name: Prepare API analysis context
         if: >-
-          (env.API_CHANGED == 'true' ||
-           env.VERSIONED_API_CHANGED == 'true' ||
-           env.LTS_API_CHANGED == 'true') &&
+          env.API_CHANGED == 'true' &&
           env.BOOTSTRAP_EFFECTIVE != 'true' &&
           env.STATE_BOOTSTRAP != 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          current_version="$(
-            jq -r '.current.version' "$RELEASE_CONTEXT"
-          )"
-
-          current_line="$(
-            jq -r '.current.line' "$RELEASE_CONTEXT"
-          )"
-
-          lts_version="$(
-            jq -r '.lts.version' "$RELEASE_CONTEXT"
-          )"
-
-          lts_line="$(
-            jq -r '.lts.line' "$RELEASE_CONTEXT"
-          )"
-
-          current_path="$(
-            jq -r '.current.path // empty' "$VERSIONED_DOC_CONTEXT"
-          )"
-
-          lts_path="$(
-            jq -r '.lts.path // empty' "$VERSIONED_DOC_CONTEXT"
-          )"
+          current_version="$(jq -r '.current.version' "$RELEASE_CONTEXT")"
+          current_line="$(jq -r '.current.line' "$RELEASE_CONTEXT")"
+          lts_version="$(jq -r '.lts.version' "$RELEASE_CONTEXT")"
+          lts_line="$(jq -r '.lts.line' "$RELEASE_CONTEXT")"
 
           {
             echo "# DuckDB C API change analysis"
             echo
             echo "Repository: https://github.com/${DUCKDB_WEB_REPO}"
             echo
-            echo "Current DuckDB release: ${current_version}"
-            echo "Current line: ${current_line}"
-            echo "LTS DuckDB release: ${lts_version}"
-            echo "LTS line: ${lts_line}"
+            echo "Current DuckDB release: ${current_version} (line ${current_line})"
+            echo "LTS DuckDB release: ${lts_version} (line ${lts_line})"
             echo
-            echo "Current API source:"
-            echo "https://github.com/${DUCKDB_WEB_REPO}/blob/main/${API_CURRENT_PATH}"
+            echo "Monitored documentation channels:"
+            jq -r --arg repo "$DUCKDB_WEB_REPO" \
+              '.channels[] | "- \(.name): https://github.com/\($repo)/blob/main/\(.path)"' \
+              "$DOC_CHANNELS"
             echo
-            echo "Current versioned API source:"
-            if [ -n "$current_path" ]; then
-              echo "https://github.com/${DUCKDB_WEB_REPO}/blob/main/${current_path}"
-            else
-              echo "NOT FOUND"
-            fi
-            echo
-            echo "LTS versioned API source:"
-            if [ -n "$lts_path" ]; then
-              echo "https://github.com/${DUCKDB_WEB_REPO}/blob/main/${lts_path}"
-            else
-              echo "NOT FOUND"
-            fi
+            echo "Channels changed this run:"
+            jq -r 'if length == 0 then "- (none)" else (.[] | "- \(.)") end' \
+              "$RUNNER_TEMP/changed-channels.json"
             echo
 
-            echo "## Current API diff"
-            echo
-            echo '```diff'
-            if [ -s "$RUNNER_TEMP/diffs/current-api.diff" ]; then
-              cat "$RUNNER_TEMP/diffs/current-api.diff"
-            else
-              echo "(no direct change detected)"
-            fi
-            echo '```'
-            echo
-
-            echo "## Current versioned API diff"
-            echo
-            echo '```diff'
-            if [ -s "$RUNNER_TEMP/diffs/current-versioned-api.diff" ]; then
-              cat "$RUNNER_TEMP/diffs/current-versioned-api.diff"
-            else
-              echo "(no change detected)"
-            fi
-            echo '```'
-            echo
-
-            echo "## LTS versioned API diff"
-            echo
-            echo '```diff'
-            if [ -s "$RUNNER_TEMP/diffs/lts-api.diff" ]; then
-              cat "$RUNNER_TEMP/diffs/lts-api.diff"
-            else
-              echo "(no change detected)"
-            fi
-            echo '```'
+            while IFS= read -r name; do
+              echo "## \`${name}\` C API diff"
+              echo
+              echo '```diff'
+              if [ -s "$RUNNER_TEMP/diffs/${name}.diff" ]; then
+                cat "$RUNNER_TEMP/diffs/${name}.diff"
+              else
+                echo "(no change detected)"
+              fi
+              echo '```'
+              echo
+            done < <(
+              jq -r '.[]' "$RUNNER_TEMP/changed-channels.json"
+            )
           } > "$RUNNER_TEMP/api-ai-context.md"
 
           # Safety limit against unexpectedly huge prompts.
@@ -972,9 +767,7 @@ jobs:
         # `BOOTSTRAP_EFFECTIVE` is excluded because a bootstrap run discards the
         # analysis without opening an issue; calling Gemini would waste quota.
         if: >-
-          (env.API_CHANGED == 'true' ||
-           env.VERSIONED_API_CHANGED == 'true' ||
-           env.LTS_API_CHANGED == 'true') &&
+          env.API_CHANGED == 'true' &&
           env.BOOTSTRAP_EFFECTIVE != 'true' &&
           env.STATE_BOOTSTRAP != 'true'
         env:
@@ -1066,7 +859,7 @@ jobs:
       # -----------------------------------------------------------------------
 
       - name: Create issue for C API changes
-        if: env.API_CHANGED == 'true' || env.VERSIONED_API_CHANGED == 'true' || env.LTS_API_CHANGED == 'true'
+        if: env.API_CHANGED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -1151,14 +944,6 @@ jobs:
             jq -r '.lts.line' "$RELEASE_CONTEXT"
           )"
 
-          current_path="$(
-            jq -r '.current.path // "NOT FOUND"' "$VERSIONED_DOC_CONTEXT"
-          )"
-
-          lts_path="$(
-            jq -r '.lts.path // "NOT FOUND"' "$VERSIONED_DOC_CONTEXT"
-          )"
-
           {
             echo "<!-- ${marker} -->"
             echo
@@ -1196,11 +981,11 @@ jobs:
               end
             ' "$RUNNER_TEMP/api-analysis.json"
 
-            echo "## Documentation"
+            echo "## Documentation channels"
             echo
-            echo "- Current: https://github.com/${DUCKDB_WEB_REPO}/blob/main/${API_CURRENT_PATH}"
-            echo "- Current versioned: \`${current_path}\`"
-            echo "- LTS versioned: \`${lts_path}\`"
+            jq -r --arg repo "$DUCKDB_WEB_REPO" \
+              '.channels[] | "- \(.name): https://github.com/\($repo)/blob/main/\(.path)"' \
+              "$DOC_CHANNELS"
             echo
             echo "## Raw diff"
             echo
@@ -1413,22 +1198,6 @@ jobs:
               jq -r '.lts.line' "$RELEASE_CONTEXT"
             )"
 
-            current_path="$(
-              jq -r '.current.path // "NOT FOUND"' "$VERSIONED_DOC_CONTEXT"
-            )"
-
-            lts_path="$(
-              jq -r '.lts.path // "NOT FOUND"' "$VERSIONED_DOC_CONTEXT"
-            )"
-
-            current_exists="$(
-              jq -r '.current.exists' "$VERSIONED_DOC_CONTEXT"
-            )"
-
-            lts_exists="$(
-              jq -r '.lts.exists' "$VERSIONED_DOC_CONTEXT"
-            )"
-
             {
               echo "<!-- ${marker} -->"
               echo
@@ -1461,12 +1230,11 @@ jobs:
               echo "| Current | \`${current_version}\` | \`${current_line}\` |"
               echo "| LTS | \`${lts_version}\` | \`${lts_line}\` |"
               echo
-              echo "## Versioned C API documentation"
+              echo "## Monitored C API documentation channels"
               echo
-              echo "- Current path: \`${current_path}\`"
-              echo "- Current path exists: \`${current_exists}\`"
-              echo "- LTS path: \`${lts_path}\`"
-              echo "- LTS path exists: \`${lts_exists}\`"
+              jq -r --arg repo "$DUCKDB_WEB_REPO" \
+                '.channels[] | "- \(.name): https://github.com/\($repo)/blob/main/\(.path)"' \
+                "$DOC_CHANNELS"
               echo
               echo "## Upstream release"
               echo
@@ -1552,32 +1320,19 @@ jobs:
             jq -r '.lts.publishedAt' "$RELEASE_CONTEXT"
           )"
 
-          current_hash="$(
-            jq -r '.current' "$RUNNER_TEMP/api-hashes.json"
-          )"
-
-          current_versioned_hash="$(
-            jq -r '.currentVersioned' "$RUNNER_TEMP/api-hashes.json"
-          )"
-
-          lts_hash="$(
-            jq -r '.ltsVersioned' "$RUNNER_TEMP/api-hashes.json"
-          )"
-
-          current_path="$(
-            jq -r '.current.path // empty' "$VERSIONED_DOC_CONTEXT"
-          )"
-
-          lts_path="$(
-            jq -r '.lts.path // empty' "$VERSIONED_DOC_CONTEXT"
-          )"
-
-          current_exists="$(
-            jq -r '.current.exists' "$VERSIONED_DOC_CONTEXT"
-          )"
-
-          lts_exists="$(
-            jq -r '.lts.exists' "$VERSIONED_DOC_CONTEXT"
+          # Build the per-channel API state (path + content hash) from the discovered
+          # channels and the hashes captured during fetch.
+          api_channels="$(
+            jq -n \
+              --slurpfile hashes "$RUNNER_TEMP/api-hashes.json" \
+              --slurpfile channels "$DOC_CHANNELS" '
+              ($channels[0].channels // [])
+              | map({
+                  key: .name,
+                  value: { path: .path, sha256: ($hashes[0][.name] // null) }
+                })
+              | from_entries
+            '
           )"
 
           jq \
@@ -1592,13 +1347,7 @@ jobs:
             --arg ltsLine "$lts_line" \
             --arg ltsUrl "$lts_url" \
             --arg ltsPublished "$lts_published" \
-            --arg currentHash "$current_hash" \
-            --arg currentVersionedHash "$current_versioned_hash" \
-            --arg ltsHash "$lts_hash" \
-            --arg currentPath "$current_path" \
-            --arg ltsPath "$lts_path" \
-            --argjson currentExists "$current_exists" \
-            --argjson ltsExists "$lts_exists" \
+            --argjson apiChannels "$api_channels" \
             '
             .schemaVersion = 1 |
             .createdAt = (
@@ -1623,32 +1372,7 @@ jobs:
               publishedAt: $ltsPublished
             } |
 
-            .api = {
-              current: {
-                path: "docs/current/clients/c/api.md",
-                sha256: $currentHash
-              },
-              currentVersioned: {
-                path: (
-                  if $currentPath == ""
-                  then null
-                  else $currentPath
-                  end
-                ),
-                exists: $currentExists,
-                sha256: $currentVersionedHash
-              },
-              ltsVersioned: {
-                path: (
-                  if $ltsPath == ""
-                  then null
-                  else $ltsPath
-                  end
-                ),
-                exists: $ltsExists,
-                sha256: $ltsHash
-              }
-            }
+            .api = { channels: $apiChannels }
             ' \
             "$STATE_ROOT/state.json" \
             > "$RUNNER_TEMP/state.updated.json"
@@ -1697,19 +1421,17 @@ jobs:
             jq -c '.[]' "$RUNNER_TEMP/stable-releases.json"
           )
 
+          # Refresh the per-channel snapshot set, dropping snapshots for channels that
+          # no longer exist so the stored state stays in sync with what we monitor.
+          # `:?` guards against an unset STATE_ROOT ever widening this delete.
+          rm -rf "${STATE_ROOT:?}/snapshots"
           mkdir -p "$STATE_ROOT/snapshots"
 
-          cp \
-            "$RUNNER_TEMP/current-api.md" \
-            "$STATE_ROOT/snapshots/current-api.md"
-
-          cp \
-            "$RUNNER_TEMP/current-versioned-api.md" \
-            "$STATE_ROOT/snapshots/current-versioned-api.md"
-
-          cp \
-            "$RUNNER_TEMP/lts-versioned-api.md" \
-            "$STATE_ROOT/snapshots/lts-api.md"
+          while IFS= read -r name; do
+            cp "$RUNNER_TEMP/api/${name}.md" "$STATE_ROOT/snapshots/${name}.md"
+          done < <(
+            jq -r '.channels[].name' "$DOC_CHANNELS"
+          )
 
           echo "Final state:"
           jq '.' "$STATE_ROOT/state.json"
@@ -1750,16 +1472,20 @@ jobs:
             echo
             echo "## API tracking"
             echo
-            echo "- Current API changed: \`$API_CHANGED\`"
-            echo "- Current versioned API changed: \`$VERSIONED_API_CHANGED\`"
-            echo "- LTS API changed: \`$LTS_API_CHANGED\`"
+            echo "- API changed: \`${API_CHANGED:-false}\`"
+            if [ -f "$RUNNER_TEMP/changed-channels.json" ]; then
+              echo "- Changed channels:"
+              jq -r 'if length == 0 then "  - (none)" else (.[] | "  - \(.)") end' \
+                "$RUNNER_TEMP/changed-channels.json"
+            fi
             echo
-            echo "## Versioned documentation"
+            echo "## Monitored documentation channels"
             echo
-            jq -r '
-              "- Current: `\(.current.path // "NOT FOUND")` — exists: `\(.current.exists)`",
-              "- LTS: `\(.lts.path // "NOT FOUND")` — exists: `\(.lts.exists)`"
-            ' "$VERSIONED_DOC_CONTEXT"
+            if [ -f "$DOC_CHANNELS" ]; then
+              jq -r '.channels[] | "- `\(.path)`"' "$DOC_CHANNELS"
+              echo
+              echo "Omitted archived versions: \`$(jq -rc '.archived | join(", ")' "$DOC_CHANNELS")\`"
+            fi
             echo
             echo "## Persistent state"
             echo
