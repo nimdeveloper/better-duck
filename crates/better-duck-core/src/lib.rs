@@ -24,6 +24,9 @@ pub mod database;
 /// Error types returned by this crate.
 pub mod error;
 mod helpers;
+/// Small exported declarative helper macros (`transaction!`, `params!`).
+#[macro_use]
+mod macros;
 /// An `r2d2` connection pool backed by a shared [`Database`](database::Database).
 #[cfg(feature = "pool")]
 pub mod pool;
@@ -60,6 +63,12 @@ pub use better_duck_macros::duckdb_scalar;
 /// Registers a plain Rust function as a DuckDB table function. See [`udf`].
 #[cfg(feature = "udf")]
 pub use better_duck_macros::duckdb_table_function;
+/// Derives DuckDB `ENUM` mapping for a Rust unit enum (`From`/`FromDuckValue`/`AppendAble`).
+#[cfg(feature = "derive")]
+pub use better_duck_macros::DuckEnum;
+/// Derives [`FromRow`] for a struct: reads each field from a query row by column name.
+#[cfg(feature = "derive")]
+pub use better_duck_macros::FromRow;
 /// DuckDB database configuration.
 pub use config::{library_version, AccessMode, Config, ConfigFlag, DefaultNullOrder, DefaultOrder};
 /// A shared, cloneable handle to an open DuckDB database.
@@ -117,5 +126,7 @@ pub use types::date_native::DuckDate;
 /// A time-of-day value for use without the `chrono` feature.
 #[cfg(not(feature = "chrono"))]
 pub use types::date_native::DuckTime;
+/// Trait for deserializing a query row into a Rust struct (target of `#[derive(FromRow)]`).
+pub use types::from_row::FromRow;
 /// Trait for the fallible read-direction conversion from a `DuckValue` into a Rust type.
 pub use types::from_value::FromDuckValue;

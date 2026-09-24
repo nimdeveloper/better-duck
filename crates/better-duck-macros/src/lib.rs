@@ -5,11 +5,12 @@
 //! [`duckdb_table_function`], [`duckdb_aggregate`], and [`duckdb_cast`].
 
 mod attrs;
+mod derive;
 mod sig;
 mod udf;
 
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, ItemFn, ItemMod};
+use syn::{parse_macro_input, DeriveInput, ItemFn, ItemMod};
 
 /// Registers a plain Rust function as a DuckDB scalar function.
 ///
@@ -94,5 +95,33 @@ pub fn duckdb_aggregate(
             out.extend(TokenStream::from(err.to_compile_error()));
             out
         },
+    }
+}
+
+/// Derives `better_duck_core::FromRow` for a struct with named fields: each field
+/// is read from a query row by column name via `FromDuckValue`.
+///
+/// Container options: `#[duck(rename_all = "…")]`, `#[duck(crate = ::path)]`.
+/// Field options: `#[duck(rename = "column")]`.
+#[proc_macro_derive(FromRow, attributes(duck))]
+pub fn derive_from_row(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    match derive::from_row::expand(input) {
+        Ok(expanded) => expanded.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Derives DuckDB `ENUM` mapping for a Rust unit enum: `From<T> for DuckValue`,
+/// `FromDuckValue for T`, and `AppendAble for T` (bound by label).
+///
+/// Container options: `#[duck_enum(rename_all = "…")]`, `#[duck_enum(crate = ::path)]`.
+/// Variant options: `#[duck_enum(rename = "label")]`.
+#[proc_macro_derive(DuckEnum, attributes(duck_enum))]
+pub fn derive_duck_enum(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    match derive::duck_enum::expand(input) {
+        Ok(expanded) => expanded.into(),
+        Err(err) => err.to_compile_error().into(),
     }
 }

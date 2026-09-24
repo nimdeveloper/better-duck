@@ -33,6 +33,7 @@ decimal         = ["dep:rust_decimal"]
 pool            = ["dep:r2d2"]
 async           = ["dep:tokio"]
 udf             = ["dep:better-duck-macros"]
+derive          = ["dep:better-duck-macros"]
 
 [package.metadata.docs.rs]
 all-features = true

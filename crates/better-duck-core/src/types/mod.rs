@@ -62,6 +62,9 @@ pub mod from_value;
 /// The `DuckValue` enum representing any DuckDB column value.
 pub mod value;
 pub use from_value::FromDuckValue;
+/// Row-to-struct deserialization (`FromRow`) — the target of `#[derive(FromRow)]`.
+pub mod from_row;
+pub use from_row::FromRow;
 /// A reference-based variant of `DuckValue` for zero-copy scenarios.
 pub mod value_ref;
 /// `String` DuckDB type conversion.
