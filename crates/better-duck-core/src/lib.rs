@@ -30,6 +30,8 @@ pub mod pool;
 mod raw;
 /// An owned, thread-safe, fully materialized query result.
 pub mod result_set;
+/// Transaction control (`BEGIN`/`COMMIT`/`ROLLBACK`, savepoints, RAII guard) on `Connection`.
+pub mod transaction;
 /// DuckDB type system and value conversion traits.
 pub mod types;
 /// User-defined DuckDB functions: scalar functions and table functions.
@@ -99,6 +101,8 @@ pub use raw::task_state::{execute_tasks, TaskState};
 pub use raw::expression::Expression;
 /// An owned, thread-safe, fully materialized query result.
 pub use result_set::ResultSet;
+/// RAII transaction guard returned by `Connection::begin_transaction`.
+pub use transaction::Transaction;
 /// Trait for binding values to DuckDB prepared statements and appenders.
 pub use types::appendable::AppendAble;
 /// A calendar date value for use without the `chrono` feature.
