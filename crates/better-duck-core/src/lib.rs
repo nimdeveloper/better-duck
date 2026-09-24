@@ -105,6 +105,8 @@ pub use result_set::ResultSet;
 pub use transaction::Transaction;
 /// Trait for binding values to DuckDB prepared statements and appenders.
 pub use types::appendable::AppendAble;
+/// Trait for the fallible read-direction conversion from a `DuckValue` into a Rust type.
+pub use types::from_value::FromDuckValue;
 /// A calendar date value for use without the `chrono` feature.
 #[cfg(not(feature = "chrono"))]
 pub use types::date_native::DuckDate;

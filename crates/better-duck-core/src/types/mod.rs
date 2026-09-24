@@ -59,6 +59,9 @@ pub mod uuid;
 pub use uuid::DuckUuid;
 /// The `DuckValue` enum representing any DuckDB column value.
 pub mod value;
+/// Fallible read-direction conversion (`FromDuckValue`) from a `DuckValue` into a Rust type.
+pub mod from_value;
+pub use from_value::FromDuckValue;
 /// A reference-based variant of `DuckValue` for zero-copy scenarios.
 pub mod value_ref;
 /// `String` DuckDB type conversion.
