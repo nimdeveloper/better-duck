@@ -1290,35 +1290,34 @@ impl<T: super::DuckLogicalType> super::DuckLogicalType for Option<T> {
     }
 }
 
+// Legacy by-value conversions, kept for source compatibility. They preserve the
+// historical behaviour (NULL coerces to the type's default; a mismatch panics) but
+// now delegate the value case to the fallible [`FromDuckValue`](super::FromDuckValue)
+// reader so the conversion logic lives in one place.
 impl From<DuckValue> for String {
     fn from(val: DuckValue) -> Self {
         match val {
-            DuckValue::Text(ref s) => s.clone(),
             DuckValue::Null => String::new(),
-            _ => panic!("Cannot convert {:?} to String", val),
+            ref other => <String as super::FromDuckValue>::from_duck_value(other)
+                .unwrap_or_else(|_| panic!("Cannot convert {other:?} to String")),
         }
     }
 }
 impl From<DuckValue> for i64 {
     fn from(val: DuckValue) -> Self {
         match val {
-            DuckValue::BigInt(v) => v,
-            DuckValue::Int(v) => v as i64,
-            DuckValue::SmallInt(v) => v as i64,
-            DuckValue::TinyInt(v) => v as i64,
             DuckValue::Null => 0,
-            _ => panic!("Cannot convert {:?} to i64", val),
+            ref other => <i64 as super::FromDuckValue>::from_duck_value(other)
+                .unwrap_or_else(|_| panic!("Cannot convert {other:?} to i64")),
         }
     }
 }
 impl From<DuckValue> for i32 {
     fn from(val: DuckValue) -> Self {
         match val {
-            DuckValue::Int(v) => v,
-            DuckValue::SmallInt(v) => v as i32,
-            DuckValue::TinyInt(v) => v as i32,
             DuckValue::Null => 0,
-            _ => panic!("Cannot convert {:?} to i32", val),
+            ref other => <i32 as super::FromDuckValue>::from_duck_value(other)
+                .unwrap_or_else(|_| panic!("Cannot convert {other:?} to i32")),
         }
     }
 }
