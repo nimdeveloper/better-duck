@@ -36,6 +36,24 @@ pub(crate) struct TableAttrs {
     pub(crate) extra_info: Option<(Type, Expr)>,
 }
 
+/// Parsed `#[duckdb_cast(...)]` options. Casts are unnamed, so there is no `name`.
+#[derive(Default)]
+pub(crate) struct CastAttrs {
+    /// `crate = ::path` escape hatch for the generated `::better_duck_core` path.
+    pub(crate) crate_path: Option<Path>,
+    /// `implicit_cost = <int>` — the binder's implicit-cast cost (lower = preferred;
+    /// negative = explicit-only). Defaults to `-1` (explicit `CAST` only).
+    pub(crate) implicit_cost: Option<i64>,
+}
+
+/// Parsed `#[duckdb_aggregate(...)]` options.
+#[derive(Default)]
+pub(crate) struct AggregateAttrs {
+    pub(crate) common: CommonAttrs,
+    /// Whether the aggregate should still be invoked for `NULL` inputs.
+    pub(crate) special_handling: bool,
+}
+
 fn expect_str_lit(
     expr: &Expr,
     option: &str,
@@ -160,6 +178,79 @@ pub(crate) fn parse_table_attrs(attr: proc_macro::TokenStream) -> syn::Result<Ta
                 "unknown option; expected one of `name`, `crate`, `columns`, `named_params`, \
                  `projection_pushdown`, `extra_info`",
             ))
+        }
+    });
+    parser.parse(attr)?;
+    Ok(out)
+}
+
+/// Parses a signed integer literal (`N` or `-N`) for an integer-valued option.
+fn expect_i64(
+    expr: &Expr,
+    option: &str,
+) -> syn::Result<i64> {
+    match expr {
+        Expr::Lit(lit) => match &lit.lit {
+            Lit::Int(i) => i.base10_parse::<i64>(),
+            other => {
+                Err(syn::Error::new_spanned(other, format!("`{option}` must be an integer")))
+            },
+        },
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
+            if let Expr::Lit(lit) = &*u.expr {
+                if let Lit::Int(i) = &lit.lit {
+                    return Ok(-i.base10_parse::<i64>()?);
+                }
+            }
+            Err(syn::Error::new_spanned(expr, format!("`{option}` must be an integer")))
+        },
+        other => Err(syn::Error::new_spanned(other, format!("`{option}` must be an integer"))),
+    }
+}
+
+pub(crate) fn parse_cast_attrs(attr: proc_macro::TokenStream) -> syn::Result<CastAttrs> {
+    let mut out = CastAttrs::default();
+    let parser = syn::meta::parser(|meta| {
+        if meta.path.is_ident("crate") {
+            out.crate_path = Some(meta.value()?.parse()?);
+            Ok(())
+        } else if meta.path.is_ident("implicit_cost") {
+            let expr: Expr = meta.value()?.parse()?;
+            out.implicit_cost = Some(expect_i64(&expr, "implicit_cost")?);
+            Ok(())
+        } else {
+            Err(meta.error("unknown option; expected one of `crate`, `implicit_cost`"))
+        }
+    });
+    parser.parse(attr)?;
+    Ok(out)
+}
+
+pub(crate) fn parse_aggregate_attrs(attr: proc_macro::TokenStream) -> syn::Result<AggregateAttrs> {
+    let mut out = AggregateAttrs::default();
+    let parser = syn::meta::parser(|meta| {
+        if meta.path.is_ident("name") {
+            let expr: Expr = meta.value()?.parse()?;
+            let lit = expect_str_lit(&expr, "name")?;
+            if lit.value().is_empty() || lit.value().contains('\0') {
+                return Err(syn::Error::new_spanned(
+                    lit,
+                    "`name` must be a non-empty string without NUL bytes",
+                ));
+            }
+            if out.common.name.is_some() {
+                return Err(meta.error("`name` specified twice"));
+            }
+            out.common.name = Some(lit);
+            Ok(())
+        } else if meta.path.is_ident("crate") {
+            out.common.crate_path = Some(meta.value()?.parse()?);
+            Ok(())
+        } else if meta.path.is_ident("special_handling") {
+            out.special_handling = true;
+            Ok(())
+        } else {
+            Err(meta.error("unknown option; expected one of `name`, `crate`, `special_handling`"))
         }
     });
     parser.parse(attr)?;
