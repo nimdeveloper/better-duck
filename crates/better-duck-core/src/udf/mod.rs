@@ -270,7 +270,7 @@ pub mod __private {
     pub use crate::udf::{
         run_table_func, BindInfo, DataChunkHandle, InitInfo, LogicalType, ScalarArg,
         ScalarBindInfo, ScalarRet, ScalarSignature, TableFunctionInfo, TableInitData, TableRow,
-        UdfResult, VScalar, VTab, VTabLocalInit, VectorMut, VectorRef,
+        UdfResult, VAggregate, VCast, VScalar, VTab, VTabLocalInit, VectorMut, VectorRef,
     };
     pub use std::boxed::Box;
     pub use std::result::Result as StdResult;
