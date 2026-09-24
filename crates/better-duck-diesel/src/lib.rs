@@ -17,6 +17,8 @@ pub mod helpers;
 pub mod pool;
 pub mod row;
 pub mod types;
+/// Newtype wrappers for binding/loading DuckDB-specific-typed values in the DSL.
+pub mod values;
 
 pub use connection::DuckDbConnection;
 
