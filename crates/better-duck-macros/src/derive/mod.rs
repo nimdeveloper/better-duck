@@ -1,7 +1,74 @@
 //! Derive-macro code generation.
 
+use syn::{DeriveInput, Field, LitStr, Path};
+
 pub(crate) mod duck_enum;
+pub(crate) mod duck_struct;
 pub(crate) mod from_row;
+
+/// Container-level `#[duck(...)]` options shared by `#[derive(FromRow)]` and
+/// `#[derive(DuckStruct)]`.
+pub(crate) struct DuckContainer {
+    pub(crate) crate_path: Path,
+    pub(crate) rename_all: Option<RenameRule>,
+}
+
+/// Parses the container `#[duck(crate = …, rename_all = "…")]` options.
+pub(crate) fn parse_duck_container(input: &DeriveInput) -> syn::Result<DuckContainer> {
+    let mut crate_path: Path = syn::parse_quote!(::better_duck_core);
+    let mut rename_all = None;
+    for attr in &input.attrs {
+        if !attr.path().is_ident("duck") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("crate") {
+                crate_path = meta.value()?.parse()?;
+                Ok(())
+            } else if meta.path.is_ident("rename_all") {
+                let s: LitStr = meta.value()?.parse()?;
+                rename_all = Some(RenameRule::from_name(&s.value()).map_err(|e| meta.error(e))?);
+                Ok(())
+            } else {
+                Err(meta.error("unknown `duck` container option; expected `crate` or `rename_all`"))
+            }
+        })?;
+    }
+    Ok(DuckContainer { crate_path, rename_all })
+}
+
+/// Reads a field's `#[duck(rename = "...")]`, if present.
+pub(crate) fn duck_field_rename(field: &Field) -> syn::Result<Option<String>> {
+    let mut rename = None;
+    for attr in &field.attrs {
+        if !attr.path().is_ident("duck") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename") {
+                let s: LitStr = meta.value()?.parse()?;
+                rename = Some(s.value());
+                Ok(())
+            } else {
+                Err(meta.error("unknown `duck` field option; expected `rename`"))
+            }
+        })?;
+    }
+    Ok(rename)
+}
+
+/// Resolves a field's DuckDB column/field name from its `rename`, the container
+/// `rename_all`, or the field identifier.
+pub(crate) fn duck_field_name(
+    field: &Field,
+    rename_all: Option<RenameRule>,
+) -> syn::Result<String> {
+    let ident = field.ident.as_ref().expect("named field has an ident").to_string();
+    Ok(match duck_field_rename(field)? {
+        Some(name) => name,
+        None => rename_all.map_or(ident.clone(), |r| r.apply(&ident)),
+    })
+}
 
 /// A `rename_all` casing rule, applied to a Rust field or variant name.
 ///

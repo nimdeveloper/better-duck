@@ -125,3 +125,17 @@ pub fn derive_duck_enum(item: TokenStream) -> TokenStream {
         Err(err) => err.to_compile_error().into(),
     }
 }
+
+/// Derives DuckDB `STRUCT` mapping for a Rust struct with named fields:
+/// `From<T> for DuckValue` and `FromDuckValue for T`.
+///
+/// Shares `#[duck(rename = "…")]` / `#[duck(rename_all = "…")]` / `#[duck(crate = …)]`
+/// with `#[derive(FromRow)]`.
+#[proc_macro_derive(DuckStruct, attributes(duck))]
+pub fn derive_duck_struct(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    match derive::duck_struct::expand(input) {
+        Ok(expanded) => expanded.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}

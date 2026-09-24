@@ -3,61 +3,12 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, LitStr, Path};
+use syn::{Data, DeriveInput, Fields, LitStr};
 
-use super::RenameRule;
-
-/// Container-level `#[duck(...)]` options.
-struct ContainerOpts {
-    crate_path: Path,
-    rename_all: Option<RenameRule>,
-}
-
-fn parse_container(input: &DeriveInput) -> syn::Result<ContainerOpts> {
-    let mut crate_path: Path = syn::parse_quote!(::better_duck_core);
-    let mut rename_all = None;
-    for attr in &input.attrs {
-        if !attr.path().is_ident("duck") {
-            continue;
-        }
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("crate") {
-                crate_path = meta.value()?.parse()?;
-                Ok(())
-            } else if meta.path.is_ident("rename_all") {
-                let s: LitStr = meta.value()?.parse()?;
-                rename_all = Some(RenameRule::from_name(&s.value()).map_err(|e| meta.error(e))?);
-                Ok(())
-            } else {
-                Err(meta.error("unknown `duck` container option; expected `crate` or `rename_all`"))
-            }
-        })?;
-    }
-    Ok(ContainerOpts { crate_path, rename_all })
-}
-
-/// Reads a field's `#[duck(rename = "...")]`, if present.
-fn field_rename(field: &syn::Field) -> syn::Result<Option<String>> {
-    let mut rename = None;
-    for attr in &field.attrs {
-        if !attr.path().is_ident("duck") {
-            continue;
-        }
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("rename") {
-                let s: LitStr = meta.value()?.parse()?;
-                rename = Some(s.value());
-                Ok(())
-            } else {
-                Err(meta.error("unknown `duck` field option; expected `rename`"))
-            }
-        })?;
-    }
-    Ok(rename)
-}
+use super::{duck_field_name, parse_duck_container};
 
 pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
-    let container = parse_container(&input)?;
+    let container = parse_duck_container(&input)?;
     let cratep = &container.crate_path;
     let ident = &input.ident;
 
@@ -77,12 +28,7 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     for f in &fields.named {
         let fident = f.ident.as_ref().expect("named field has an ident");
         let fty = &f.ty;
-        let col = match field_rename(f)? {
-            Some(name) => name,
-            None => container
-                .rename_all
-                .map_or_else(|| fident.to_string(), |r| r.apply(&fident.to_string())),
-        };
+        let col = duck_field_name(f, container.rename_all)?;
         let col_lit = LitStr::new(&col, fident.span());
         field_inits.push(quote! {
             #fident: {

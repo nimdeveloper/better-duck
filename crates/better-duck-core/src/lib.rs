@@ -66,6 +66,9 @@ pub use better_duck_macros::duckdb_table_function;
 /// Derives DuckDB `ENUM` mapping for a Rust unit enum (`From`/`FromDuckValue`/`AppendAble`).
 #[cfg(feature = "derive")]
 pub use better_duck_macros::DuckEnum;
+/// Derives DuckDB `STRUCT` mapping for a Rust struct (`From`/`FromDuckValue`).
+#[cfg(feature = "derive")]
+pub use better_duck_macros::DuckStruct;
 /// Derives [`FromRow`] for a struct: reads each field from a query row by column name.
 #[cfg(feature = "derive")]
 pub use better_duck_macros::FromRow;
