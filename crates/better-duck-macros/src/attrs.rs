@@ -192,9 +192,7 @@ fn expect_i64(
     match expr {
         Expr::Lit(lit) => match &lit.lit {
             Lit::Int(i) => i.base10_parse::<i64>(),
-            other => {
-                Err(syn::Error::new_spanned(other, format!("`{option}` must be an integer")))
-            },
+            other => Err(syn::Error::new_spanned(other, format!("`{option}` must be an integer"))),
         },
         Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
             if let Expr::Lit(lit) = &*u.expr {

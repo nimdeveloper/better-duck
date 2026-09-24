@@ -101,8 +101,7 @@ fn aggregate_sums_and_groups() {
 fn fallible_aggregate_computes_product() {
     let mut conn = Connection::open_in_memory().unwrap();
     checked_product::register(&mut conn).unwrap();
-    let mut r = conn
-        .execute("SELECT checked_product(v) AS p FROM (VALUES (2),(3),(4)) t(v)")
-        .unwrap();
+    let mut r =
+        conn.execute("SELECT checked_product(v) AS p FROM (VALUES (2),(3),(4)) t(v)").unwrap();
     assert_eq!(r.next().unwrap().unwrap().get("p"), Some(&DuckValue::BigInt(24)));
 }

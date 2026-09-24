@@ -48,18 +48,18 @@ pub use asynchronous::AsyncDatabase;
 #[cfg(all(feature = "async", feature = "pool"))]
 pub use asynchronous::AsyncPool;
 
-/// Registers a plain Rust function as a DuckDB scalar function. See [`udf`].
-#[cfg(feature = "udf")]
-pub use better_duck_macros::duckdb_scalar;
-/// Registers a plain Rust function as a DuckDB table function. See [`udf`].
-#[cfg(feature = "udf")]
-pub use better_duck_macros::duckdb_table_function;
 /// Registers a `mod` of init/update/combine/finalize fns as a DuckDB aggregate. See [`udf`].
 #[cfg(feature = "udf")]
 pub use better_duck_macros::duckdb_aggregate;
 /// Registers a Rust function as a DuckDB custom cast (`CAST`/`TRY_CAST`). See [`udf`].
 #[cfg(feature = "udf")]
 pub use better_duck_macros::duckdb_cast;
+/// Registers a plain Rust function as a DuckDB scalar function. See [`udf`].
+#[cfg(feature = "udf")]
+pub use better_duck_macros::duckdb_scalar;
+/// Registers a plain Rust function as a DuckDB table function. See [`udf`].
+#[cfg(feature = "udf")]
+pub use better_duck_macros::duckdb_table_function;
 /// DuckDB database configuration.
 pub use config::{library_version, AccessMode, Config, ConfigFlag, DefaultNullOrder, DefaultOrder};
 /// A shared, cloneable handle to an open DuckDB database.
@@ -111,11 +111,11 @@ pub use result_set::ResultSet;
 pub use transaction::Transaction;
 /// Trait for binding values to DuckDB prepared statements and appenders.
 pub use types::appendable::AppendAble;
-/// Trait for the fallible read-direction conversion from a `DuckValue` into a Rust type.
-pub use types::from_value::FromDuckValue;
 /// A calendar date value for use without the `chrono` feature.
 #[cfg(not(feature = "chrono"))]
 pub use types::date_native::DuckDate;
 /// A time-of-day value for use without the `chrono` feature.
 #[cfg(not(feature = "chrono"))]
 pub use types::date_native::DuckTime;
+/// Trait for the fallible read-direction conversion from a `DuckValue` into a Rust type.
+pub use types::from_value::FromDuckValue;

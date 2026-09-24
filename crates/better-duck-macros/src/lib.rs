@@ -86,7 +86,8 @@ pub fn duckdb_aggregate(
 ) -> TokenStream {
     let input = parse_macro_input!(item as ItemMod);
     let original = input.clone();
-    match attrs::parse_aggregate_attrs(attr).and_then(|attrs| udf::aggregate::expand(attrs, input)) {
+    match attrs::parse_aggregate_attrs(attr).and_then(|attrs| udf::aggregate::expand(attrs, input))
+    {
         Ok(expanded) => expanded.into(),
         Err(err) => {
             let mut out: TokenStream = quote::quote!(#original).into();

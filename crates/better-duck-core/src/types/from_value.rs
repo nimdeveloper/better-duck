@@ -35,7 +35,9 @@ fn mismatch(
 ) -> DuckDBConversionError {
     match value {
         DuckValue::Null => DuckDBConversionError::NullValue,
-        other => DuckDBConversionError::ConversionError(format!("cannot read {other:?} as {target}")),
+        other => {
+            DuckDBConversionError::ConversionError(format!("cannot read {other:?} as {target}"))
+        },
     }
 }
 
@@ -173,10 +175,9 @@ impl<T: FromDuckValue> FromDuckValue for Vec<T> {
 impl<V: FromDuckValue> FromDuckValue for HashMap<String, V> {
     fn from_duck_value(value: &DuckValue) -> Result<Self, DuckDBConversionError> {
         match value {
-            DuckValue::Struct(fields) => fields
-                .iter()
-                .map(|(k, v)| V::from_duck_value(v).map(|v| (k.clone(), v)))
-                .collect(),
+            DuckValue::Struct(fields) => {
+                fields.iter().map(|(k, v)| V::from_duck_value(v).map(|v| (k.clone(), v))).collect()
+            },
             other => Err(mismatch(other, "HashMap<String, V> (STRUCT)")),
         }
     }
