@@ -3,5 +3,7 @@
 //! not provide out of the box.
 
 pub mod conditional;
+pub mod datetime;
 pub mod numeric;
+pub mod regex;
 pub mod string;
