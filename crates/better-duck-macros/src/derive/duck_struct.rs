@@ -5,7 +5,7 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, LitStr, Path};
+use syn::{Data, DeriveInput, Fields, LitStr};
 
 use super::{duck_field_name, parse_duck_container};
 
@@ -95,6 +95,8 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
 /// When the macros crate's `diesel` feature is on, emits `FromSql`/`ToSql` for the
 /// derived struct at `better_duck_diesel::sql_types::DuckStruct`, routing through
 /// the struct's `From<T> for DuckValue` / `FromDuckValue` impls above.
+#[cfg(feature = "diesel")]
+use syn::Path;
 #[cfg(feature = "diesel")]
 fn diesel_emission(
     cratep: &Path,
