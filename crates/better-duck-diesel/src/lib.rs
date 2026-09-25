@@ -10,6 +10,10 @@ pub mod result;
 pub use qb as query_builder;
 mod bind_collector;
 pub mod connection;
+/// DuckDB DSL prelude: operator/function extension traits (`use …::dsl::*;`).
+pub mod dsl;
+/// DuckDB SQL operators, functions, and aggregates exposed as Diesel DSL.
+pub mod expressions;
 /// Internal helpers (transaction manager stub).
 pub mod helpers;
 /// A shared-database `r2d2` connection manager, coexisting with `diesel::r2d2::ConnectionManager`.
