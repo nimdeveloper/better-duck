@@ -5,6 +5,7 @@ use syn::{DeriveInput, Field, LitStr, Path};
 pub(crate) mod duck_enum;
 pub(crate) mod duck_struct;
 pub(crate) mod from_row;
+pub(crate) mod to_row;
 
 /// Container-level `#[duck(...)]` options shared by `#[derive(FromRow)]` and
 /// `#[derive(DuckStruct)]`.

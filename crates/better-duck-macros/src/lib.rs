@@ -139,3 +139,16 @@ pub fn derive_duck_struct(item: TokenStream) -> TokenStream {
         Err(err) => err.to_compile_error().into(),
     }
 }
+
+/// Derives `better_duck_core::AppendAble` for a struct: appends/binds each field in
+/// declaration order (one appender row, or consecutive `$1`,`$2`,… parameters).
+///
+/// Container option: `#[duck(crate = ::path)]`.
+#[proc_macro_derive(ToRow, attributes(duck))]
+pub fn derive_to_row(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    match derive::to_row::expand(input) {
+        Ok(expanded) => expanded.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
