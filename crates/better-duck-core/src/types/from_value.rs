@@ -1,13 +1,15 @@
-//! Fallible conversion from a [`DuckValue`] into a native Rust type.
+//! Fallible conversion from a [`DuckValue`](crate::types::value::DuckValue) into a
+//! native Rust type.
 //!
 //! [`FromDuckValue`] is the read-direction counterpart to
 //! [`AppendAble`](crate::types::appendable::AppendAble): it turns a borrowed
-//! [`DuckValue`] (as produced by [`DuckRow`](crate::raw::row::DuckRow) or
+//! [`DuckValue`](crate::types::value::DuckValue) (as produced by
+//! [`DuckRow`](crate::raw::row::DuckRow) or
 //! [`ResultSet`](crate::result_set::ResultSet)) into a concrete Rust value,
-//! returning a [`DuckDBConversionError`] instead of panicking on a type or
-//! nullability mismatch. It is the foundation the `#[derive(FromRow)]` macro
-//! builds on, and the safe alternative to the legacy panicking
-//! `From<DuckValue>` impls (which now delegate here).
+//! returning a [`DuckDBConversionError`](crate::error::DuckDBConversionError) instead
+//! of panicking on a type or nullability mismatch. It is the foundation the
+//! `#[derive(FromRow)]` macro builds on, and the safe alternative to the legacy
+//! panicking `From<DuckValue>` impls (which now delegate here).
 
 use std::collections::HashMap;
 

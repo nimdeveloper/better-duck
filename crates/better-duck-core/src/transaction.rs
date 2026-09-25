@@ -1,13 +1,16 @@
-//! Transaction control for [`Connection`].
+//! Transaction control for [`Connection`](crate::connection::Connection).
 //!
 //! DuckDB has no dedicated transaction entry point in its C API, so these helpers
 //! drive transactions with plain SQL (`BEGIN TRANSACTION` / `COMMIT` / `ROLLBACK`)
-//! through [`Connection::execute_batch`]. Two styles are offered:
+//! through [`Connection::execute_batch`](crate::connection::Connection::execute_batch).
+//! Two styles are offered:
 //!
-//! - [`Connection::transaction`] — a closure scope that commits on `Ok` and rolls
-//!   back on `Err` (or panic, via the guard's `Drop`). This is the recommended API.
-//! - [`Connection::begin_transaction`] — a RAII [`Transaction`] guard that derefs to
-//!   the connection and rolls back on drop unless [`Transaction::commit`] was called.
+//! - [`Connection::transaction`](crate::connection::Connection::transaction) — a closure
+//!   scope that commits on `Ok` and rolls back on `Err` (or panic, via the guard's `Drop`).
+//!   This is the recommended API.
+//! - [`Connection::begin_transaction`](crate::connection::Connection::begin_transaction) — a
+//!   RAII [`Transaction`] guard that derefs to the connection and rolls back on drop unless
+//!   [`Transaction::commit`] was called.
 //!
 //! DuckDB does **not** support `SAVEPOINT` / `RELEASE` / `ROLLBACK TO` (only
 //! `BEGIN`/`COMMIT`/`ROLLBACK`/`ABORT`), so no savepoint API is exposed here.

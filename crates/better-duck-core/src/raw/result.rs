@@ -346,7 +346,7 @@ impl DuckResult {
 
     /// Returns a cheaply-cloneable handle to the full column schema.
     ///
-    /// Used to carry the schema into an owned [`ResultSet`](crate::result_set::ResultSet)
+    /// Used to carry the schema into an owned [`ResultSet`]
     /// without re-resolving it.
     #[must_use]
     #[inline]

@@ -1,4 +1,5 @@
-//! STRUCT read/write helpers + the [`DuckStruct`] newtype and its [`AppendAble`] impl.
+//! STRUCT read/write helpers + the [`DuckStruct`] newtype and its
+//! [`AppendAble`](crate::types::appendable::AppendAble) impl.
 //!
 //! DuckDB `STRUCT` types have a fixed, named field schema.  Each field name is a
 //! `String` key; the value is any `DuckValue`.  The read path fetches field names

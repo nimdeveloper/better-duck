@@ -1,4 +1,4 @@
-//! DuckDB extension management on [`Connection`].
+//! DuckDB extension management on [`Connection`](crate::connection::Connection).
 //!
 //! DuckDB extensions (e.g. `spatial`, `json`, `parquet`) are loaded at runtime.
 //! These helpers drive `INSTALL` / `LOAD` and read the state from DuckDB's own

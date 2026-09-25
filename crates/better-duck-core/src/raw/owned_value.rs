@@ -1,7 +1,7 @@
 //! RAII wrapper for a standalone, owned `duckdb_value`, with introspection.
 //!
 //! Most values in this driver are read straight out of result vectors into
-//! [`DuckValue`], but DuckDB also has a *standalone value* object
+//! [`DuckValue`](crate::types::value::DuckValue), but DuckDB also has a *standalone value* object
 //! (`duckdb_value`) — the currency of the scalar-value C API. [`OwnedValue`] owns
 //! one (destroying it exactly once on drop) and exposes the introspection the C API
 //! offers on any value: whether it is SQL `NULL`, its SQL string rendering, and —

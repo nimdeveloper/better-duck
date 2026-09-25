@@ -33,7 +33,7 @@ use crate::{
 ///
 /// **Thread Safety:**
 /// `RawDatabase` itself is **not** thread-safe. If you need to share it between threads or
-/// multiple connections, wrap it in a thread-safe container such as [`Arc`](std::sync::Arc).
+/// multiple connections, wrap it in a thread-safe container such as [`Arc`].
 ///
 /// # Example
 ///

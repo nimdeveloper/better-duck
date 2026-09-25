@@ -1,4 +1,5 @@
-//! Float canonicalization helpers for [`DuckValue`] `Eq` + `Hash` implementations.
+//! Float canonicalization helpers for [`DuckValue`](crate::types::value::DuckValue)
+//! `Eq` + `Hash` implementations.
 //!
 //! DuckDB `FLOAT` and `DOUBLE` values may be `NaN` or `-0.0`.  To give
 //! `HashMap<DuckValue, _>` correct semantics we normalize both before comparing or hashing:
