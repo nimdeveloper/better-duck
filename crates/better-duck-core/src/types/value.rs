@@ -1730,21 +1730,46 @@ mod tests {
         mp.insert(DuckValue::Int(1), DuckValue::Int(2));
         let en = DuckEnum::from_label(std::sync::Arc::from(vec!["A".to_owned()]), "A").unwrap();
         vec![
-            DuckValue::Boolean(true), DuckValue::TinyInt(1), DuckValue::SmallInt(1),
-            DuckValue::Int(1), DuckValue::BigInt(1), DuckValue::HugeInt(1), DuckValue::UTinyInt(1),
-            DuckValue::USmallInt(1), DuckValue::UInt(1), DuckValue::UBigInt(1),
-            DuckValue::UHugeInt(1), DuckValue::Float(1.5), DuckValue::Double(1.5),
-            DuckValue::Timestamp(ndt), DuckValue::TimestampS(ndt), DuckValue::TimestampMs(ndt),
-            DuckValue::TimestampNs(ndt), DuckValue::TimestampTz(dt), DuckValue::Date(nd),
-            DuckValue::Time(nt), DuckValue::TimeNs(nt), DuckValue::Interval(chrono::Duration::seconds(5)),
+            DuckValue::Boolean(true),
+            DuckValue::TinyInt(1),
+            DuckValue::SmallInt(1),
+            DuckValue::Int(1),
+            DuckValue::BigInt(1),
+            DuckValue::HugeInt(1),
+            DuckValue::UTinyInt(1),
+            DuckValue::USmallInt(1),
+            DuckValue::UInt(1),
+            DuckValue::UBigInt(1),
+            DuckValue::UHugeInt(1),
+            DuckValue::Float(1.5),
+            DuckValue::Double(1.5),
+            DuckValue::Timestamp(ndt),
+            DuckValue::TimestampS(ndt),
+            DuckValue::TimestampMs(ndt),
+            DuckValue::TimestampNs(ndt),
+            DuckValue::TimestampTz(dt),
+            DuckValue::Date(nd),
+            DuckValue::Time(nt),
+            DuckValue::TimeNs(nt),
+            DuckValue::Interval(chrono::Duration::seconds(5)),
             DuckValue::TimeTz(crate::types::date_chrono::TimeTz { time: nt, offset_secs: 3600 }),
-            DuckValue::Text("x".to_owned()), DuckValue::Decimal(DuckDecimal::new(100, 5, 2).unwrap()),
-            DuckValue::Blob(Blob(vec![1, 2])), DuckValue::List(vec![DuckValue::Int(1)]),
-            DuckValue::Array(vec![DuckValue::Int(1)].into_boxed_slice()), DuckValue::Struct(st),
-            DuckValue::Map(mp), DuckValue::Enum(en),
-            DuckValue::Union(union1("v", crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DuckValue::Int(1))),
-            DuckValue::Uuid(DuckUuid(1)), DuckValue::Bit(DuckBit(vec![0, 1])),
-            DuckValue::Bignum(DuckBignum::new(vec![1], false)), DuckValue::Null,
+            DuckValue::Text("x".to_owned()),
+            DuckValue::Decimal(DuckDecimal::new(100, 5, 2).unwrap()),
+            DuckValue::Blob(Blob(vec![1, 2])),
+            DuckValue::List(vec![DuckValue::Int(1)]),
+            DuckValue::Array(vec![DuckValue::Int(1)].into_boxed_slice()),
+            DuckValue::Struct(st),
+            DuckValue::Map(mp),
+            DuckValue::Enum(en),
+            DuckValue::Union(union1(
+                "v",
+                crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
+                DuckValue::Int(1),
+            )),
+            DuckValue::Uuid(DuckUuid(1)),
+            DuckValue::Bit(DuckBit(vec![0, 1])),
+            DuckValue::Bignum(DuckBignum::new(vec![1], false)),
+            DuckValue::Null,
         ]
     }
 
@@ -1759,7 +1784,7 @@ mod tests {
             let _ = h.finish(); // Hash arms
             let r = crate::types::value_ref::DuckValueRef::from(&v);
             let _ = DuckValue::from(&r); // DuckValueRef <-> DuckValue arms
-            // Write paths (create raw handles; ignore result — leaked handles are fine in a test).
+                                         // Write paths (create raw handles; ignore result — leaked handles are fine in a test).
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let _ = v.to_duck();
                 let _ = DuckValue::logical_type_of(&v);
