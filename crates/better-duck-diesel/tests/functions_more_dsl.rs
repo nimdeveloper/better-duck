@@ -19,7 +19,7 @@ fn numeric_extras() {
 #[test]
 fn string_search_and_padding() {
     let mut conn = DuckDbConnection::establish(":memory:").unwrap();
-    let p: i32 = diesel::select(strpos("hello", "ll")).get_result(&mut conn).unwrap();
+    let p: i64 = diesel::select(strpos("hello", "ll")).get_result(&mut conn).unwrap();
     assert_eq!(p, 3);
     let s: String = diesel::select(substr("hello", 2, 3)).get_result(&mut conn).unwrap();
     assert_eq!(s, "ell");

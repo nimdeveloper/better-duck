@@ -8,11 +8,11 @@ use diesel::sql_types::{Integer, Text};
 
 define_sql_function! {
     /// `strpos(haystack, needle)` — 1-based position of `needle` in `haystack`, or `0`.
-    fn strpos(haystack: Text, needle: Text) -> diesel::sql_types::Integer;
+    fn strpos(haystack: Text, needle: Text) -> diesel::sql_types::BigInt;
 }
 define_sql_function! {
     /// `instr(haystack, needle)` — alias of `strpos` (1-based match position, or `0`).
-    fn instr(haystack: Text, needle: Text) -> diesel::sql_types::Integer;
+    fn instr(haystack: Text, needle: Text) -> diesel::sql_types::BigInt;
 }
 define_sql_function! {
     /// `substr(s, start, length)` — `length` characters of `s` from 1-based `start`.
