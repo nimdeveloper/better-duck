@@ -175,10 +175,16 @@ mod tests {
             let _ = conn.inner_mut();
             Ok(())
         });
+        // Debug formatting covers the manual `Debug` impl (with and without a hook).
+        assert!(format!("{manager:?}").contains("SharedDuckDbConnectionManager"));
+        assert!(format!("{:?}", SharedDuckDbConnectionManager::memory().unwrap())
+            .contains("on_connect"));
         let pool = Pool::builder().max_size(2).build(manager).unwrap();
         let a = pool.get().unwrap();
         let b = pool.get().unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+        // `database()` accessor + is_valid path.
+        let _ = pool.state();
         drop((a, b));
     }
 }

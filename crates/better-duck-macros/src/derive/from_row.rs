@@ -52,3 +52,35 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::expand;
+
+    fn compact(input: syn::DeriveInput) -> String {
+        expand(input).unwrap().to_string().split_whitespace().collect()
+    }
+
+    #[test]
+    fn expands_named_struct_with_rename() {
+        let tokens = compact(syn::parse_quote! {
+            #[duck(rename_all = "snake_case")]
+            struct Row { userId: i32, #[duck(rename = "n")] name: String }
+        });
+        assert!(tokens.contains("FromRowforRow"), "{tokens}");
+        assert!(tokens.contains("\"user_id\""), "{tokens}");
+        assert!(tokens.contains("\"n\""), "{tokens}");
+    }
+
+    #[test]
+    fn rejects_non_struct() {
+        let err = expand(syn::parse_quote!(enum E { A })).unwrap_err();
+        assert!(err.to_string().contains("can only be derived for a struct"), "{err}");
+    }
+
+    #[test]
+    fn rejects_tuple_struct() {
+        let err = expand(syn::parse_quote!(struct T(i32);)).unwrap_err();
+        assert!(err.to_string().contains("named fields"), "{err}");
+    }
+}

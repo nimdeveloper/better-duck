@@ -22,7 +22,7 @@ pub fn duckdb_scalar(
 ) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let original = input.clone();
-    match attrs::parse_scalar_attrs(attr).and_then(|attrs| udf::scalar::expand(attrs, input)) {
+    match attrs::parse_scalar_attrs(attr.into()).and_then(|attrs| udf::scalar::expand(attrs, input)) {
         Ok(expanded) => expanded.into(),
         Err(err) => {
             // Re-emit the original item alongside the error so the user gets one
@@ -44,7 +44,7 @@ pub fn duckdb_table_function(
 ) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let original = input.clone();
-    match attrs::parse_table_attrs(attr).and_then(|attrs| udf::table::expand(attrs, input)) {
+    match attrs::parse_table_attrs(attr.into()).and_then(|attrs| udf::table::expand(attrs, input)) {
         Ok(expanded) => expanded.into(),
         Err(err) => {
             let mut out: TokenStream = quote::quote!(#original).into();
@@ -65,7 +65,7 @@ pub fn duckdb_cast(
 ) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let original = input.clone();
-    match attrs::parse_cast_attrs(attr).and_then(|attrs| udf::cast::expand(attrs, input)) {
+    match attrs::parse_cast_attrs(attr.into()).and_then(|attrs| udf::cast::expand(attrs, input)) {
         Ok(expanded) => expanded.into(),
         Err(err) => {
             let mut out: TokenStream = quote::quote!(#original).into();
@@ -87,7 +87,8 @@ pub fn duckdb_aggregate(
 ) -> TokenStream {
     let input = parse_macro_input!(item as ItemMod);
     let original = input.clone();
-    match attrs::parse_aggregate_attrs(attr).and_then(|attrs| udf::aggregate::expand(attrs, input))
+    match attrs::parse_aggregate_attrs(attr.into())
+        .and_then(|attrs| udf::aggregate::expand(attrs, input))
     {
         Ok(expanded) => expanded.into(),
         Err(err) => {

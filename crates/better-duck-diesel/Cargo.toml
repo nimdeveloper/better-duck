@@ -31,6 +31,9 @@ decimal = ["better-duck-core/decimal", "dep:rust_decimal"]
 r2d2    = ["diesel/r2d2"]
 udf     = ["better-duck-core/udf"]
 spatial = []
+# Bundle DuckDB's `json` extension statically so the JSON DSL works without a
+# runtime autoload/network fetch.
+json    = ["better-duck-core/json"]
 # Re-export the better-duck data derives with diesel `FromSql`/`ToSql` emission on.
 derive  = ["better-duck-core/derive-diesel"]
 

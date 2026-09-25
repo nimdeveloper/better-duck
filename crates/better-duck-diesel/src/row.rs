@@ -122,3 +122,27 @@ impl<'b> RowIndex<&'b str> for Row<'_> {
 }
 
 impl RowSealed for Row<'_> {}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use better_duck_core::types::value_ref::DuckValueRef;
+    // Bring the diesel `Field` trait's methods (`field_name`/`value`/`is_null`) into scope.
+    use diesel::row::Field as _;
+
+    use super::Field;
+
+    #[test]
+    fn field_name_value_and_null_accessors() {
+        let present = Field { name: "col", value: DuckValueRef::Text(Cow::Borrowed("x")) };
+        assert_eq!(present.field_name(), Some("col"));
+        assert!(!present.is_null());
+        assert!(present.value().is_some());
+
+        let null = Field { name: "n", value: DuckValueRef::Null };
+        assert_eq!(null.field_name(), Some("n"));
+        assert!(null.is_null());
+        assert!(null.value().is_none());
+    }
+}

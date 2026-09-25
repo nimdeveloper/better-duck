@@ -4,14 +4,14 @@
 use syn::{parse::Parser as _, punctuated::Punctuated, Expr, Lit, LitStr, Path, Token, Type};
 
 /// Options common to both macros: `name = "…"` and `crate = ::path`.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct CommonAttrs {
     pub(crate) name: Option<LitStr>,
     pub(crate) crate_path: Option<Path>,
 }
 
 /// Parsed `#[duckdb_scalar(...)]` options.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct ScalarAttrs {
     pub(crate) common: CommonAttrs,
     pub(crate) volatile: bool,
@@ -21,7 +21,7 @@ pub(crate) struct ScalarAttrs {
 }
 
 /// Parsed `#[duckdb_table_function(...)]` options.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct TableAttrs {
     pub(crate) common: CommonAttrs,
     /// Output column names; the types are inferred from the iterator item tuple.
@@ -37,7 +37,7 @@ pub(crate) struct TableAttrs {
 }
 
 /// Parsed `#[duckdb_cast(...)]` options. Casts are unnamed, so there is no `name`.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct CastAttrs {
     /// `crate = ::path` escape hatch for the generated `::better_duck_core` path.
     pub(crate) crate_path: Option<Path>,
@@ -47,7 +47,7 @@ pub(crate) struct CastAttrs {
 }
 
 /// Parsed `#[duckdb_aggregate(...)]` options.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct AggregateAttrs {
     pub(crate) common: CommonAttrs,
     /// Whether the aggregate should still be invoked for `NULL` inputs.
@@ -71,7 +71,7 @@ fn expect_str_lit(
     }
 }
 
-pub(crate) fn parse_scalar_attrs(attr: proc_macro::TokenStream) -> syn::Result<ScalarAttrs> {
+pub(crate) fn parse_scalar_attrs(attr: proc_macro2::TokenStream) -> syn::Result<ScalarAttrs> {
     let mut out = ScalarAttrs::default();
     let parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("name") {
@@ -109,11 +109,11 @@ pub(crate) fn parse_scalar_attrs(attr: proc_macro::TokenStream) -> syn::Result<S
             Err(meta.error("unknown option; expected one of `name`, `crate`, `volatile`, `state`"))
         }
     });
-    parser.parse(attr)?;
+    parser.parse2(attr)?;
     Ok(out)
 }
 
-pub(crate) fn parse_table_attrs(attr: proc_macro::TokenStream) -> syn::Result<TableAttrs> {
+pub(crate) fn parse_table_attrs(attr: proc_macro2::TokenStream) -> syn::Result<TableAttrs> {
     let mut out = TableAttrs::default();
     let parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("name") {
@@ -180,7 +180,7 @@ pub(crate) fn parse_table_attrs(attr: proc_macro::TokenStream) -> syn::Result<Ta
             ))
         }
     });
-    parser.parse(attr)?;
+    parser.parse2(attr)?;
     Ok(out)
 }
 
@@ -206,7 +206,7 @@ fn expect_i64(
     }
 }
 
-pub(crate) fn parse_cast_attrs(attr: proc_macro::TokenStream) -> syn::Result<CastAttrs> {
+pub(crate) fn parse_cast_attrs(attr: proc_macro2::TokenStream) -> syn::Result<CastAttrs> {
     let mut out = CastAttrs::default();
     let parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("crate") {
@@ -220,11 +220,11 @@ pub(crate) fn parse_cast_attrs(attr: proc_macro::TokenStream) -> syn::Result<Cas
             Err(meta.error("unknown option; expected one of `crate`, `implicit_cost`"))
         }
     });
-    parser.parse(attr)?;
+    parser.parse2(attr)?;
     Ok(out)
 }
 
-pub(crate) fn parse_aggregate_attrs(attr: proc_macro::TokenStream) -> syn::Result<AggregateAttrs> {
+pub(crate) fn parse_aggregate_attrs(attr: proc_macro2::TokenStream) -> syn::Result<AggregateAttrs> {
     let mut out = AggregateAttrs::default();
     let parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("name") {
@@ -251,7 +251,7 @@ pub(crate) fn parse_aggregate_attrs(attr: proc_macro::TokenStream) -> syn::Resul
             Err(meta.error("unknown option; expected one of `name`, `crate`, `special_handling`"))
         }
     });
-    parser.parse(attr)?;
+    parser.parse2(attr)?;
     Ok(out)
 }
 
@@ -287,5 +287,87 @@ mod tests {
         let expr = parse_quote!("a column");
         let literal = expect_str_lit(&expr, "columns").unwrap();
         assert_eq!(quote!(#literal).to_string(), "\"a column\"");
+    }
+
+    use super::{
+        expect_i64, parse_aggregate_attrs, parse_cast_attrs, parse_scalar_attrs, parse_table_attrs,
+    };
+
+    #[test]
+    fn scalar_attrs_parse_every_option() {
+        let a = parse_scalar_attrs(quote!(name = "f", crate = ::foo, volatile, state(i64, 0)))
+            .unwrap();
+        assert_eq!(a.common.name.unwrap().value(), "f");
+        assert!(a.common.crate_path.is_some());
+        assert!(a.volatile);
+        assert!(a.state.is_some());
+        // Empty attr → all defaults.
+        let d = parse_scalar_attrs(quote!()).unwrap();
+        assert!(d.common.name.is_none() && !d.volatile && d.state.is_none());
+    }
+
+    #[test]
+    fn scalar_attrs_reject_bad_input() {
+        assert!(parse_scalar_attrs(quote!(name = "")).unwrap_err().to_string().contains("non-empty"));
+        assert!(parse_scalar_attrs(quote!(name = "a", name = "b"))
+            .unwrap_err()
+            .to_string()
+            .contains("twice"));
+        assert!(parse_scalar_attrs(quote!(state(i64, 0), state(i32, 1)))
+            .unwrap_err()
+            .to_string()
+            .contains("twice"));
+        assert!(parse_scalar_attrs(quote!(bogus)).unwrap_err().to_string().contains("unknown option"));
+        assert!(parse_scalar_attrs(quote!(name = 42)).unwrap_err().to_string().contains("string literal"));
+    }
+
+    #[test]
+    fn table_attrs_parse_and_reject() {
+        let a = parse_table_attrs(quote!(
+            name = "t",
+            columns("a", "b"),
+            named_params("p"),
+            projection_pushdown,
+            extra_info(u8, 0)
+        ))
+        .unwrap();
+        assert_eq!(a.columns.unwrap().len(), 2);
+        assert_eq!(a.named_params.unwrap().len(), 1);
+        assert!(a.projection_pushdown && a.extra_info.is_some());
+        assert!(parse_table_attrs(quote!(named_params()))
+            .unwrap_err()
+            .to_string()
+            .contains("at least one"));
+        assert!(parse_table_attrs(quote!(schema = "s"))
+            .unwrap_err()
+            .to_string()
+            .contains("not supported"));
+        assert!(parse_table_attrs(quote!(nope)).unwrap_err().to_string().contains("unknown option"));
+    }
+
+    #[test]
+    fn cast_and_aggregate_attrs() {
+        let c = parse_cast_attrs(quote!(crate = ::x, implicit_cost = -5)).unwrap();
+        assert_eq!(c.implicit_cost, Some(-5));
+        assert!(c.crate_path.is_some());
+        assert_eq!(parse_cast_attrs(quote!(implicit_cost = 7)).unwrap().implicit_cost, Some(7));
+        assert!(parse_cast_attrs(quote!(implicit_cost = "x"))
+            .unwrap_err()
+            .to_string()
+            .contains("must be an integer"));
+        assert!(parse_cast_attrs(quote!(bad)).unwrap_err().to_string().contains("unknown option"));
+
+        let g = parse_aggregate_attrs(quote!(name = "agg", special_handling)).unwrap();
+        assert_eq!(g.common.name.unwrap().value(), "agg");
+        assert!(g.special_handling);
+        assert!(parse_aggregate_attrs(quote!(what)).unwrap_err().to_string().contains("unknown option"));
+    }
+
+    #[test]
+    fn expect_i64_handles_sign_and_errors() {
+        assert_eq!(expect_i64(&parse_quote!(3), "c").unwrap(), 3);
+        assert_eq!(expect_i64(&parse_quote!(-3), "c").unwrap(), -3);
+        assert!(expect_i64(&parse_quote!("x"), "c").unwrap_err().to_string().contains("integer"));
+        assert!(expect_i64(&parse_quote!(-"x"), "c").unwrap_err().to_string().contains("integer"));
     }
 }

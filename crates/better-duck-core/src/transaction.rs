@@ -189,4 +189,19 @@ mod tests {
         tx.commit().unwrap();
         assert_eq!(count(&mut conn), 1);
     }
+
+    #[test]
+    fn explicit_rollback_and_shared_deref() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t(id INTEGER)").unwrap();
+        let mut tx = conn.begin_transaction().unwrap();
+        tx.execute_batch("INSERT INTO t VALUES (1)").unwrap();
+        // Shared `Deref<Target = Connection>` coercion (invokes `deref`).
+        {
+            let _shared: &Connection = &tx;
+        }
+        // Explicit rollback discards the row.
+        tx.rollback().unwrap();
+        assert_eq!(count(&mut conn), 0);
+    }
 }

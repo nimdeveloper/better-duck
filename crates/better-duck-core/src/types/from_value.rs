@@ -363,4 +363,87 @@ mod tests {
         let list = DuckValue::List(vec![DuckValue::Int(1), DuckValue::Int(2)]);
         assert_eq!(Vec::<i32>::from_duck_value(&list).unwrap(), vec![1, 2]);
     }
+
+    #[test]
+    fn reads_every_integer_width_and_float32_and_identity() {
+        assert_eq!(i8::from_duck_value(&DuckValue::TinyInt(-1)).unwrap(), -1);
+        assert_eq!(i16::from_duck_value(&DuckValue::SmallInt(-2)).unwrap(), -2);
+        assert_eq!(u8::from_duck_value(&DuckValue::UTinyInt(1)).unwrap(), 1);
+        assert_eq!(u16::from_duck_value(&DuckValue::USmallInt(2)).unwrap(), 2);
+        assert_eq!(u64::from_duck_value(&DuckValue::UBigInt(3)).unwrap(), 3);
+        assert_eq!(u128::from_duck_value(&DuckValue::UHugeInt(4)).unwrap(), 4);
+        let f = f32::from_duck_value(&DuckValue::Float(2.5)).unwrap();
+        assert!((f - 2.5).abs() < 1e-6);
+        // Identity: DuckValue reads as a clone of itself.
+        assert_eq!(DuckValue::from_duck_value(&DuckValue::Int(9)).unwrap(), DuckValue::Int(9));
+    }
+
+    #[test]
+    fn reads_copy_and_clone_wrapper_types() {
+        use crate::types::{Blob, DuckBignum, DuckBit, DuckDecimal, DuckEnum, DuckUnion, DuckUuid};
+
+        let dec = DuckDecimal::new(123, 5, 2).unwrap();
+        assert_eq!(DuckDecimal::from_duck_value(&DuckValue::Decimal(dec)).unwrap(), dec);
+        assert_eq!(
+            DuckUuid::from_duck_value(&DuckValue::Uuid(DuckUuid(42))).unwrap(),
+            DuckUuid(42)
+        );
+        let blob = Blob(vec![1, 2, 3]);
+        assert_eq!(Blob::from_duck_value(&DuckValue::Blob(blob.clone())).unwrap(), blob);
+        let bit = DuckBit(vec![0, 1]);
+        assert_eq!(DuckBit::from_duck_value(&DuckValue::Bit(bit.clone())).unwrap(), bit);
+        let bn = DuckBignum::new(vec![7], false);
+        assert_eq!(DuckBignum::from_duck_value(&DuckValue::Bignum(bn.clone())).unwrap(), bn);
+
+        let en = DuckEnum::from_label(std::sync::Arc::from(vec!["A".to_owned()]), "A").unwrap();
+        // `DuckEnum`/`DuckUnion` don't derive `PartialEq`; check the read succeeds + round-trips a field.
+        let read_en = DuckEnum::from_duck_value(&DuckValue::Enum(en.clone())).unwrap();
+        assert_eq!(read_en.label(), en.label());
+        let un = DuckUnion::single(DuckValue::Int(1)).unwrap();
+        assert!(DuckUnion::from_duck_value(&DuckValue::Union(un.clone())).is_ok());
+
+        // Wrong-variant error arm for a wrapper type.
+        assert!(Blob::from_duck_value(&DuckValue::Int(0)).is_err());
+    }
+
+    #[test]
+    fn reads_array_into_vec_and_struct_into_map() {
+        let arr = DuckValue::Array(vec![DuckValue::Int(3), DuckValue::Int(4)].into_boxed_slice());
+        assert_eq!(Vec::<i32>::from_duck_value(&arr).unwrap(), vec![3, 4]);
+        assert!(Vec::<i32>::from_duck_value(&DuckValue::Int(0)).is_err());
+
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("a".to_owned(), DuckValue::Int(1));
+        let map: std::collections::HashMap<String, i32> =
+            FromDuckValue::from_duck_value(&DuckValue::Struct(fields)).unwrap();
+        assert_eq!(map.get("a"), Some(&1));
+        assert!(std::collections::HashMap::<String, i32>::from_duck_value(&DuckValue::Int(0))
+            .is_err());
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn reads_chrono_temporals() {
+        use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
+        use crate::types::date_chrono::TimeTz;
+
+        let d = NaiveDate::from_ymd_opt(2020, 1, 2).unwrap();
+        let t = NaiveTime::from_hms_opt(3, 4, 5).unwrap();
+        let dt = d.and_time(t);
+        assert_eq!(NaiveDate::from_duck_value(&DuckValue::Date(d)).unwrap(), d);
+        assert_eq!(NaiveTime::from_duck_value(&DuckValue::Time(t)).unwrap(), t);
+        assert_eq!(
+            chrono::NaiveDateTime::from_duck_value(&DuckValue::Timestamp(dt)).unwrap(),
+            dt
+        );
+        let utc = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
+        assert_eq!(
+            DateTime::<Utc>::from_duck_value(&DuckValue::TimestampTz(utc)).unwrap(),
+            utc
+        );
+        let dur = Duration::seconds(90);
+        assert_eq!(Duration::from_duck_value(&DuckValue::Interval(dur)).unwrap(), dur);
+        let tz = TimeTz { time: t, offset_secs: 3600 };
+        assert_eq!(TimeTz::from_duck_value(&DuckValue::TimeTz(tz)).unwrap(), tz);
+    }
 }

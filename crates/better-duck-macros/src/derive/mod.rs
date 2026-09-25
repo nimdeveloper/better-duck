@@ -9,6 +9,7 @@ pub(crate) mod to_row;
 
 /// Container-level `#[duck(...)]` options shared by `#[derive(FromRow)]` and
 /// `#[derive(DuckStruct)]`.
+#[derive(Debug)]
 pub(crate) struct DuckContainer {
     pub(crate) crate_path: Path,
     pub(crate) rename_all: Option<RenameRule>,
@@ -75,7 +76,7 @@ pub(crate) fn duck_field_name(
 ///
 /// Names are split into words on `_`/`-` and at `lower→Upper` case boundaries, so
 /// both `snake_case` fields and `PascalCase`/`camelCase` variants map correctly.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum RenameRule {
     Lower,
     Upper,
@@ -172,5 +173,85 @@ impl RenameRule {
                 out
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use syn::{Data, DeriveInput, Fields};
+
+    use super::{duck_field_name, parse_duck_container, RenameRule};
+
+    fn first_field(di: &DeriveInput) -> &syn::Field {
+        let Data::Struct(s) = &di.data else { panic!("not a struct") };
+        let Fields::Named(n) = &s.fields else { panic!("not named") };
+        n.named.first().unwrap()
+    }
+
+    #[test]
+    fn rename_rule_applies_every_casing() {
+        let apply = |r: &str, name: &str| RenameRule::from_name(r).unwrap().apply(name);
+        assert_eq!(apply("lowercase", "userName"), "username");
+        assert_eq!(apply("UPPERCASE", "userName"), "USERNAME");
+        assert_eq!(apply("snake_case", "userName"), "user_name");
+        assert_eq!(apply("SCREAMING_SNAKE_CASE", "userName"), "USER_NAME");
+        assert_eq!(apply("kebab-case", "userName"), "user-name");
+        assert_eq!(apply("SCREAMING-KEBAB-CASE", "userName"), "USER-NAME");
+        assert_eq!(apply("camelCase", "user_name"), "userName");
+        assert_eq!(apply("PascalCase", "user_name"), "UserName");
+        // A run of uppercase letters is one word (no lower→Upper boundary inside it).
+        assert_eq!(apply("snake_case", "HTTPServer2"), "httpserver2");
+    }
+
+    #[test]
+    fn rename_rule_rejects_unknown() {
+        assert!(RenameRule::from_name("Weird").unwrap_err().contains("unknown `rename_all`"));
+    }
+
+    #[test]
+    fn container_reads_crate_and_rename_all() {
+        let di: DeriveInput = syn::parse_quote! {
+            #[duck(crate = ::my_core, rename_all = "SCREAMING_SNAKE_CASE")]
+            struct S { field_one: i32 }
+        };
+        let c = parse_duck_container(&di).unwrap();
+        assert!(matches!(c.rename_all, Some(RenameRule::ScreamingSnake)));
+        let p = &c.crate_path;
+        assert!(quote::quote!(#p).to_string().contains("my_core"));
+    }
+
+    #[test]
+    fn container_rejects_unknown_and_bad_rename_all() {
+        let bad: DeriveInput = syn::parse_quote! {
+            #[duck(nope = 1)] struct S { a: i32 }
+        };
+        assert!(parse_duck_container(&bad).unwrap_err().to_string().contains("unknown `duck`"));
+        let bad2: DeriveInput = syn::parse_quote! {
+            #[duck(rename_all = "nonsense")] struct S { a: i32 }
+        };
+        assert!(parse_duck_container(&bad2).unwrap_err().to_string().contains("unknown `rename_all`"));
+    }
+
+    #[test]
+    fn field_name_prefers_rename_then_rename_all_then_ident() {
+        let di: DeriveInput = syn::parse_quote! {
+            struct S { #[duck(rename = "explicit")] a: i32 }
+        };
+        assert_eq!(duck_field_name(first_field(&di), None).unwrap(), "explicit");
+
+        let di2: DeriveInput = syn::parse_quote! { struct S { some_field: i32 } };
+        assert_eq!(
+            duck_field_name(first_field(&di2), Some(RenameRule::Pascal)).unwrap(),
+            "SomeField"
+        );
+        assert_eq!(duck_field_name(first_field(&di2), None).unwrap(), "some_field");
+    }
+
+    #[test]
+    fn field_rejects_unknown_option() {
+        let di: DeriveInput = syn::parse_quote! {
+            struct S { #[duck(bogus = "x")] a: i32 }
+        };
+        assert!(duck_field_name(first_field(&di), None).unwrap_err().to_string().contains("unknown `duck` field"));
     }
 }

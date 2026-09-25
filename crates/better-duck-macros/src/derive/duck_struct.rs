@@ -141,3 +141,35 @@ fn diesel_emission(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::expand;
+
+    fn compact(input: syn::DeriveInput) -> String {
+        expand(input).unwrap().to_string().split_whitespace().collect()
+    }
+
+    #[test]
+    fn expands_from_and_fromduckvalue_for_named_struct() {
+        let tokens = compact(syn::parse_quote! {
+            #[duck(rename_all = "camelCase")]
+            struct Point { x_axis: i32, y_axis: i32 }
+        });
+        assert!(tokens.contains("DuckValue::Struct"), "{tokens}");
+        assert!(tokens.contains("FromDuckValueforPoint"), "{tokens}");
+        assert!(tokens.contains("\"xAxis\""), "{tokens}");
+    }
+
+    #[test]
+    fn rejects_non_struct_and_tuple() {
+        assert!(expand(syn::parse_quote!(enum E { A }))
+            .unwrap_err()
+            .to_string()
+            .contains("can only be derived for a struct"));
+        assert!(expand(syn::parse_quote!(struct T(i32);))
+            .unwrap_err()
+            .to_string()
+            .contains("named fields"));
+    }
+}

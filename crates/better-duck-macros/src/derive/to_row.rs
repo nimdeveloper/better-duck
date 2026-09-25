@@ -63,3 +63,44 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::expand;
+
+    fn compact(input: syn::DeriveInput) -> String {
+        expand(input).unwrap().to_string().split_whitespace().collect()
+    }
+
+    #[test]
+    fn expands_appendable_for_named_struct() {
+        let tokens = compact(syn::parse_quote! {
+            struct Pt { x: i32, y: i32 }
+        });
+        assert!(tokens.contains("implAppendAbleforPt") || tokens.contains("AppendAbleforPt"), "{tokens}");
+        // First field uses the base index; the second is offset by 1.
+        assert!(tokens.contains("__idx+1u64"), "{tokens}");
+        assert!(tokens.contains("appender_append"), "{tokens}");
+    }
+
+    #[test]
+    fn honors_crate_override() {
+        let tokens = compact(syn::parse_quote! {
+            #[duck(crate = ::my_core)]
+            struct One { a: i32 }
+        });
+        assert!(tokens.contains("::my_core::AppendAble"), "{tokens}");
+    }
+
+    #[test]
+    fn rejects_non_struct_and_tuple() {
+        assert!(expand(syn::parse_quote!(enum E { A }))
+            .unwrap_err()
+            .to_string()
+            .contains("can only be derived for a struct"));
+        assert!(expand(syn::parse_quote!(struct T(i32);))
+            .unwrap_err()
+            .to_string()
+            .contains("named fields"));
+    }
+}

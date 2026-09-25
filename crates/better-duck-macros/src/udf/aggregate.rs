@@ -228,3 +228,77 @@ fn build(
     };
     Ok(expanded)
 }
+
+#[cfg(test)]
+mod tests {
+    use syn::parse_quote;
+
+    use super::expand;
+    use crate::attrs::{parse_aggregate_attrs, AggregateAttrs};
+
+    fn compact(m: syn::ItemMod) -> String {
+        expand(AggregateAttrs::default(), m).unwrap().to_string().split_whitespace().collect()
+    }
+
+    fn good_mod() -> syn::ItemMod {
+        parse_quote! {
+            mod my_sum {
+                fn init() -> i64 { 0 }
+                fn update(state: &mut i64, x: i64) { *state += x; }
+                fn combine(target: &mut i64, source: &i64) { *target += *source; }
+                fn finalize(state: &i64) -> i64 { *state }
+            }
+        }
+    }
+
+    #[test]
+    fn expands_full_aggregate() {
+        let tokens = compact(good_mod());
+        assert!(tokens.contains("VAggregateforUdf"), "{tokens}");
+        assert!(tokens.contains("register_aggregate_function::<Udf>"), "{tokens}");
+        assert!(tokens.contains("\"my_sum\""), "{tokens}");
+    }
+
+    #[test]
+    fn honors_name_crate_and_special_handling() {
+        let attrs =
+            parse_aggregate_attrs(quote::quote!(name = "s", crate = ::my_core, special_handling))
+                .unwrap();
+        let tokens: String =
+            expand(attrs, good_mod()).unwrap().to_string().split_whitespace().collect();
+        assert!(tokens.contains("\"s\""), "{tokens}");
+        assert!(tokens.contains("::my_core"), "{tokens}");
+        assert!(tokens.contains("fnspecial_handling()->bool{true}"), "{tokens}");
+    }
+
+    #[test]
+    fn supports_fallible_update_and_finalize() {
+        let tokens = compact(parse_quote! {
+            mod agg {
+                fn init() -> i64 { 0 }
+                fn update(state: &mut i64, x: i64) -> Result<(), String> { Ok(()) }
+                fn combine(target: &mut i64, source: &i64) {}
+                fn finalize(state: &i64) -> Result<i64, String> { Ok(*state) }
+            }
+        });
+        assert!(tokens.contains("map_err(__p::boxed_error)"), "{tokens}");
+    }
+
+    #[test]
+    fn rejects_bad_shapes() {
+        let e = |m: syn::ItemMod| expand(AggregateAttrs::default(), m).unwrap_err().to_string();
+        assert!(e(parse_quote!(mod bare;)).contains("inline"));
+        assert!(e(parse_quote! {
+            mod m { fn update(s: &mut i64) {} fn combine(a: &mut i64, b: &i64) {} fn finalize(s: &i64) -> i64 { 0 } }
+        })
+        .contains("must define a `init` fn"));
+        assert!(e(parse_quote! {
+            mod m { fn init() -> i64 { 0 } fn update() {} fn combine(a: &mut i64, b: &i64) {} fn finalize(s: &i64) -> i64 { 0 } }
+        })
+        .contains("must take `&mut state`"));
+        assert!(e(parse_quote! {
+            mod m { fn init() -> i64 { 0 } fn update(s: &mut i64, x: i64) {} fn combine(a: &mut i64, b: &i64) {} fn finalize(s: &i64) {} }
+        })
+        .contains("must return a value"));
+    }
+}

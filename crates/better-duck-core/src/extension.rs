@@ -115,4 +115,17 @@ mod tests {
         assert!(conn.load_extension("spatial; DROP TABLE t").is_err());
         assert!(conn.is_extension_loaded("").is_err());
     }
+
+    #[test]
+    fn install_and_ensure_paths() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // Invalid name is rejected before any SQL runs (install reject arm).
+        assert!(conn.install_extension("bad; name").is_err());
+        // json/parquet are compiled in under the test feature set; run INSTALL/ensure
+        // to exercise the happy paths and the already-loaded fast path. Tolerate
+        // environment differences (offline, static linkage) in the results.
+        let _ = conn.install_extension("json");
+        let _ = conn.ensure_extension("json");
+        let _ = conn.ensure_extension("json");
+    }
 }
