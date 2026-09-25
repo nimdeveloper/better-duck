@@ -26,7 +26,8 @@ use crate::{
         DUCKDB_TYPE_DUCKDB_TYPE_BIGINT, DUCKDB_TYPE_DUCKDB_TYPE_BIGNUM,
         DUCKDB_TYPE_DUCKDB_TYPE_BIT, DUCKDB_TYPE_DUCKDB_TYPE_BLOB, DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN,
         DUCKDB_TYPE_DUCKDB_TYPE_DATE, DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE, DUCKDB_TYPE_DUCKDB_TYPE_ENUM,
-        DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT,
+        DUCKDB_TYPE_DUCKDB_TYPE_FLOAT, DUCKDB_TYPE_DUCKDB_TYPE_GEOMETRY,
+        DUCKDB_TYPE_DUCKDB_TYPE_HUGEINT,
         DUCKDB_TYPE_DUCKDB_TYPE_INTEGER, DUCKDB_TYPE_DUCKDB_TYPE_INTERVAL,
         DUCKDB_TYPE_DUCKDB_TYPE_INVALID, DUCKDB_TYPE_DUCKDB_TYPE_LIST, DUCKDB_TYPE_DUCKDB_TYPE_MAP,
         DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT, DUCKDB_TYPE_DUCKDB_TYPE_SQLNULL,
@@ -769,8 +770,10 @@ impl DuckValue {
                     ))
                 }
             },
-            DUCKDB_TYPE_DUCKDB_TYPE_BLOB => {
+            DUCKDB_TYPE_DUCKDB_TYPE_BLOB | DUCKDB_TYPE_DUCKDB_TYPE_GEOMETRY => {
                 // SAFETY: BLOB columns use the same `duckdb_string_t` layout as VARCHAR.
+                // A GEOMETRY column (spatial extension) physically stores its WKB bytes
+                // in that same layout, so it surfaces here as its raw WKB `Blob`.
                 let bytes = unsafe {
                     // TODO: use duckdb_get_blob(value)
                     let values = duckdb_vector_get_data(val) as *mut duckdb_string_t;

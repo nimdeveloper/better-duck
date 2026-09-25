@@ -20,6 +20,9 @@ pub mod helpers;
 #[cfg(feature = "r2d2")]
 pub mod pool;
 pub mod row;
+/// DuckDB `spatial` extension: `ST_*` DSL functions and a load-check helper.
+#[cfg(feature = "spatial")]
+pub mod spatial;
 pub mod types;
 /// Newtype wrappers for binding/loading DuckDB-specific-typed values in the DSL.
 pub mod values;

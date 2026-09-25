@@ -23,6 +23,8 @@ pub mod connection;
 pub mod database;
 /// Error types returned by this crate.
 pub mod error;
+/// DuckDB extension management (`INSTALL`/`LOAD`/check) on `Connection`.
+mod extension;
 mod helpers;
 /// Small exported declarative helper macros (`transaction!`, `params!`).
 #[macro_use]
