@@ -34,6 +34,10 @@ pool            = ["dep:r2d2"]
 async           = ["dep:tokio"]
 udf             = ["dep:better-duck-macros"]
 derive          = ["dep:better-duck-macros"]
+# Make the data derives additionally emit `better_duck_diesel` impls. Turned on by
+# `better-duck-diesel/derive`; the emitted code resolves `::better_duck_diesel` in
+# the user crate, so core itself gains no diesel dependency.
+derive-diesel   = ["derive", "better-duck-macros/diesel"]
 
 [package.metadata.docs.rs]
 all-features = true

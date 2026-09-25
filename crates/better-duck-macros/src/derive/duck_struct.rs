@@ -5,7 +5,7 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, LitStr};
+use syn::{Data, DeriveInput, Fields, LitStr, Path};
 
 use super::{duck_field_name, parse_duck_container};
 
@@ -54,6 +54,11 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     }
 
     // <DUCKSTRUCT-QUOTE>
+    #[cfg(feature = "diesel")]
+    let diesel_impls = diesel_emission(cratep, ident, &impl_generics, &ty_generics, where_clause);
+    #[cfg(not(feature = "diesel"))]
+    let diesel_impls = quote! {};
+
     Ok(quote! {
         #[automatically_derived]
         impl #impl_generics ::core::convert::From<#ident #ty_generics>
@@ -82,5 +87,55 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
         }
+
+        #diesel_impls
     })
+}
+
+/// When the macros crate's `diesel` feature is on, emits `FromSql`/`ToSql` for the
+/// derived struct at `better_duck_diesel::sql_types::DuckStruct`, routing through
+/// the struct's `From<T> for DuckValue` / `FromDuckValue` impls above.
+#[cfg(feature = "diesel")]
+fn diesel_emission(
+    cratep: &Path,
+    ident: &syn::Ident,
+    impl_generics: &syn::ImplGenerics<'_>,
+    ty_generics: &syn::TypeGenerics<'_>,
+    where_clause: Option<&syn::WhereClause>,
+) -> TokenStream {
+    quote! {
+        #[automatically_derived]
+        impl #impl_generics ::diesel::serialize::ToSql<
+            ::better_duck_diesel::sql_types::DuckStruct,
+            ::better_duck_diesel::backend::DuckDb,
+        > for #ident #ty_generics #where_clause
+        where
+            #ident #ty_generics: ::core::clone::Clone,
+        {
+            fn to_sql<'__b>(
+                &'__b self,
+                __out: &mut ::diesel::serialize::Output<
+                    '__b, '_, ::better_duck_diesel::backend::DuckDb,
+                >,
+            ) -> ::diesel::serialize::Result {
+                let __dv = #cratep::types::value::DuckValue::from(::core::clone::Clone::clone(self));
+                __out.set_value(#cratep::types::value_ref::DuckValueRef::from(__dv));
+                ::core::result::Result::Ok(::diesel::serialize::IsNull::No)
+            }
+        }
+
+        #[automatically_derived]
+        impl #impl_generics ::diesel::deserialize::FromSql<
+            ::better_duck_diesel::sql_types::DuckStruct,
+            ::better_duck_diesel::backend::DuckDb,
+        > for #ident #ty_generics #where_clause {
+            fn from_sql(
+                __val: #cratep::types::value_ref::DuckValueRef<'_>,
+            ) -> ::diesel::deserialize::Result<Self> {
+                let __dv = #cratep::types::value::DuckValue::from(&__val);
+                <Self as #cratep::FromDuckValue>::from_duck_value(&__dv)
+                    .map_err(|__e| ::std::convert::Into::into(::std::format!("{:?}", __e)))
+            }
+        }
+    }
 }

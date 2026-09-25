@@ -29,6 +29,11 @@ pub mod values;
 
 pub use connection::DuckDbConnection;
 
+/// The better-duck data derives, re-exported with diesel `FromSql`/`ToSql`
+/// emission enabled (requires the `derive` feature).
+#[cfg(feature = "derive")]
+pub use better_duck_core::{DuckEnum, DuckStruct, FromRow, ToRow};
+
 /// DuckDB-specific SQL types for use in the `table!` macro and query DSL.
 pub mod sql_types {
     pub use crate::types::duckdb_types::*;

@@ -102,6 +102,12 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
+    #[cfg(feature = "diesel")]
+    let diesel_impls =
+        diesel_emission(cratep, ident, &impl_generics, &ty_generics, where_clause);
+    #[cfg(not(feature = "diesel"))]
+    let diesel_impls = quote! {};
+
     // <DUCKENUM-QUOTE>
     let inherent_and_from = quote! {
         #[doc(hidden)]
@@ -190,5 +196,65 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     Ok(quote! {
         #inherent_and_from
         #traits
+        #diesel_impls
     })
+}
+
+/// When the macros crate's `diesel` feature is on, emits `FromSql`/`ToSql` for the
+/// derived enum at `better_duck_diesel::sql_types::DuckEnum`, so it reads/writes
+/// through a diesel `DuckDb` connection (via `sql_query` + `QueryableByName`, the
+/// established path for DuckDB-specific SQL types). The deriving crate must depend
+/// on `better-duck-diesel`. Emits nothing when the feature is off.
+#[cfg(feature = "diesel")]
+fn diesel_emission(
+    cratep: &Path,
+    ident: &syn::Ident,
+    impl_generics: &syn::ImplGenerics<'_>,
+    ty_generics: &syn::TypeGenerics<'_>,
+    where_clause: Option<&syn::WhereClause>,
+) -> TokenStream {
+    quote! {
+        #[automatically_derived]
+        impl #impl_generics ::diesel::serialize::ToSql<
+            ::better_duck_diesel::sql_types::DuckEnum,
+            ::better_duck_diesel::backend::DuckDb,
+        > for #ident #ty_generics #where_clause {
+            fn to_sql<'__b>(
+                &'__b self,
+                __out: &mut ::diesel::serialize::Output<
+                    '__b, '_, ::better_duck_diesel::backend::DuckDb,
+                >,
+            ) -> ::diesel::serialize::Result {
+                // Bind the label as VARCHAR; DuckDB casts it to the target ENUM.
+                __out.set_value(#cratep::types::value_ref::DuckValueRef::Text(
+                    ::std::borrow::Cow::Borrowed(self.__duck_label()),
+                ));
+                ::core::result::Result::Ok(::diesel::serialize::IsNull::No)
+            }
+        }
+
+        #[automatically_derived]
+        impl #impl_generics ::diesel::deserialize::FromSql<
+            ::better_duck_diesel::sql_types::DuckEnum,
+            ::better_duck_diesel::backend::DuckDb,
+        > for #ident #ty_generics #where_clause {
+            fn from_sql(
+                __val: #cratep::types::value_ref::DuckValueRef<'_>,
+            ) -> ::diesel::deserialize::Result<Self> {
+                let __label: ::std::string::String = match __val {
+                    #cratep::types::value_ref::DuckValueRef::Enum(__e) => {
+                        ::std::string::String::from(__e.label())
+                    },
+                    #cratep::types::value_ref::DuckValueRef::Text(__s) => {
+                        ::std::string::String::from(__s.as_ref())
+                    },
+                    _ => return ::core::result::Result::Err(
+                        "unexpected value for enum column".into()),
+                };
+                <#ident #ty_generics>::__duck_from_label(&__label)
+                    .ok_or_else(|| ::std::convert::Into::into(::std::format!(
+                        "unknown enum label {:?}", __label)))
+            }
+        }
+    }
 }

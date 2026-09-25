@@ -21,5 +21,11 @@ proc-macro2 = "1.0"
 quote       = "1.0"
 syn         = { version = "3.0", features = ["full", "extra-traits"] }
 
+[features]
+# Emit `better_duck_diesel`-targeted impls from the data derives. The emitted code
+# references `::better_duck_diesel` / `::diesel` in the *user* crate; this crate
+# gains no dependency on either. Enabled via `better-duck-core/derive-diesel`.
+diesel = []
+
 [dev-dependencies]
 trybuild = "1.0"

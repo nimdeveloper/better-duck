@@ -6,6 +6,7 @@ pub mod blob;
 pub mod conditional;
 pub mod datetime;
 pub mod hash;
+pub mod json;
 pub mod numeric;
 pub mod regex;
 pub mod string;

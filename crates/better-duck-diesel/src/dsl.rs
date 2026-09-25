@@ -1,12 +1,15 @@
 //! DuckDB DSL prelude: extension traits, operators, and scalar functions to bring
 //! into scope with `use better_duck_diesel::dsl::*;` (alongside `use diesel::prelude::*;`).
 
+pub use crate::expressions::aggregates::approximate::*;
+pub use crate::expressions::aggregates::bit_agg::*;
 pub use crate::expressions::aggregates::general::*;
 pub use crate::expressions::aggregates::statistical::*;
 pub use crate::expressions::functions::blob::*;
 pub use crate::expressions::functions::conditional::*;
 pub use crate::expressions::functions::datetime::*;
 pub use crate::expressions::functions::hash::*;
+pub use crate::expressions::functions::json::*;
 pub use crate::expressions::functions::numeric::*;
 pub use crate::expressions::functions::regex::*;
 pub use crate::expressions::functions::string::*;
