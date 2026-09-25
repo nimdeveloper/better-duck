@@ -417,30 +417,25 @@ mod tests {
         let map: std::collections::HashMap<String, i32> =
             FromDuckValue::from_duck_value(&DuckValue::Struct(fields)).unwrap();
         assert_eq!(map.get("a"), Some(&1));
-        assert!(std::collections::HashMap::<String, i32>::from_duck_value(&DuckValue::Int(0))
-            .is_err());
+        assert!(
+            std::collections::HashMap::<String, i32>::from_duck_value(&DuckValue::Int(0)).is_err()
+        );
     }
 
     #[cfg(feature = "chrono")]
     #[test]
     fn reads_chrono_temporals() {
-        use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
         use crate::types::date_chrono::TimeTz;
+        use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
 
         let d = NaiveDate::from_ymd_opt(2020, 1, 2).unwrap();
         let t = NaiveTime::from_hms_opt(3, 4, 5).unwrap();
         let dt = d.and_time(t);
         assert_eq!(NaiveDate::from_duck_value(&DuckValue::Date(d)).unwrap(), d);
         assert_eq!(NaiveTime::from_duck_value(&DuckValue::Time(t)).unwrap(), t);
-        assert_eq!(
-            chrono::NaiveDateTime::from_duck_value(&DuckValue::Timestamp(dt)).unwrap(),
-            dt
-        );
+        assert_eq!(chrono::NaiveDateTime::from_duck_value(&DuckValue::Timestamp(dt)).unwrap(), dt);
         let utc = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
-        assert_eq!(
-            DateTime::<Utc>::from_duck_value(&DuckValue::TimestampTz(utc)).unwrap(),
-            utc
-        );
+        assert_eq!(DateTime::<Utc>::from_duck_value(&DuckValue::TimestampTz(utc)).unwrap(), utc);
         let dur = Duration::seconds(90);
         assert_eq!(Duration::from_duck_value(&DuckValue::Interval(dur)).unwrap(), dur);
         let tz = TimeTz { time: t, offset_secs: 3600 };

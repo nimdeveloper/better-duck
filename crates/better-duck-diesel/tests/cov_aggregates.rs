@@ -20,9 +20,11 @@ diesel::table! {
 
 fn setup() -> DuckDbConnection {
     let mut c = DuckDbConnection::establish(":memory:").unwrap();
-    diesel::sql_query("CREATE TABLE agg_t (id INTEGER, d DOUBLE, y DOUBLE, b BOOLEAN, m BIGINT, t VARCHAR)")
-        .execute(&mut c)
-        .unwrap();
+    diesel::sql_query(
+        "CREATE TABLE agg_t (id INTEGER, d DOUBLE, y DOUBLE, b BOOLEAN, m BIGINT, t VARCHAR)",
+    )
+    .execute(&mut c)
+    .unwrap();
     diesel::sql_query(
         "INSERT INTO agg_t VALUES (1,1.0,2.0,true,6,'a'),(2,2.0,4.0,false,3,'b'),(3,3.0,6.0,true,5,'a')",
     )

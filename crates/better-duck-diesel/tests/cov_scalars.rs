@@ -187,5 +187,3 @@ fn list_and_map_functions() {
     mp::table.select(map_keys(mp::m)).execute(&mut c).unwrap();
     mp::table.select(map_values(mp::m)).execute(&mut c).unwrap();
 }
-
-

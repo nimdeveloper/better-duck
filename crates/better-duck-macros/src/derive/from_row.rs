@@ -74,13 +74,21 @@ mod tests {
 
     #[test]
     fn rejects_non_struct() {
-        let err = expand(syn::parse_quote!(enum E { A })).unwrap_err();
+        let err = expand(syn::parse_quote!(
+            enum E {
+                A,
+            }
+        ))
+        .unwrap_err();
         assert!(err.to_string().contains("can only be derived for a struct"), "{err}");
     }
 
     #[test]
     fn rejects_tuple_struct() {
-        let err = expand(syn::parse_quote!(struct T(i32);)).unwrap_err();
+        let err = expand(syn::parse_quote!(
+            struct T(i32);
+        ))
+        .unwrap_err();
         assert!(err.to_string().contains("named fields"), "{err}");
     }
 }

@@ -229,7 +229,10 @@ mod tests {
         let bad2: DeriveInput = syn::parse_quote! {
             #[duck(rename_all = "nonsense")] struct S { a: i32 }
         };
-        assert!(parse_duck_container(&bad2).unwrap_err().to_string().contains("unknown `rename_all`"));
+        assert!(parse_duck_container(&bad2)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown `rename_all`"));
     }
 
     #[test]
@@ -252,6 +255,9 @@ mod tests {
         let di: DeriveInput = syn::parse_quote! {
             struct S { #[duck(bogus = "x")] a: i32 }
         };
-        assert!(duck_field_name(first_field(&di), None).unwrap_err().to_string().contains("unknown `duck` field"));
+        assert!(duck_field_name(first_field(&di), None)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown `duck` field"));
     }
 }

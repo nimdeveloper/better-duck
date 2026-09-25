@@ -46,13 +46,11 @@ fn row_field_name_and_null_accessors() {
     let mut c = DuckDbConnection::establish(":memory:").unwrap();
     // QueryableByName looks fields up by name (Field::field_name); the NULL column
     // exercises the null path (Field::value → None / Field::is_null).
-    let rows: Vec<NamedRow> = diesel::sql_query("SELECT 1 AS id, NULL AS name")
-        .get_results(&mut c)
-        .unwrap();
+    let rows: Vec<NamedRow> =
+        diesel::sql_query("SELECT 1 AS id, NULL AS name").get_results(&mut c).unwrap();
     assert_eq!(rows, vec![NamedRow { id: 1, name: None }]);
 
-    let rows: Vec<NamedRow> = diesel::sql_query("SELECT 2 AS id, 'x' AS name")
-        .get_results(&mut c)
-        .unwrap();
+    let rows: Vec<NamedRow> =
+        diesel::sql_query("SELECT 2 AS id, 'x' AS name").get_results(&mut c).unwrap();
     assert_eq!(rows, vec![NamedRow { id: 2, name: Some("x".to_owned()) }]);
 }

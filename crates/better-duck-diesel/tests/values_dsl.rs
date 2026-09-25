@@ -54,13 +54,25 @@ fn remaining_integer_newtypes_roundtrip() {
     let mut conn = conn();
 
     let a = TinyInt(-5);
-    assert_eq!(diesel::select(a.into_sql::<DuckTinyInt>()).get_result::<TinyInt>(&mut conn).unwrap(), a);
+    assert_eq!(
+        diesel::select(a.into_sql::<DuckTinyInt>()).get_result::<TinyInt>(&mut conn).unwrap(),
+        a
+    );
     let b = UTinyInt(200);
-    assert_eq!(diesel::select(b.into_sql::<DuckUTinyInt>()).get_result::<UTinyInt>(&mut conn).unwrap(), b);
+    assert_eq!(
+        diesel::select(b.into_sql::<DuckUTinyInt>()).get_result::<UTinyInt>(&mut conn).unwrap(),
+        b
+    );
     let d = USmallInt(60_000);
-    assert_eq!(diesel::select(d.into_sql::<DuckUSmallInt>()).get_result::<USmallInt>(&mut conn).unwrap(), d);
+    assert_eq!(
+        diesel::select(d.into_sql::<DuckUSmallInt>()).get_result::<USmallInt>(&mut conn).unwrap(),
+        d
+    );
     let e = UHugeInt(u128::MAX);
-    assert_eq!(diesel::select(e.into_sql::<DuckUHugeInt>()).get_result::<UHugeInt>(&mut conn).unwrap(), e);
+    assert_eq!(
+        diesel::select(e.into_sql::<DuckUHugeInt>()).get_result::<UHugeInt>(&mut conn).unwrap(),
+        e
+    );
 }
 
 #[test]
@@ -74,7 +86,8 @@ fn bit_and_bignum_newtypes_roundtrip() {
     assert_eq!(got, bit);
 
     let bn = Bignum(better_duck_core::types::DuckBignum::new(vec![42], false));
-    let got: Bignum = diesel::select(bn.clone().into_sql::<DuckBignum>()).get_result(&mut conn).unwrap();
+    let got: Bignum =
+        diesel::select(bn.clone().into_sql::<DuckBignum>()).get_result(&mut conn).unwrap();
     assert_eq!(got, bn);
 }
 

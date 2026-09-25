@@ -295,8 +295,8 @@ mod tests {
 
     #[test]
     fn scalar_attrs_parse_every_option() {
-        let a = parse_scalar_attrs(quote!(name = "f", crate = ::foo, volatile, state(i64, 0)))
-            .unwrap();
+        let a =
+            parse_scalar_attrs(quote!(name = "f", crate = ::foo, volatile, state(i64, 0))).unwrap();
         assert_eq!(a.common.name.unwrap().value(), "f");
         assert!(a.common.crate_path.is_some());
         assert!(a.volatile);
@@ -308,7 +308,10 @@ mod tests {
 
     #[test]
     fn scalar_attrs_reject_bad_input() {
-        assert!(parse_scalar_attrs(quote!(name = "")).unwrap_err().to_string().contains("non-empty"));
+        assert!(parse_scalar_attrs(quote!(name = ""))
+            .unwrap_err()
+            .to_string()
+            .contains("non-empty"));
         assert!(parse_scalar_attrs(quote!(name = "a", name = "b"))
             .unwrap_err()
             .to_string()
@@ -317,8 +320,14 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("twice"));
-        assert!(parse_scalar_attrs(quote!(bogus)).unwrap_err().to_string().contains("unknown option"));
-        assert!(parse_scalar_attrs(quote!(name = 42)).unwrap_err().to_string().contains("string literal"));
+        assert!(parse_scalar_attrs(quote!(bogus))
+            .unwrap_err()
+            .to_string()
+            .contains("unknown option"));
+        assert!(parse_scalar_attrs(quote!(name = 42))
+            .unwrap_err()
+            .to_string()
+            .contains("string literal"));
     }
 
     #[test]
@@ -342,7 +351,10 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("not supported"));
-        assert!(parse_table_attrs(quote!(nope)).unwrap_err().to_string().contains("unknown option"));
+        assert!(parse_table_attrs(quote!(nope))
+            .unwrap_err()
+            .to_string()
+            .contains("unknown option"));
     }
 
     #[test]
@@ -360,7 +372,10 @@ mod tests {
         let g = parse_aggregate_attrs(quote!(name = "agg", special_handling)).unwrap();
         assert_eq!(g.common.name.unwrap().value(), "agg");
         assert!(g.special_handling);
-        assert!(parse_aggregate_attrs(quote!(what)).unwrap_err().to_string().contains("unknown option"));
+        assert!(parse_aggregate_attrs(quote!(what))
+            .unwrap_err()
+            .to_string()
+            .contains("unknown option"));
     }
 
     #[test]

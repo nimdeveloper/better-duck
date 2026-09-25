@@ -22,7 +22,8 @@ pub fn duckdb_scalar(
 ) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let original = input.clone();
-    match attrs::parse_scalar_attrs(attr.into()).and_then(|attrs| udf::scalar::expand(attrs, input)) {
+    match attrs::parse_scalar_attrs(attr.into()).and_then(|attrs| udf::scalar::expand(attrs, input))
+    {
         Ok(expanded) => expanded.into(),
         Err(err) => {
             // Re-emit the original item alongside the error so the user gets one

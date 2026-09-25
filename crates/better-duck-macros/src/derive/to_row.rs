@@ -77,7 +77,10 @@ mod tests {
         let tokens = compact(syn::parse_quote! {
             struct Pt { x: i32, y: i32 }
         });
-        assert!(tokens.contains("implAppendAbleforPt") || tokens.contains("AppendAbleforPt"), "{tokens}");
+        assert!(
+            tokens.contains("implAppendAbleforPt") || tokens.contains("AppendAbleforPt"),
+            "{tokens}"
+        );
         // First field uses the base index; the second is offset by 1.
         assert!(tokens.contains("__idx+1u64"), "{tokens}");
         assert!(tokens.contains("appender_append"), "{tokens}");
@@ -94,13 +97,19 @@ mod tests {
 
     #[test]
     fn rejects_non_struct_and_tuple() {
-        assert!(expand(syn::parse_quote!(enum E { A }))
-            .unwrap_err()
-            .to_string()
-            .contains("can only be derived for a struct"));
-        assert!(expand(syn::parse_quote!(struct T(i32);))
-            .unwrap_err()
-            .to_string()
-            .contains("named fields"));
+        assert!(expand(syn::parse_quote!(
+            enum E {
+                A,
+            }
+        ))
+        .unwrap_err()
+        .to_string()
+        .contains("can only be derived for a struct"));
+        assert!(expand(syn::parse_quote!(
+            struct T(i32);
+        ))
+        .unwrap_err()
+        .to_string()
+        .contains("named fields"));
     }
 }

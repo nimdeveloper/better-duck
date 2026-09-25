@@ -290,18 +290,28 @@ mod tests {
 
     #[test]
     fn rejects_struct_non_unit_and_empty() {
-        assert!(expand(syn::parse_quote!(struct S { a: i32 }))
-            .unwrap_err()
-            .to_string()
-            .contains("can only be derived for an enum"));
-        assert!(expand(syn::parse_quote!(enum E { A(i32) }))
-            .unwrap_err()
-            .to_string()
-            .contains("must be unit variants"));
-        assert!(expand(syn::parse_quote!(enum E {}))
-            .unwrap_err()
-            .to_string()
-            .contains("at least one variant"));
+        assert!(expand(syn::parse_quote!(
+            struct S {
+                a: i32,
+            }
+        ))
+        .unwrap_err()
+        .to_string()
+        .contains("can only be derived for an enum"));
+        assert!(expand(syn::parse_quote!(
+            enum E {
+                A(i32),
+            }
+        ))
+        .unwrap_err()
+        .to_string()
+        .contains("must be unit variants"));
+        assert!(expand(syn::parse_quote!(
+            enum E {}
+        ))
+        .unwrap_err()
+        .to_string()
+        .contains("at least one variant"));
     }
 
     #[test]

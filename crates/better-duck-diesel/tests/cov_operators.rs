@@ -16,7 +16,9 @@ diesel::table! {
 fn setup() -> DuckDbConnection {
     let mut c = DuckDbConnection::establish(":memory:").unwrap();
     diesel::sql_query("CREATE TABLE ops (id INTEGER, t VARCHAR)").execute(&mut c).unwrap();
-    diesel::sql_query("INSERT INTO ops VALUES (1, 'Apple'), (2, 'banana')").execute(&mut c).unwrap();
+    diesel::sql_query("INSERT INTO ops VALUES (1, 'Apple'), (2, 'banana')")
+        .execute(&mut c)
+        .unwrap();
     c
 }
 

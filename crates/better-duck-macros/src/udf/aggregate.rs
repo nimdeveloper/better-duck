@@ -287,7 +287,10 @@ mod tests {
     #[test]
     fn rejects_bad_shapes() {
         let e = |m: syn::ItemMod| expand(AggregateAttrs::default(), m).unwrap_err().to_string();
-        assert!(e(parse_quote!(mod bare;)).contains("inline"));
+        assert!(e(parse_quote!(
+            mod bare;
+        ))
+        .contains("inline"));
         assert!(e(parse_quote! {
             mod m { fn update(s: &mut i64) {} fn combine(a: &mut i64, b: &i64) {} fn finalize(s: &i64) -> i64 { 0 } }
         })

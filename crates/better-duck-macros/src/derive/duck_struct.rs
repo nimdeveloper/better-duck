@@ -163,13 +163,19 @@ mod tests {
 
     #[test]
     fn rejects_non_struct_and_tuple() {
-        assert!(expand(syn::parse_quote!(enum E { A }))
-            .unwrap_err()
-            .to_string()
-            .contains("can only be derived for a struct"));
-        assert!(expand(syn::parse_quote!(struct T(i32);))
-            .unwrap_err()
-            .to_string()
-            .contains("named fields"));
+        assert!(expand(syn::parse_quote!(
+            enum E {
+                A,
+            }
+        ))
+        .unwrap_err()
+        .to_string()
+        .contains("can only be derived for a struct"));
+        assert!(expand(syn::parse_quote!(
+            struct T(i32);
+        ))
+        .unwrap_err()
+        .to_string()
+        .contains("named fields"));
     }
 }
