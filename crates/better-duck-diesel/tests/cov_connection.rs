@@ -7,6 +7,7 @@ use better_duck_diesel::DuckDbConnection;
 use diesel::connection::{CacheSize, Connection, SimpleConnection};
 use diesel::migration::MigrationConnection;
 use diesel::prelude::*;
+#[cfg(feature = "r2d2")]
 use diesel::r2d2::R2D2Connection;
 use diesel::sql_types::{Integer, Nullable, Text};
 
@@ -19,7 +20,8 @@ fn connection_surface_methods() {
     // Instrumentation + cache-size setters.
     c.set_instrumentation(diesel::connection::get_default_instrumentation());
     c.set_prepared_statement_cache_size(CacheSize::Unbounded);
-    // r2d2 ping + migration setup table creation.
+    // r2d2 ping (only when the `r2d2` feature is enabled) + migration setup.
+    #[cfg(feature = "r2d2")]
     R2D2Connection::ping(&mut c).unwrap();
     MigrationConnection::setup(&mut c).unwrap();
     // batch_execute happy path.
