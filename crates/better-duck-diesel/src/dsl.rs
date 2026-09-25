@@ -3,10 +3,13 @@
 
 pub use crate::expressions::aggregates::general::*;
 pub use crate::expressions::aggregates::statistical::*;
+pub use crate::expressions::functions::blob::*;
 pub use crate::expressions::functions::conditional::*;
 pub use crate::expressions::functions::datetime::*;
+pub use crate::expressions::functions::hash::*;
 pub use crate::expressions::functions::numeric::*;
 pub use crate::expressions::functions::regex::*;
 pub use crate::expressions::functions::string::*;
+pub use crate::expressions::functions::uuid::*;
 pub use crate::expressions::operators::comparison::DuckExpressionMethods;
 pub use crate::expressions::operators::pattern::DuckTextExpressionMethods;

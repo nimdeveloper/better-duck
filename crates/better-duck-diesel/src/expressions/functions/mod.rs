@@ -2,8 +2,11 @@
 //! `define_sql_function!`. These are backend-agnostic SQL calls that Diesel does
 //! not provide out of the box.
 
+pub mod blob;
 pub mod conditional;
 pub mod datetime;
+pub mod hash;
 pub mod numeric;
 pub mod regex;
 pub mod string;
+pub mod uuid;
