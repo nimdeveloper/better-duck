@@ -14,205 +14,226 @@
 
 ---
 
-## Why better-duck?
+## Highlights
 
-Most Rust DuckDB bindings depend on Arrow or require a system-installed DuckDB library. `better-duck` takes a different approach:
-
-- **Bundled DuckDB** — can ship with the DuckDB C library compiled in; no system package needed.
-- **No Arrow dependency** — columnar I/O is great for data pipelines, but most app-level OLAP code just needs rows. We skip the Arrow overhead entirely.
-- **Diesel ORM** — the `better-duck-diesel` crate is a full Diesel 2.3 backend, so your existing `table!` / query DSL code works without changes.
-- **Embedded-first** — designed to run inside Tauri desktop apps, iOS cross-builds, and other environments where you can't rely on a system library.
-- **Safe public API** — every FFI call is wrapped; nothing `unsafe` leaks into user code.
+- **Bundled DuckDB** — the DuckDB C library compiles straight in; no system package, no runtime dependency to install.
+- **Row-oriented, Arrow-free** — direct access to rows and values with a lean dependency tree, ideal for application-level OLAP.
+- **Safe by construction** — every FFI call is wrapped; nothing `unsafe` leaks into your code, across the full DuckDB type system.
+- **Comprehensive type coverage** — integers of every width, `DECIMAL`, `UUID`, `BIT`, `BIGNUM`, temporals, and the composite `LIST` / `ARRAY` / `STRUCT` / `MAP` / `UNION` / `ENUM` types.
+- **Diesel 2.3 ORM backend** — a full custom backend: query DSL, migrations, an r2d2 pool, and a large library of DuckDB-specific SQL functions, aggregates, and operators.
+- **User-defined functions & derives** — register plain Rust functions as scalar/table/aggregate/cast functions, and map Rust structs/enums to DuckDB rows and types with `#[derive(…)]` — no `unsafe`, no manual vector handling.
+- **Embedded-first** — designed to run inside Tauri desktop apps, iOS cross-builds, and other environments where a system library isn't an option.
 
 ---
 
 ## Crates
 
-| Crate                | crates.io                                                                                                                               | Description                                                                                    |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `better-duck-core`   | [![crates.io](https://img.shields.io/crates/v/better-duck-core.svg?style=for-the-badge)](https://crates.io/crates/better-duck-core)     | Low-level DuckDB wrapper — connections, prepared statements, bulk appender, full type coverage |
-| `better-duck-diesel` | [![crates.io](https://img.shields.io/crates/v/better-duck-diesel.svg?style=for-the-badge)](https://crates.io/crates/better-duck-diesel) | Diesel 2.3 backend — full query DSL, migrations, r2d2 connection pool                          |
-| `better-duck-macros` | [![crates.io](https://img.shields.io/crates/v/better-duck-macros.svg?style=for-the-badge)](https://crates.io/crates/better-duck-macros) | Procedural macros for better-duck user-defined functions                                       |
-| `better-duck-sys`    | Internal                                                                                                                                | Vendored DuckDB C API bindings used by the workspace                                           |
+| Crate                | crates.io                                                                                                                               | Description                                                                                     |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `better-duck-core`   | [![crates.io](https://img.shields.io/crates/v/better-duck-core.svg?style=for-the-badge)](https://crates.io/crates/better-duck-core)     | DuckDB client — connections, prepared statements, bulk appender, full type coverage, UDFs       |
+| `better-duck-diesel` | [![crates.io](https://img.shields.io/crates/v/better-duck-diesel.svg?style=for-the-badge)](https://crates.io/crates/better-duck-diesel) | Diesel 2.3 backend — query DSL, migrations, r2d2 pool, DuckDB SQL functions/aggregates/operators |
+| `better-duck-macros` | [![crates.io](https://img.shields.io/crates/v/better-duck-macros.svg?style=for-the-badge)](https://crates.io/crates/better-duck-macros) | Procedural macros powering the UDFs and data derives (used via core/diesel feature flags)       |
+| `better-duck-sys`    | Internal                                                                                                                                | Vendored DuckDB C API bindings used by the workspace                                            |
 
 ---
 
-## Quick start
+## Installation
 
 ```toml
 [dependencies]
-# Core only
+# DuckDB client
 better-duck-core = "0.1.0-beta.4"
 
-# Or: Core + Diesel ORM backend
-better-duck-core   = "0.1.0-beta.4"
+# Optional: Diesel ORM backend
 better-duck-diesel = "0.1.0-beta.4"
 ```
 
 > [!NOTE]
-> Cargo's default version requirement (e.g. `"0.1"`) excludes pre-release versions like
-> `-beta.4` — pin the exact pre-release version as shown above, or run
-> `cargo add better-duck-core --version 0.1.0-beta.4`.
+> Cargo's default version requirement (e.g. `"0.1"`) excludes pre-releases like `-beta.4`. Pin the
+> exact version as shown, or run `cargo add better-duck-core --version 0.1.0-beta.4`.
+> `better-duck-macros` is pulled in automatically by the `udf` / `derive` feature flags — you don't
+> depend on it directly.
 
----
 
-## `better-duck-core`
+## Quick start
 
-A low-level, no-ORM DuckDB wrapper that gives you direct access to connections, prepared statements, the bulk appender, and the full `DuckValue` type hierarchy — without pulling in an ORM.
+Minimal, runnable examples for each crate. Expand the one you need.
 
-### Opening a connection
+<details>
+<summary><b><code>better-duck-core</code></b> — connect, query, and bulk-insert</summary>
 
 ```rust
 use better_duck_core::connection::Connection;
 
-// in-memory (great for tests and one-shot scripts)
-let mut conn = Connection::open_in_memory()?;
-
-// on-disk file
-let mut conn = Connection::open("my_database.duckdb")?;
-```
-
-### Execute and iterate rows
-
-```rust
-use better_duck_core::{connection::Connection, types::value::DuckValue};
-
 fn main() -> better_duck_core::error::Result<()> {
-    let mut conn = Connection::open_in_memory()?;
+    let mut conn = Connection::open_in_memory()?; // or Connection::open("app.duckdb")?
 
     conn.execute_batch(
         "CREATE TABLE events (id INTEGER, label TEXT, score DOUBLE);
          INSERT INTO events VALUES (1, 'alpha', 9.5), (2, 'beta', 7.2);",
     )?;
 
-    let mut result = conn.execute("SELECT id, label, score FROM events ORDER BY id")?;
-    for row in result {
+    // `execute` returns an iterator of rows.
+    for row in conn.execute("SELECT id, label, score FROM events ORDER BY id")? {
         let row = row?;
-        println!(
-            "id={:?}  label={:?}  score={:?}",
-            row.get("id"),
-            row.get("label"),
-            row.get("score"),
-        );
+        println!("{:?} {:?} {:?}", row.get("id"), row.get("label"), row.get("score"));
     }
     Ok(())
 }
 ```
 
+</details>
+
+<details>
+<summary><b><code>better-duck-diesel</code></b> — Diesel ORM backend</summary>
+
+```rust
+use better_duck_diesel::DuckDbConnection;
+use diesel::{connection::SimpleConnection, prelude::*};
+
+diesel::table! {
+    products (id) { id -> Integer, name -> Text, price -> Double }
+}
+
+fn main() -> QueryResult<()> {
+    let mut conn = DuckDbConnection::establish(":memory:")?;
+    conn.batch_execute("CREATE TABLE products (id INTEGER, name VARCHAR, price DOUBLE)")?;
+
+    diesel::insert_into(products::table)
+        .values((products::id.eq(1), products::name.eq("widget"), products::price.eq(9.99)))
+        .execute(&mut conn)?;
+
+    let cheap: Vec<(i32, String)> = products::table
+        .filter(products::price.lt(20.0))
+        .select((products::id, products::name))
+        .load(&mut conn)?;
+    println!("{cheap:?}");
+    Ok(())
+}
+```
+
+</details>
+
+<details>
+<summary><b><code>better-duck-macros</code></b> — UDFs & data derives</summary>
+
+Enabled through core's `udf` / `derive` feature flags (`better-duck-core = { version = "0.1.0-beta.4", features = ["udf", "derive"] }`).
+
+```rust
+use better_duck_core::{connection::Connection, duckdb_scalar, FromRow};
+
+// Map a query row onto a struct.
+#[derive(FromRow, Debug)]
+struct Event { id: i32, label: String }
+
+// Register a plain Rust fn as a DuckDB scalar function — types inferred from the signature.
+#[duckdb_scalar]
+fn shout(s: &str) -> String { s.to_uppercase() }
+
+fn main() -> better_duck_core::error::Result<()> {
+    let mut conn = Connection::open_in_memory()?;
+    shout::register(&mut conn)?;
+    conn.execute_batch("CREATE TABLE events (id INTEGER, label TEXT); INSERT INTO events VALUES (1, 'a')")?;
+
+    let events: Vec<Event> = conn.execute("SELECT id, label FROM events")?.to_structs()?;
+    conn.execute("SELECT shout('hi')")?; // "HI"
+    println!("{events:?}");
+    Ok(())
+}
+```
+
+</details>
+
+<!-- REFERENCE-MARKER -->
+
+## Reference
+
+Full per-crate documentation. Each section is collapsed by default — expand what you need, or read the rendered API docs on [docs.rs](https://docs.rs/better-duck-core).
+
+<details>
+<summary><b><code>better-duck-core</code></b> — DuckDB client reference</summary>
+
+### Opening a connection
+
+```rust
+use better_duck_core::connection::Connection;
+
+let mut conn = Connection::open_in_memory()?;      // in-memory
+let mut conn = Connection::open("my_database.duckdb")?; // on-disk
+```
+
+### Executing and iterating rows
+
+`execute` returns a `DuckResult`, which is an `Iterator` of `DuckRow`:
+
+```rust
+let mut result = conn.execute("SELECT id, label FROM events ORDER BY id")?;
+for row in result {
+    let row = row?;
+    println!("{:?} {:?}", row.get("id"), row.get("label"));
+}
+```
+
 ### Parameterized queries
 
-Parameters are positional (`$1`, `$2`, …) and passed as `&mut [&mut dyn AppendAble]`:
+Parameters are positional (`$1`, `$2`, …). Pass them as `&mut [&mut dyn AppendAble]` — or use the
+`params!` macro (feature `derive`):
 
 ```rust
 use better_duck_core::types::value::DuckValue;
 
 let mut threshold = DuckValue::Double(8.0);
-let mut rows = conn.execute_with(
+let rows = conn.execute_with(
     "SELECT id, label FROM events WHERE score > $1",
     &mut [&mut threshold],
 )?;
-for row in rows {
-    let row = row?;
-    println!("{:?}", row);
-}
 ```
 
 ### Bulk insert with the Appender
 
-The `Appender` streams rows directly into DuckDB's bulk-ingest path — much faster than individual INSERTs for large datasets:
+The `Appender` streams rows into DuckDB's bulk-ingest path — far faster than individual INSERTs.
+Implement `AppendAble` by hand, or derive it with `#[derive(ToRow)]` (feature `derive`):
 
 ```rust
-use better_duck_core::{connection::Connection, types::appendable::AppendAble};
-use better_duck_core::ffi::{duckdb_appender, duckdb_prepared_statement, duckdb_append_int32, duckdb_bind_int32};
-use better_duck_core::error::Result;
+use better_duck_core::{connection::Connection, ToRow};
 
-struct IntRow(i32);
-
-impl AppendAble for IntRow {
-    fn appender_append(&mut self, appender: duckdb_appender) -> Result<()> {
-        // SAFETY: appender is valid and the table has one INTEGER column.
-        unsafe { duckdb_append_int32(appender, self.0) };
-        Ok(())
-    }
-    fn stmt_append(&mut self, idx: u64, stmt: duckdb_prepared_statement) -> Result<()> {
-        // SAFETY: stmt is valid; idx is a 1-based parameter index.
-        unsafe { duckdb_bind_int32(stmt, idx, self.0) };
-        Ok(())
-    }
-}
+#[derive(ToRow)]
+struct NewItem { id: i32, name: String }
 
 let mut conn = Connection::open_in_memory()?;
-conn.execute_batch("CREATE TABLE nums (v INTEGER)")?;
+conn.execute_batch("CREATE TABLE items (id INTEGER, name TEXT)")?;
 
-let mut app = conn.appender("nums", "main")?;
-for i in 0..10_000i32 {
-    app.append(&mut IntRow(i))?;
-}
-app.save()?; // flush to DuckDB
+let mut app = conn.appender("items", "main")?;
+app.append(&mut NewItem { id: 1, name: "a".to_owned() })?;
+app.save()?; // flush (also auto-flushes on drop)
 ```
-
-The appender auto-flushes on drop (errors go to stderr); call `.save()` explicitly if you want to handle flush errors.
 
 ### Sharing a database, pooling, and async
 
-`Connection::open_in_memory()` gives each connection its own independent in-memory
-database. To share one database across multiple connections — including in-memory
-ones — open a `Database` and `connect()` from it:
+`open_in_memory()` gives each connection its own database. To share one database across connections,
+open a `Database` and `connect()` from it:
 
 ```rust
 use better_duck_core::database::Database;
 
 let db = Database::open_in_memory()?;
 let mut a = db.connect()?;
-let mut b = db.connect()?;
-a.execute_batch("CREATE TABLE t (id INTEGER)")?;
-b.execute_batch("INSERT INTO t VALUES (1)")?; // b sees a's table
+let mut b = db.connect()?; // sees a's tables
 ```
 
-With the `pool` feature, `Database` backs an `r2d2` connection pool:
+- **`pool`** — `Database` backs an r2d2 pool: `DuckDbConnectionManager::memory()?` → `Pool::builder().build(manager)?`.
+- **`async`** — `AsyncConnection` runs each call on `spawn_blocking`, never blocking the executor; `async` + `pool` gives `AsyncPool::with(...)`.
+
+### Extension management
 
 ```rust
-use better_duck_core::pool::{DuckDbConnectionManager, Pool};
-
-let manager = DuckDbConnectionManager::memory()?;
-let pool = Pool::builder().max_size(8).build(manager)?;
-let mut conn = pool.get()?;
+conn.ensure_extension("json")?;                 // load, installing first if needed
+let loaded = conn.is_extension_loaded("json")?; // query duckdb_extensions()
 ```
 
-With the `async` feature, `AsyncConnection` wraps a `Connection` behind
-`tokio::task::spawn_blocking`, so it never blocks the async executor:
+### `DuckValue` and supported types
 
-```rust
-use better_duck_core::AsyncConnection;
-
-let conn = AsyncConnection::open_in_memory().await?;
-conn.execute_batch("CREATE TABLE t (id INTEGER)").await?;
-let result = conn.execute("SELECT * FROM t").await?; // returns a ResultSet
-```
-
-`async` + `pool` together enable `AsyncPool`, whose `with()` method checks a
-connection out and runs a closure on a blocking thread, matching the pattern used
-for transactions (which must not span an `.await` point).
-
-### `DuckValue` type hierarchy
-
-Rows are yielded as `DuckRow`, and each column value is a `DuckValue`:
-
-```rust
-use better_duck_core::types::value::DuckValue;
-
-match value {
-    DuckValue::Int(n)     => println!("integer: {n}"),
-    DuckValue::Text(s)    => println!("text: {s}"),
-    DuckValue::Double(f)  => println!("float: {f}"),
-    DuckValue::Null       => println!("null"),
-    _ => println!("other: {value:?}"),
-}
-```
-
-`DuckValue` is `#[non_exhaustive]` — match with `_` to stay forward-compatible as new types are added.
-
-### Supported DuckDB types
+Rows are `DuckRow`; each column value is a `#[non_exhaustive]` `DuckValue` — match with a `_` arm to stay forward-compatible.
 
 | DuckDB type                    | Rust type                                                                    |
 | ------------------------------ | ---------------------------------------------------------------------------- |
@@ -222,126 +243,43 @@ match value {
 | `INTEGER` / `UINTEGER`         | `i32` / `u32`                                                                |
 | `BIGINT` / `UBIGINT`           | `i64` / `u64`                                                                |
 | `HUGEINT` / `UHUGEINT`         | `i128` / `u128`                                                              |
-| `FLOAT`                        | `f32`                                                                        |
-| `DOUBLE`                       | `f64`                                                                        |
+| `FLOAT` / `DOUBLE`             | `f32` / `f64`                                                                |
 | `DECIMAL` _(feature: decimal)_ | `rust_decimal::Decimal`                                                      |
 | `VARCHAR` / `TEXT`             | `String`                                                                     |
 | `BLOB`                         | `better_duck_core::types::blob::Blob`                                        |
-| `DATE`                         | `chrono::NaiveDate` _(chrono)_ / `DuckDate`                                  |
-| `TIME`                         | `chrono::NaiveTime` _(chrono)_ / `DuckTime`                                  |
-| `TIMESTAMP`                    | `chrono::NaiveDateTime` _(chrono)_                                           |
+| `DATE` / `TIME` / `TIMESTAMP`  | `chrono::NaiveDate` / `NaiveTime` / `NaiveDateTime` _(chrono)_ / native      |
 | `TIMESTAMPTZ`                  | `chrono::DateTime<Utc>` _(chrono)_                                           |
-| `TIME_TZ`                      | `date_chrono::TimeTz` _(chrono)_ / `DuckTimeTz` — UTC offset fully preserved |
+| `TIME_TZ`                      | `date_chrono::TimeTz` _(chrono)_ / `DuckTimeTz` — UTC offset preserved       |
 | `INTERVAL`                     | `chrono::Duration` _(chrono)_ / `std::time::Duration`                        |
 | `LIST` / `ARRAY`               | `Vec<DuckValue>` / `Box<[DuckValue]>`                                        |
-| `STRUCT`                       | `HashMap<String, DuckValue>`                                                 |
-| `MAP`                          | `HashMap<DuckValue, DuckValue>`                                              |
-| `UNION`                        | `Box<DuckValue>` (active member; see roadmap for multi-arm write support)    |
-| `ENUM`                         | `String`                                                                     |
-| `UUID`                         | `better_duck_core::types::uuid::DuckUuid`                                    |
-| `BIT`                          | `better_duck_core::types::bit::DuckBit`                                      |
-| `BIGNUM`                       | `better_duck_core::types::bignum::DuckBignum`                                |
+| `STRUCT` / `MAP`               | `HashMap<String, DuckValue>` / `HashMap<DuckValue, DuckValue>`               |
+| `UNION`                        | active member (see roadmap for multi-arm write)                              |
+| `ENUM`                         | `String` / a derived enum (`#[derive(DuckEnum)]`)                            |
+| `UUID` / `BIT` / `BIGNUM`      | `DuckUuid` / `DuckBit` / `DuckBignum`                                        |
 
 ### User-defined functions _(feature: udf)_
 
-Register plain Rust functions as DuckDB scalar or table functions with the
-`#[duckdb_scalar]` / `#[duckdb_table_function]` attribute macros — no `unsafe`,
-no manual vector handling. Parameter and return types are inferred from the
-Rust signature.
+Register plain Rust functions with attribute macros — parameter/return types inferred from the signature, no `unsafe`. See the [`macros` reference](#reference) below for the full set (`#[duckdb_scalar]`, `#[duckdb_table_function]`, `#[duckdb_aggregate]`, `#[duckdb_cast]`), named parameters, projection pushdown, scalar state, and replacement scans.
 
-```rust
-use better_duck_core::{connection::Connection, duckdb_scalar, duckdb_table_function};
+### Feature flags
 
-/// Scalar function: one value per row, usable in a SELECT list.
-#[duckdb_scalar]
-fn repeat_str(s: &str, n: i32) -> String {
-    s.repeat(n.max(0) as usize)
-}
+| Feature             | Default | Description                                                                         |
+| ------------------- | ------- | ----------------------------------------------------------------------------------- |
+| `bundled`           | ✓       | Compile and embed the DuckDB C library (no system install needed)                   |
+| `chrono`            | ✓       | `chrono` date/time conversions for DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL     |
+| `decimal`           | ✓       | `rust_decimal::Decimal` support for DECIMAL columns                                 |
+| `json`              | —       | Bundle DuckDB's JSON extension (requires `bundled`)                                 |
+| `parquet`           | —       | Bundle DuckDB's Parquet extension (requires `bundled`)                              |
+| `async`             | —       | Tokio async facade (`AsyncConnection`, `AsyncDatabase`, `AsyncPool`)                |
+| `pool`              | —       | `r2d2` connection pool backed by a shared `Database` handle                         |
+| `udf`               | —       | `#[duckdb_scalar]` / `#[duckdb_table_function]` / `#[duckdb_aggregate]` / `#[duckdb_cast]` |
+| `derive`            | —       | `#[derive(FromRow/ToRow/DuckEnum/DuckStruct)]` + `transaction!` / `params!`         |
+| `buildtime_bindgen` | —       | Regenerate FFI bindings at build time (requires LLVM/clang)                         |
 
-/// Table function: rows and columns, usable in a FROM clause.
-#[duckdb_table_function(name = "series", columns("n"))]
-fn series(start: i64, stop: i64) -> impl Iterator<Item = i64> + Send {
-    start..stop
-}
+</details>
 
-let mut conn = Connection::open_in_memory()?;
-repeat_str::register(&mut conn)?;
-series::register(&mut conn)?;
-
-conn.execute("SELECT repeat_str('ab', 3)")?;        // "ababab"
-conn.execute("SELECT sum(n) FROM series(1, 101)")?;  // 5050
-```
-
-`Option<T>` parameters/returns propagate `NULL` explicitly; a `Result<T, E>`
-return fails the query with `E`'s message. See the [`udf` module docs](https://docs.rs/better-duck-core)
-for the full attribute reference and the panic-containment/`panic = "abort"` caveat.
-
-Table functions can also declare named parameters, honor projection pushdown,
-and reach that context from inside the function body via ergonomic macros —
-no manual `BindInfo`/`InitInfo` plumbing:
-
-```rust
-use better_duck_core::{connection::Connection, duck_projection, duckdb_table_function};
-
-/// `start` is positional; `step` is a required SQL named (keyword) parameter.
-/// `projection_pushdown` lets the function see which columns the query wants.
-#[duckdb_table_function(columns("n"), named_params("step"), projection_pushdown)]
-fn stepped(start: i64, step: i64) -> impl Iterator<Item = i64> + Send {
-    let _wanted_columns = duck_projection!(); // Vec<usize>, indices into ["n"]
-    (0..5).map(move |i| start + i * step)
-}
-
-let mut conn = Connection::open_in_memory()?;
-stepped::register(&mut conn)?;
-conn.execute("SELECT n FROM stepped(10, step := 2)")?; // 10, 12, 14, 16, 18
-```
-
-Scalar functions can declare shared state, set once at registration and
-readable via `duck_state!`:
-
-```rust
-use better_duck_core::{connection::Connection, duck_state, duckdb_scalar};
-
-#[duckdb_scalar(state(i32, 10))]
-fn add_offset(x: i32) -> i32 {
-    x + duck_state!(i32)
-}
-
-let mut conn = Connection::open_in_memory()?;
-add_offset::register(&mut conn)?;
-conn.execute("SELECT add_offset(5)")?; // 15
-```
-
-**Replacement scans** _(experimental)_ rewrite an unresolved table reference
-into a table function call — e.g. routing `SELECT * FROM 'data.csv'` to a
-CSV-reading table function by extension — without SQL execution inside the
-callback (see the [`replacement` module docs](https://docs.rs/better-duck-core)
-for the exact scope restriction and why):
-
-```rust
-use better_duck_core::{database::Database, udf::{ReplacementScan, ReplacementScanInfo}};
-
-struct RangeByExtension;
-impl ReplacementScan for RangeByExtension {
-    fn replace(table_name: &str, info: &ReplacementScanInfo) -> better_duck_core::udf::UdfResult<()> {
-        let Some(stem) = table_name.strip_suffix(".range") else { return Ok(()) };
-        info.set_function_name("range")?;
-        info.add_parameter(&stem.parse::<i64>()?)?;
-        Ok(())
-    }
-}
-
-let db = Database::open_in_memory()?;
-db.register_replacement_scan::<RangeByExtension>();
-let mut conn = db.connect()?;
-conn.execute("SELECT * FROM '5.range'")?; // routed to range(5)
-```
-
----
-
-## `better-duck-diesel`
-
-A full [Diesel 2.3](https://diesel.rs) backend for DuckDB. Write normal Diesel DSL code against any DuckDB database — including in-memory, on-disk, and (soon) remote.
+<details>
+<summary><b><code>better-duck-diesel</code></b> — Diesel 2.3 backend reference</summary>
 
 ### Connecting
 
@@ -349,63 +287,31 @@ A full [Diesel 2.3](https://diesel.rs) backend for DuckDB. Write normal Diesel D
 use better_duck_diesel::DuckDbConnection;
 use diesel::prelude::*;
 
-// in-memory
-let mut conn = DuckDbConnection::establish(":memory:")?;
-
-// on-disk file
-let mut conn = DuckDbConnection::establish("/path/to/db.duckdb")?;
-
-// with duckdb:// URL prefix (prefix is stripped)
-let mut conn = DuckDbConnection::establish("duckdb:///path/to/db.duckdb")?;
+let mut conn = DuckDbConnection::establish(":memory:")?;               // in-memory
+let mut conn = DuckDbConnection::establish("/path/to/db.duckdb")?;     // on-disk
+let mut conn = DuckDbConnection::establish("duckdb:///path/db.duckdb")?; // duckdb:// prefix stripped
 ```
 
-### INSERT, SELECT, UPDATE, DELETE
+### CRUD
+
+Standard Diesel — INSERT (with `RETURNING`), SELECT with filter/order, UPDATE, DELETE all work:
 
 ```rust
-use better_duck_diesel::DuckDbConnection;
-use diesel::{connection::SimpleConnection, prelude::*};
+diesel::insert_into(products::table)
+    .values((products::id.eq(1), products::name.eq("widget"), products::price.eq(9.99)))
+    .returning(products::id)
+    .get_results::<i32>(&mut conn)?;
 
-diesel::table! {
-    products (id) {
-        id    -> Integer,
-        name  -> Text,
-        price -> Double,
-    }
-}
+let rows: Vec<(i32, String, f64)> = products::table
+    .filter(products::price.lt(20.0))
+    .order(products::name.asc())
+    .load(&mut conn)?;
 
-fn main() -> QueryResult<()> {
-    let mut conn = DuckDbConnection::establish(":memory:")?;
-    conn.batch_execute(
-        "CREATE TABLE products (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, price DOUBLE NOT NULL)",
-    )?;
+diesel::update(products::table.filter(products::id.eq(1)))
+    .set(products::price.eq(11.99))
+    .execute(&mut conn)?;
 
-    // INSERT with RETURNING
-    let inserted: Vec<(i32, String)> = diesel::insert_into(products::table)
-        .values(&vec![
-            (products::id.eq(1), products::name.eq("widget"), products::price.eq(9.99)),
-            (products::id.eq(2), products::name.eq("gadget"), products::price.eq(24.50)),
-        ])
-        .returning((products::id, products::name))
-        .get_results(&mut conn)?;
-
-    // SELECT with filter and ordering
-    let cheap: Vec<(i32, String, f64)> = products::table
-        .filter(products::price.lt(20.0))
-        .order(products::name.asc())
-        .select((products::id, products::name, products::price))
-        .load(&mut conn)?;
-
-    // UPDATE
-    diesel::update(products::table.filter(products::id.eq(1)))
-        .set(products::price.eq(11.99))
-        .execute(&mut conn)?;
-
-    // DELETE
-    diesel::delete(products::table.filter(products::id.eq(2)))
-        .execute(&mut conn)?;
-
-    Ok(())
-}
+diesel::delete(products::table.filter(products::id.eq(2))).execute(&mut conn)?;
 ```
 
 ### Transactions
@@ -415,14 +321,13 @@ conn.transaction(|conn| {
     diesel::insert_into(products::table)
         .values((products::id.eq(3), products::name.eq("doohickey"), products::price.eq(4.99)))
         .execute(conn)?;
-    // returning Err rolls back; Ok commits
-    Ok(())
+    Ok::<_, diesel::result::Error>(()) // Err rolls back; Ok commits
 })?;
 ```
 
 ### DuckDB-specific SQL types
 
-Use DuckDB types that don't have a standard Diesel equivalent by importing them via `sql_types`:
+Import types that have no standard Diesel equivalent via `sql_types`:
 
 ```rust
 diesel::table! {
@@ -430,15 +335,46 @@ diesel::table! {
     use better_duck_diesel::sql_types::*;
 
     readings (id) {
-        id       -> Integer,
-        sensor   -> DuckEnum,          // DuckDB ENUM column
-        value    -> Double,
-        ts       -> DuckTimestamptz,   // TIMESTAMPTZ column
+        id     -> Integer,
+        sensor -> DuckEnum,        // ENUM
+        ts     -> DuckTimestamptz, // TIMESTAMPTZ
+        tags   -> DuckList,        // LIST
     }
 }
 ```
 
-### DuckDB ↔ Diesel ↔ Rust type mapping
+### DuckDB SQL function / operator / aggregate DSL
+
+`use better_duck_diesel::dsl::*;` brings in a large library of DuckDB SQL that Diesel doesn't ship by
+default — string/search/similarity, numeric & trig, regex, date/time, hashing, encoding, JSON, list &
+map functions; general/statistical/approximate/bit aggregates; and operator methods like `.ilike()`,
+`.similar_to()`, `.glob()`, and `.is_distinct_from()`.
+
+```rust
+use better_duck_diesel::dsl::*;
+use diesel::prelude::*;
+
+let hits: Vec<i32> = products::table
+    .filter(products::name.ilike("wid%"))          // case-insensitive LIKE operator
+    .select(products::id)
+    .load(&mut conn)?;
+
+let n: f64 = diesel::select(sqrt(16.0_f64)).get_result(&mut conn)?; // scalar fn → 4.0
+```
+
+Custom-typed values (`u64`, `i128`, `UUID`, `BIT`, `BIGNUM`, …) bind and load through the
+`better_duck_diesel::values::*` newtypes (e.g. `values::UBigInt`, `values::Uuid`).
+
+### Spatial _(feature: spatial)_
+
+```rust
+use better_duck_diesel::spatial::{ensure_loaded, st_as_text, st_point};
+
+ensure_loaded(&mut conn)?; // INSTALL + LOAD the spatial extension if needed
+let wkt: String = diesel::select(st_as_text(st_point(1.0, 2.0))).get_result(&mut conn)?; // "POINT (1 2)"
+```
+
+### Type mapping
 
 **Standard Diesel types** (work out of the box):
 
@@ -448,120 +384,132 @@ diesel::table! {
 | `SmallInt`      | `SMALLINT`  | `i16`                               |
 | `Integer`       | `INTEGER`   | `i32`                               |
 | `BigInt`        | `BIGINT`    | `i64`                               |
-| `Float`         | `FLOAT`     | `f32`                               |
-| `Double`        | `DOUBLE`    | `f64`                               |
+| `Float` / `Double` | `FLOAT` / `DOUBLE` | `f32` / `f64`                 |
 | `Text`          | `VARCHAR`   | `String`                            |
 | `Binary`        | `BLOB`      | `Vec<u8>`                           |
-| `Date`          | `DATE`      | `chrono::NaiveDate` _(chrono)_      |
-| `Time`          | `TIME`      | `chrono::NaiveTime` _(chrono)_      |
-| `Timestamp`     | `TIMESTAMP` | `chrono::NaiveDateTime` _(chrono)_  |
+| `Date` / `Time` / `Timestamp` | `DATE` / `TIME` / `TIMESTAMP` | `chrono::*` _(chrono)_ |
 | `Numeric`       | `DECIMAL`   | `rust_decimal::Decimal` _(decimal)_ |
 
-**DuckDB-specific types** (import via `better_duck_diesel::sql_types::*`):
+**DuckDB-specific types** (`use better_duck_diesel::sql_types::*;`):
 
-| Diesel SQL type   | DuckDB type           | Rust type                                     |
-| ----------------- | --------------------- | --------------------------------------------- |
-| `DuckTinyInt`     | `TINYINT`             | `i8`                                          |
-| `DuckUTinyInt`    | `UTINYINT`            | `u8`                                          |
-| `DuckUSmallInt`   | `USMALLINT`           | `u16`                                         |
-| `DuckUInt`        | `UINTEGER`            | `u32`                                         |
-| `DuckUBigInt`     | `UBIGINT`             | `u64`                                         |
-| `DuckHugeInt`     | `HUGEINT`             | `i128`                                        |
-| `DuckUHugeInt`    | `UHUGEINT`            | `u128`                                        |
-| `DuckTimestamptz` | `TIMESTAMPTZ`         | `chrono::DateTime<Utc>` _(chrono)_            |
-| `DuckInterval`    | `INTERVAL`            | `chrono::Duration` _(chrono)_                 |
-| `DuckTimeTz`      | `TIME WITH TIME ZONE` | `CoreTimeTz` _(chrono)_                       |
-| `DuckTimeNs`      | `TIME_NS`             | `chrono::NaiveTime` _(chrono)_                |
-| `DuckEnum`        | `ENUM`                | `String`                                      |
-| `DuckList`        | `LIST`                | `Vec<DuckValue>`                              |
-| `DuckArray`       | `ARRAY`               | `Vec<DuckValue>`                              |
-| `DuckStruct`      | `STRUCT`              | `HashMap<String, DuckValue>`                  |
-| `DuckMap`         | `MAP`                 | `HashMap<DuckValue, DuckValue>`               |
-| `DuckUnion`       | `UNION`               | `Box<DuckValue>` (active member)              |
-| `DuckUuid`        | `UUID`                | `better_duck_core::types::uuid::DuckUuid`     |
-| `DuckBit`         | `BIT`                 | `better_duck_core::types::bit::DuckBit`       |
-| `DuckBignum`      | `BIGNUM`              | `better_duck_core::types::bignum::DuckBignum` |
+| Diesel SQL type | DuckDB type | Rust type |
+| --- | --- | --- |
+| `DuckTinyInt` / `DuckUTinyInt` | `TINYINT` / `UTINYINT` | `i8` / `u8` |
+| `DuckUSmallInt` / `DuckUInt` / `DuckUBigInt` | `USMALLINT` / `UINTEGER` / `UBIGINT` | `u16` / `u32` / `u64` |
+| `DuckHugeInt` / `DuckUHugeInt` | `HUGEINT` / `UHUGEINT` | `i128` / `u128` |
+| `DuckTimestamptz` / `DuckInterval` | `TIMESTAMPTZ` / `INTERVAL` | `chrono::DateTime<Utc>` / `Duration` _(chrono)_ |
+| `DuckTimeTz` / `DuckTimeNs` | `TIME WITH TIME ZONE` / `TIME_NS` | `TimeTz` / `NaiveTime` _(chrono)_ |
+| `DuckEnum` | `ENUM` | `String` or `#[derive(DuckEnum)]` |
+| `DuckList` / `DuckArray` | `LIST` / `ARRAY` | `Vec<DuckValue>` |
+| `DuckStruct` / `DuckMap` / `DuckUnion` | `STRUCT` / `MAP` / `UNION` | `HashMap<…>` / active member |
+| `DuckUuid` / `DuckBit` / `DuckBignum` | `UUID` / `BIT` / `BIGNUM` | `DuckUuid` / `DuckBit` / `DuckBignum` |
 
 > [!NOTE]
-> Date/time types work either way: with the `chrono` feature they map to `chrono` types; without it, they map to `better_duck_core::types::date_native`'s plain structs and `std::time` types. Only one set is compiled at a time.
+> Date/time types map to `chrono` with the `chrono` feature, or to `better_duck_core::types::date_native`
+> plain structs without it. Only one set is compiled at a time.
 
----
+### Connection pooling
 
-## Feature flags
+- **`r2d2`** — Diesel's own `diesel::r2d2::ConnectionManager<DuckDbConnection>`, plus a
+  `SharedDuckDbConnectionManager` that shares one `Database` across the pool (so an in-memory pool
+  observes one consistent database). Its `.on_connect(|c| …)` hook registers UDFs / loads extensions
+  per pooled connection.
 
-### `better-duck-core`
+### Data derives with Diesel _(feature: derive)_
 
-| Feature             | Default | Description                                                                         |
-| ------------------- | ------- | ----------------------------------------------------------------------------------- |
-| `bundled`           | ✓       | Compile and embed the DuckDB C library (no system install needed)                   |
-| `chrono`            | ✓       | `chrono` date/time conversions for DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL     |
-| `decimal`           | ✓       | `rust_decimal::Decimal` support for DECIMAL columns                                 |
-| `json`              | —       | Enable DuckDB's JSON extension (requires `bundled`)                                 |
-| `parquet`           | —       | Enable DuckDB's Parquet extension (requires `bundled`)                              |
-| `buildtime_bindgen` | —       | Regenerate FFI bindings at build time (requires LLVM/clang)                         |
-| `async`             | —       | Tokio-based async facade (`AsyncConnection`, `AsyncDatabase`) over `spawn_blocking` |
-| `pool`              | —       | `r2d2` connection pool backed by a shared `Database` handle                         |
-| `udf`               | —       | `#[duckdb_scalar]` / `#[duckdb_table_function]` user-defined functions              |
+With `better-duck-diesel`'s `derive` feature, `#[derive(DuckEnum)]` and `#[derive(DuckStruct)]` also
+emit Diesel `FromSql`/`ToSql`, so a derived Rust enum/struct binds and loads at its `sql_types::DuckEnum`
+/ `sql_types::DuckStruct` column type (via `sql_query` + `QueryableByName`).
 
-### `better-duck-diesel`
+### Feature flags
 
 | Feature   | Default | Description                                                                               |
 | --------- | ------- | ----------------------------------------------------------------------------------------- |
 | `bundled` | ✓       | Forwards to `better-duck-core/bundled`                                                    |
 | `decimal` | ✓       | Diesel `Numeric` ↔ `rust_decimal::Decimal`                                                |
 | `chrono`  | —       | Diesel date/time impls for DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL, TIME_TZ, TIME_NS |
-| `r2d2`    | —       | r2d2 connection pool support via `diesel::r2d2`                                           |
+| `r2d2`    | —       | r2d2 connection pool support (`SharedDuckDbConnectionManager` + `diesel::r2d2`)           |
+| `udf`     | —       | Expose the underlying core connection for registering UDFs on a diesel connection         |
+| `derive`  | —       | Re-export the data derives with Diesel `FromSql`/`ToSql` emission                         |
+| `spatial` | —       | `ST_*` DSL functions + `ensure_loaded` helper for the DuckDB spatial extension            |
+| `json`    | —       | Bundle the JSON extension so the JSON DSL works offline                                   |
 
----
+</details>
 
-## Benchmarks
+<details>
+<summary><b><code>better-duck-macros</code></b> — UDFs, derives & helper macros reference</summary>
 
-The workspace includes a benchmark harness at
-[`crates/better-duck-core/benches/comparison.rs`](crates/better-duck-core/benches/comparison.rs)
-that compares `better-duck-core` against the community [`duckdb`](https://crates.io/crates/duckdb)
-crate, in-process (no subprocess overhead on either side), across primitive types, composite
-types, and five representative operations. Run it with:
+`better-duck-macros` is not a direct dependency — it's re-exported through `better-duck-core`'s
+`udf` and `derive` features (and `better-duck-diesel`'s `derive` feature for ORM emission).
 
-```sh
-cargo bench -p better-duck-core --bench comparison
+### User-defined function macros _(feature: udf)_
+
+| Macro | Applies to | Generates |
+| --- | --- | --- |
+| `#[duckdb_scalar]` | `fn(args) -> T` | a scalar function (one value per row) |
+| `#[duckdb_table_function]` | `fn(args) -> impl Iterator` | a table function (rows + columns, usable in `FROM`) |
+| `#[duckdb_aggregate]` | `mod { init, update, combine, finalize }` | a custom aggregate |
+| `#[duckdb_cast]` | `fn(from) -> to` | a `CAST` / `TRY_CAST` implementation |
+
+```rust
+use better_duck_core::{connection::Connection, duckdb_scalar, duckdb_table_function};
+
+#[duckdb_scalar]
+fn repeat_str(s: &str, n: i32) -> String { s.repeat(n.max(0) as usize) }
+
+#[duckdb_table_function(name = "series", columns("n"))]
+fn series(start: i64, stop: i64) -> impl Iterator<Item = i64> + Send { start..stop }
+
+let mut conn = Connection::open_in_memory()?;
+repeat_str::register(&mut conn)?;
+series::register(&mut conn)?;
+conn.execute("SELECT sum(n) FROM series(1, 101)")?; // 5050
 ```
 
-Results are written to [`docs/benchmarks/`](docs/benchmarks/): `REPORT.md` (full tables + charts),
-`results.json` (raw numbers), and one latency/throughput SVG pair per group
-(`comparison-primitive-types-*.svg`, `comparison-composite-types-*.svg`,
-`comparison-operations-*.svg`).
+Parameter/return types are inferred from the signature. `Option<T>` propagates `NULL`; a
+`Result<T, E>` return fails the query with `E`'s message. Table functions also support named
+(keyword) parameters, projection pushdown, and scalar functions support shared state — read via the
+`duck_projection!` / `duck_extra_info!` / `duck_state!` macros. Panics are caught and surfaced as
+query errors under `panic = "unwind"`.
 
-**Sample results** (Operations group; see [`REPORT.md`](docs/benchmarks/REPORT.md) for the full
-primitive- and composite-type tables):
+### Data derives _(feature: derive)_
 
-| Workload                          | `better-duck-core`         | `duckdb` crate             |
-| --------------------------------- | -------------------------- | -------------------------- |
-| CRUD basics (4 ops)               | 4.73 ms / 846 ops/s        | 4.59 ms / 871 ops/s        |
-| Bulk ingest — 10k rows (appender) | 31.94 ms / 313.1 k rows/s  | 38.55 ms / 259.4 k rows/s  |
-| Analytical GROUP BY — 100k rows   | 4.19 ms / 23.9 M rows/s    | 4.24 ms / 23.6 M rows/s    |
-| Prepared reuse — 100 queries      | 75.72 ms / 1.3 k queries/s | 68.16 ms / 1.5 k queries/s |
-| All-types scan — 1k rows, 11 cols | 32.91 ms / 30.4 k rows/s   | 27.46 ms / 36.4 k rows/s   |
+| Derive | Maps | Direction |
+| --- | --- | --- |
+| `#[derive(FromRow)]` | struct ← query row (by column name) | read |
+| `#[derive(ToRow)]` | struct → appender row / bind params | write |
+| `#[derive(DuckEnum)]` | unit enum ↔ DuckDB `ENUM` | read + write |
+| `#[derive(DuckStruct)]` | struct ↔ DuckDB `STRUCT` value | read + write |
 
-![Operations — median latency](docs/benchmarks/comparison-operations-latency.svg)
-![Operations — throughput](docs/benchmarks/comparison-operations-throughput.svg)
+```rust
+use better_duck_core::{connection::Connection, DuckEnum, FromRow};
 
-Numbers move somewhat between runs due to normal system noise — the relative comparison within a
-single run is what's meaningful, not absolute milliseconds across runs.
+#[derive(DuckEnum, Debug, PartialEq, Clone, Copy)]
+#[duck_enum(rename_all = "snake_case")]
+enum Priority { Low, High }
 
----
+#[derive(FromRow, Debug)]
+struct Task { id: i32, priority: Priority }
+```
 
-## Migrating from the community `duckdb` crate
+Field/variant naming is controlled with `#[duck(rename = "…")]` / `#[duck(rename_all = "…")]`
+(and `#[duck_enum(...)]` for `DuckEnum`). `ResultSet::to_structs::<T>()` reads a whole result into
+`Vec<T>` for a `FromRow` type. With `better-duck-diesel`'s `derive` feature on, `DuckEnum`/`DuckStruct`
+additionally emit Diesel `FromSql`/`ToSql`.
 
-| Operation      | `duckdb` crate                   | `better-duck-core`                       |
-| -------------- | -------------------------------- | ---------------------------------------- |
-| Open in-memory | `Connection::open_in_memory()?`  | `Connection::open_in_memory()?`          |
-| Execute DDL    | `conn.execute_batch(sql)?`       | `conn.execute_batch(sql)?`               |
-| Insert / DML   | `conn.execute(sql, [])?`         | `conn.execute(sql)?.changes()`           |
-| SELECT rows    | `conn.prepare(sql)?.query([])`   | `conn.execute(sql)?` (is an `Iterator`)  |
-| Parameterized  | `conn.execute(sql, params![v])?` | `conn.execute_with(sql, &mut [&mut v])?` |
-| Bulk insert    | `conn.appender(table)?`          | `conn.appender(table, schema)?`          |
+### Helper macros _(feature: derive)_
 
----
+```rust
+use better_duck_core::{params, transaction};
+
+// commit-on-Ok / rollback-on-Err transaction scope (works for core and diesel connections)
+transaction!(conn, {
+    conn.execute_with("INSERT INTO t VALUES ($1, $2)", &mut params![1_i32, "hi".to_owned()])?;
+    Ok(())
+})?;
+```
+
+</details>
 
 ## Supported platforms
 
@@ -578,88 +526,49 @@ single run is what's meaningful, not absolute milliseconds across runs.
 
 ## Roadmap
 
-The library is usable today for most workloads. Here's an honest list of what's still in progress — contributions are very welcome.
+The library is usable today for most workloads. A condensed view of what's here and what's next —
+contributions are very welcome.
 
-### Recently landed
+**Available now**
 
-- **New core types** — `UUID`, `BIT`, and `BIGNUM` are implemented end-to-end (core read/write +
-  Diesel `FromSql`/`ToSql`). `GEOMETRY`, `VARIANT`, `ANY`, and `INTEGER_LITERAL` remain unsupported
-  — the DuckDB C API has no value accessor for them (unlike the three above), so reading a column
-  of these types still panics.
-- **`TIME_TZ` timezone offset** — fully preserved on both read and write, in core and in Diesel.
-- **Diesel `FromSql`/`ToSql` for composite types** — STRUCT, MAP, UNION, and ARRAY are implemented.
-  UNION's Rust mirror is the active member's value only (see Mid-term below for multi-arm support).
-- **Diesel date/time without `chrono`** — `date_native` is wired up; DATE/TIME/TIMESTAMP/INTERVAL/
-  TIMESTAMPTZ/TIME_TZ/TIME_NS all work over Diesel without the `chrono` feature.
-- **`DuckResult::exists()` and row cache** — `exists()` peeks without consuming the iterator;
-  `rewind()` replays already-pulled rows.
-- **`push_debug_binds`** — implemented; `debug_query`/`EXPLAIN` logging works.
-- **Empty-collection type inference** — `Vec<T>`, `Box<[T]>`, and `HashMap<K, V>` convert to
-  `LIST`/`ARRAY`/`MAP` using `T`'s (or `K`/`V`'s) static [`DuckLogicalType`], not by inspecting the
-  first element — so they work even when empty, unlike the untyped `DuckValue::List`/`Array`/`Map`,
-  which still can't infer an element type from zero entries.
-- **`async` API** — `AsyncConnection`/`AsyncDatabase`/`AsyncPool` (feature `async`), a tokio-only
-  facade over `spawn_blocking`.
-- **Core-level connection pooling** — `Database` + `r2d2`-backed `Pool` (feature `pool`), which
-  shares one database across every pooled connection (unlike opening N independent connections).
-  `better-duck-diesel`'s own `r2d2` feature (via `diesel::r2d2::ConnectionManager`) is unaffected —
-  both may be used side by side.
-- **User-defined functions** (feature `udf`) — `#[duckdb_scalar]` and `#[duckdb_table_function]`
-  register a plain Rust function as a DuckDB scalar or table function, with parameter/return types
-  inferred from the Rust signature via `DuckLogicalType`. Backed by a new `better-duck-macros`
-  proc-macro crate. Panics are caught and reported as query errors under `panic = "unwind"`; see the
-  `udf` module docs for the `panic = "abort"` caveat.
-- **Table function extras** — named (keyword) parameters (`named_params(...)`), projection pushdown
-  (`projection_pushdown`), and per-worker-thread ("local") init data (`VTabLocalInit`, manual `VTab`
-  implementations only — not yet exposed as an attribute option) are all supported now.
-  `duck_projection!`/`duck_extra_info!`/`duck_state!` macros read this context (and shared scalar
-  `State`, via `#[duckdb_scalar(state(Type, init_expr))]`) from inside a function body — no manual
-  `BindInfo`/`InitInfo` handle needed, matching `duck_bail!`'s existing style. `varargs` and a full
-  scalar bind phase (argument inspection/constant folding, unlike duckdb-rs, has no established
-  need) remain unsupported.
-- **Replacement scans** _(experimental, feature `udf`)_ — `Database::register_replacement_scan`
-  rewrites an unresolved table reference into a table function call. No comparable safe-Rust design
-  exists elsewhere to model this on, so v1 deliberately can't run SQL from inside the callback (risk
-  of deadlocking the connection mid-bind) — only literal-parameter table function rewrites.
-- **Query-path performance fixes** — `Decimal` binds no longer allocate a `String` per row;
-  `u128`/UHUGEINT has a direct typed append/bind path (previously fell back to a slower generic
-  one); every query execution no longer heap-allocates a throwaway `duckdb_result` box; and
-  `DuckResult::count()` no longer materializes a `DuckRow` for rows it's about to discard. See the
-  [benchmarks](#benchmarks) section and the changelog for details and before/after numbers.
+- Full scalar + composite type coverage (`LIST`/`ARRAY`/`STRUCT`/`MAP`/`UNION`/`ENUM`), plus `UUID`,
+  `BIT`, and `BIGNUM` end-to-end (core read/write + Diesel `FromSql`/`ToSql`).
+- `TIME_TZ` timezone offset preserved on read and write; Diesel date/time with or without `chrono`.
+- User-defined functions: scalar, table (named params, projection pushdown, state), aggregate, and
+  cast — plus experimental replacement scans.
+- Data derives (`FromRow`/`ToRow`/`DuckEnum`/`DuckStruct`) with optional Diesel emission.
+- Async facade (`async`) and connection pooling (`pool` / `r2d2`).
+- An extensive Diesel DSL of DuckDB SQL functions, aggregates, and operators, plus a `spatial` module.
 
-### Mid-term
+**In progress**
 
-- **Diesel `prepare_for_cache` distinction** — DuckDB's C API has a single `duckdb_prepare` path
-  with no unnamed/one-shot variant, so there is currently nothing to honour here; revisit if that
-  changes upstream.
-- **Multi-arm UNION write** — the current write path only builds single-member unions, and
-  `DuckValue::Union` carries no tag or member names. Real multi-arm unions need a richer variant.
-- **DECIMAL precision** — `decimal_value.width` is read but discarded; `DECIMAL(18,2)` round-trips
-  to a different declared precision. Needs a `DuckValue::Decimal` shape change to carry width.
-- **`RawConnection` panic-on-drop hardening** — a connection that fails to close panics in `Drop`;
-  under `panic = "abort"` this aborts the process. Low risk today (`close()` always returns `Ok`),
-  but worth hardening to log-and-continue, especially now that the pool multiplies the exposure.
+- `GEOMETRY` / `VARIANT` / `ANY` / `INTEGER_LITERAL` reads (no value accessor in the DuckDB C API yet).
+- Multi-arm `UNION` writes (the current write path builds single-member unions).
+- `DECIMAL` declared-precision round-tripping (width is read but not yet carried on the value).
+- Ordered-set aggregates (`WITHIN GROUP` quantiles) in the Diesel query builder.
 
-### Exploratory / RFC
+**Exploratory**
 
-- **`better-duck-tauri` crate** — a Tauri plugin that wraps `better-duck-core` with auto-discovery of the app data directory, a repository/unit-of-work abstraction, and Tauri command bindings. Filed as an idea; design input welcome.
-- **WASM / browser target** — DuckDB has a WASM build; exploring whether `better-duck-core` can compile to `wasm32-unknown-unknown` is on the list.
+- A `better-duck-tauri` plugin crate, and a `wasm32` build target.
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide — environment setup, git flow, commit conventions, how to add a new DuckDB type, and the PR checklist.
-
-If you hit a bug or want to propose a feature, please [open an issue](https://github.com/nimdeveloper/better-duck/issues).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup, git flow, commit conventions, how to add
+a new DuckDB type, and the PR checklist. Found a bug or have a feature idea?
+[Open an issue](https://github.com/nimdeveloper/better-duck/issues).
 
 ---
 
 ## License
 
-Licensed under either of:
+Licensed under either of [MIT](LICENSE) or [Apache-2.0](LICENSE-APACHE), at your option.
 
-- [MIT License](LICENSE)
-- [Apache License, Version 2.0](LICENSE-APACHE)
 
-at your option.
+
+
+
+
+
+
