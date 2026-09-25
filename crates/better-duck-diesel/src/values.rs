@@ -95,3 +95,22 @@ impl_value_newtype!(HugeInt(i128) => sql_types::DuckHugeInt);
 #[diesel(sql_type = sql_types::DuckUHugeInt)]
 pub struct UHugeInt(pub u128);
 impl_value_newtype!(UHugeInt(u128) => sql_types::DuckUHugeInt);
+
+/// A `UUID` value usable in the Diesel DSL (wraps `better_duck_core`'s `DuckUuid`,
+/// which is otherwise not `Queryable` — the 128-bit gap).
+#[derive(AsExpression, FromSqlRow, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[diesel(sql_type = sql_types::DuckUuid)]
+pub struct Uuid(pub better_duck_core::types::DuckUuid);
+impl_value_newtype!(Uuid(better_duck_core::types::DuckUuid) => sql_types::DuckUuid);
+
+/// A `BIT`/`BITSTRING` value usable in the Diesel DSL.
+#[derive(AsExpression, FromSqlRow, Debug, Clone, PartialEq, Eq, Hash)]
+#[diesel(sql_type = sql_types::DuckBit)]
+pub struct Bit(pub better_duck_core::types::DuckBit);
+impl_value_newtype!(Bit(better_duck_core::types::DuckBit) => sql_types::DuckBit);
+
+/// A `BIGNUM` (arbitrary-precision integer) value usable in the Diesel DSL.
+#[derive(AsExpression, FromSqlRow, Debug, Clone, PartialEq, Eq, Hash)]
+#[diesel(sql_type = sql_types::DuckBignum)]
+pub struct Bignum(pub better_duck_core::types::DuckBignum);
+impl_value_newtype!(Bignum(better_duck_core::types::DuckBignum) => sql_types::DuckBignum);

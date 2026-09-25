@@ -5,14 +5,24 @@
 //! (`Queryable`/`FromSqlRow`), which bare `i128`/`u64`/… cannot be for a custom
 //! `Duck*` SQL type in a third-party crate.
 
-use better_duck_diesel::sql_types::{DuckHugeInt, DuckUBigInt, DuckUInt};
-use better_duck_diesel::values::{HugeInt, UBigInt, UInt};
+use better_duck_diesel::sql_types::{DuckHugeInt, DuckUBigInt, DuckUInt, DuckUuid};
+use better_duck_diesel::values::{HugeInt, UBigInt, UInt, Uuid};
 use better_duck_diesel::DuckDbConnection;
 use diesel::prelude::*;
 use diesel::IntoSql;
 
 fn conn() -> DuckDbConnection {
     DuckDbConnection::establish(":memory:").unwrap()
+}
+
+#[test]
+fn uuid_newtype_binds_and_loads_via_dsl() {
+    let mut conn = conn();
+    let v = Uuid(better_duck_core::types::DuckUuid(
+        0x1234_5678_9abc_def0_1122_3344_5566_7788_u128,
+    ));
+    let got: Uuid = diesel::select(v.into_sql::<DuckUuid>()).get_result(&mut conn).unwrap();
+    assert_eq!(got, v);
 }
 
 #[test]
