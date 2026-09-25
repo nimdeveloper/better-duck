@@ -3,7 +3,9 @@
 //! DSL tests for the extended aggregate set (regression, bitwise, approximate)
 //! and the JSON scalar functions.
 
-use better_duck_diesel::dsl::{approx_count_distinct, bit_and, json_extract_string, json_valid, regr_slope};
+use better_duck_diesel::dsl::{
+    approx_count_distinct, bit_and, json_extract_string, json_valid, regr_slope,
+};
 use better_duck_diesel::DuckDbConnection;
 use diesel::prelude::*;
 

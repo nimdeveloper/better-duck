@@ -58,10 +58,9 @@ struct PointRow {
 #[test]
 fn derived_struct_reads_through_diesel() {
     let mut conn = DuckDbConnection::establish(":memory:").unwrap();
-    let rows: Vec<PointRow> = diesel::sql_query(
-        "SELECT {'x': CAST(3 AS INTEGER), 'y': CAST(4 AS INTEGER)} AS p",
-    )
-    .get_results(&mut conn)
-    .unwrap();
+    let rows: Vec<PointRow> =
+        diesel::sql_query("SELECT {'x': CAST(3 AS INTEGER), 'y': CAST(4 AS INTEGER)} AS p")
+            .get_results(&mut conn)
+            .unwrap();
     assert_eq!(rows, vec![PointRow { p: Point { x: 3, y: 4 } }]);
 }

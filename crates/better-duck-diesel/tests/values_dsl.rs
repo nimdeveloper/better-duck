@@ -18,9 +18,7 @@ fn conn() -> DuckDbConnection {
 #[test]
 fn uuid_newtype_binds_and_loads_via_dsl() {
     let mut conn = conn();
-    let v = Uuid(better_duck_core::types::DuckUuid(
-        0x1234_5678_9abc_def0_1122_3344_5566_7788_u128,
-    ));
+    let v = Uuid(better_duck_core::types::DuckUuid(0x1234_5678_9abc_def0_1122_3344_5566_7788_u128));
     let got: Uuid = diesel::select(v.into_sql::<DuckUuid>()).get_result(&mut conn).unwrap();
     assert_eq!(got, v);
 }

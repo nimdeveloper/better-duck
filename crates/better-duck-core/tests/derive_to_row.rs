@@ -25,11 +25,7 @@ fn to_row_appends_struct_as_a_row() {
         appender.finish().unwrap();
     }
 
-    let rs = conn
-        .execute("SELECT id, name FROM items ORDER BY id")
-        .unwrap()
-        .materialize()
-        .unwrap();
+    let rs = conn.execute("SELECT id, name FROM items ORDER BY id").unwrap().materialize().unwrap();
     assert_eq!(rs.rows().len(), 2);
     assert_eq!(rs.rows()[0].get("id"), Some(&DuckValue::Int(1)));
     assert_eq!(rs.rows()[0].get("name"), Some(&DuckValue::Text("a".to_owned())));

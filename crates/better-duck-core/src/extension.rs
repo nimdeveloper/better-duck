@@ -67,8 +67,7 @@ impl Connection {
         if !is_valid_extension_name(name) {
             return Err(reject_bad_name(name));
         }
-        let sql =
-            format!("SELECT loaded FROM duckdb_extensions() WHERE extension_name = '{name}'");
+        let sql = format!("SELECT loaded FROM duckdb_extensions() WHERE extension_name = '{name}'");
         let mut result = self.execute(sql)?;
         match result.next() {
             Some(row) => Ok(matches!(row?.get("loaded"), Some(DuckValue::Boolean(true)))),

@@ -18,10 +18,7 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         return Err(syn::Error::new_spanned(&input, "`ToRow` can only be derived for a struct"));
     };
     let Fields::Named(fields) = &data.fields else {
-        return Err(syn::Error::new_spanned(
-            &input,
-            "`ToRow` requires a struct with named fields",
-        ));
+        return Err(syn::Error::new_spanned(&input, "`ToRow` requires a struct with named fields"));
     };
 
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();

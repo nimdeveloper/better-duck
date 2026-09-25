@@ -103,8 +103,7 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     #[cfg(feature = "diesel")]
-    let diesel_impls =
-        diesel_emission(cratep, ident, &impl_generics, &ty_generics, where_clause);
+    let diesel_impls = diesel_emission(cratep, ident, &impl_generics, &ty_generics, where_clause);
     #[cfg(not(feature = "diesel"))]
     let diesel_impls = quote! {};
 

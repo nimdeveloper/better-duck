@@ -71,12 +71,12 @@ pub use better_duck_macros::DuckEnum;
 /// Derives DuckDB `STRUCT` mapping for a Rust struct (`From`/`FromDuckValue`).
 #[cfg(feature = "derive")]
 pub use better_duck_macros::DuckStruct;
-/// Derives [`AppendAble`] for a struct: append/bind each field as a row.
-#[cfg(feature = "derive")]
-pub use better_duck_macros::ToRow;
 /// Derives [`FromRow`] for a struct: reads each field from a query row by column name.
 #[cfg(feature = "derive")]
 pub use better_duck_macros::FromRow;
+/// Derives [`AppendAble`] for a struct: append/bind each field as a row.
+#[cfg(feature = "derive")]
+pub use better_duck_macros::ToRow;
 /// DuckDB database configuration.
 pub use config::{library_version, AccessMode, Config, ConfigFlag, DefaultNullOrder, DefaultOrder};
 /// A shared, cloneable handle to an open DuckDB database.

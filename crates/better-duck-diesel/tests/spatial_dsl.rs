@@ -18,6 +18,7 @@ fn st_point_and_as_text_via_dsl() {
     }
 
     // ST_AsText(ST_Point(1, 2)) — geometries flow as WKB (Binary) between the calls.
-    let text: String = diesel::select(st_as_text(st_point(1.0, 2.0))).get_result(&mut conn).unwrap();
+    let text: String =
+        diesel::select(st_as_text(st_point(1.0, 2.0))).get_result(&mut conn).unwrap();
     assert_eq!(text, "POINT (1 2)");
 }
