@@ -955,4 +955,41 @@ mod test_chrono_conversion {
         assert_eq!(stored.get("tn"), Some(&DuckValue::TimeNs(row.time_ns.0)));
         assert_eq!(stored.get("tstz"), Some(&DuckValue::TimestampTz(expected_tz)));
     }
+
+    #[test]
+    fn temporal_from_conversions_and_logical_types() {
+        use crate::types::value::DuckValue;
+        let nd = NaiveDate::from_ymd_opt(2021, 6, 15).unwrap();
+        let nt = NaiveTime::from_hms_opt(1, 2, 3).unwrap();
+        let ndt = nd.and_time(nt);
+        let dt = DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc);
+        let dur = Duration::seconds(5);
+        let ttz = TimeTz { time: nt, offset_secs: 3600 };
+
+        // `From<T> for DuckValue` for the chrono types and the precision wrappers.
+        assert_eq!(DuckValue::from(nd), DuckValue::Date(nd));
+        assert_eq!(DuckValue::from(nt), DuckValue::Time(nt));
+        assert_eq!(DuckValue::from(ndt), DuckValue::Timestamp(ndt));
+        assert_eq!(DuckValue::from(dt), DuckValue::TimestampTz(dt));
+        assert_eq!(DuckValue::from(dur), DuckValue::Interval(dur));
+        assert_eq!(DuckValue::from(ttz), DuckValue::TimeTz(ttz));
+        assert_eq!(DuckValue::from(TimestampS(ndt)), DuckValue::TimestampS(ndt));
+        assert_eq!(DuckValue::from(TimestampMs(ndt)), DuckValue::TimestampMs(ndt));
+        assert_eq!(DuckValue::from(TimestampNs(ndt)), DuckValue::TimestampNs(ndt));
+        assert_eq!(DuckValue::from(TimestampTz(dt)), DuckValue::TimestampTz(dt));
+        assert_eq!(DuckValue::from(TimeNs(nt)), DuckValue::TimeNs(nt));
+
+        // `DuckLogicalType::duck_logical_type()` for every temporal type (raw handles ignored).
+        let _ = <NaiveDate as DuckLogicalType>::duck_logical_type();
+        let _ = <NaiveTime as DuckLogicalType>::duck_logical_type();
+        let _ = <NaiveDateTime as DuckLogicalType>::duck_logical_type();
+        let _ = <DateTime<Utc> as DuckLogicalType>::duck_logical_type();
+        let _ = <Duration as DuckLogicalType>::duck_logical_type();
+        let _ = <TimeTz as DuckLogicalType>::duck_logical_type();
+        let _ = <TimestampS as DuckLogicalType>::duck_logical_type();
+        let _ = <TimestampMs as DuckLogicalType>::duck_logical_type();
+        let _ = <TimestampNs as DuckLogicalType>::duck_logical_type();
+        let _ = <TimestampTz as DuckLogicalType>::duck_logical_type();
+        let _ = <TimeNs as DuckLogicalType>::duck_logical_type();
+    }
 }

@@ -1072,4 +1072,77 @@ mod tests {
         assert_eq!(i32::from(DuckValueRef::TinyInt(3)), 3);
         assert_eq!(i32::from(DuckValueRef::Null), 0);
     }
+
+    #[cfg(feature = "chrono")]
+    fn owned_variants() -> Vec<DuckValue> {
+        use crate::types::{Blob, DuckBignum, DuckBit, DuckDecimal, DuckEnum, DuckUuid};
+        let nd = chrono::NaiveDate::from_ymd_opt(2021, 6, 15).unwrap();
+        let nt = chrono::NaiveTime::from_hms_opt(1, 2, 3).unwrap();
+        let ndt = nd.and_time(nt);
+        let dt = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc);
+        let mut st = std::collections::HashMap::new();
+        st.insert("a".to_owned(), DuckValue::Int(1));
+        let mut mp = std::collections::HashMap::new();
+        mp.insert(DuckValue::Int(1), DuckValue::Int(2));
+        vec![
+            DuckValue::Boolean(true), DuckValue::TinyInt(1), DuckValue::SmallInt(1),
+            DuckValue::Int(1), DuckValue::BigInt(1), DuckValue::HugeInt(1), DuckValue::UTinyInt(1),
+            DuckValue::USmallInt(1), DuckValue::UInt(1), DuckValue::UBigInt(1),
+            DuckValue::UHugeInt(1), DuckValue::Float(1.5), DuckValue::Double(1.5),
+            DuckValue::Timestamp(ndt), DuckValue::TimestampTz(dt), DuckValue::Date(nd),
+            DuckValue::Time(nt), DuckValue::Interval(chrono::Duration::seconds(5)),
+            DuckValue::Text("x".to_owned()), DuckValue::Decimal(DuckDecimal::new(100, 5, 2).unwrap()),
+            DuckValue::Blob(Blob(vec![1, 2])), DuckValue::List(vec![DuckValue::Int(1)]),
+            DuckValue::Array(vec![DuckValue::Int(1)].into_boxed_slice()), DuckValue::Struct(st),
+            DuckValue::Map(mp),
+            DuckValue::Enum(DuckEnum::from_label(std::sync::Arc::from(vec!["A".to_owned()]), "A").unwrap()),
+            DuckValue::Union(union1(DuckValue::Int(1))), DuckValue::Uuid(DuckUuid(1)),
+            DuckValue::Bit(DuckBit(vec![0, 1])), DuckValue::Bignum(DuckBignum::new(vec![1], false)),
+            DuckValue::Null,
+        ]
+    }
+
+    #[test]
+    fn primitive_from_conversions_into_ref() {
+        use crate::types::blob::Blob;
+        let _ = DuckValueRef::from(true);
+        let _ = DuckValueRef::from(1i8);
+        let _ = DuckValueRef::from(1i16);
+        let _ = DuckValueRef::from(1i32);
+        let _ = DuckValueRef::from(1i64);
+        let _ = DuckValueRef::from(1i128);
+        let _ = DuckValueRef::from(1u8);
+        let _ = DuckValueRef::from(1u16);
+        let _ = DuckValueRef::from(1u32);
+        let _ = DuckValueRef::from(1u64);
+        let _ = DuckValueRef::from(1u128);
+        let _ = DuckValueRef::from(1.5f32);
+        let _ = DuckValueRef::from(1.5f64);
+        let _ = DuckValueRef::from("x");
+        let _ = DuckValueRef::from(String::from("x"));
+        let _ = DuckValueRef::from(Blob(vec![1u8]));
+        let _ = DuckValueRef::from(vec![1u8, 2]);
+        let _ = DuckValueRef::from(Some(1i32));
+        let _ = DuckValueRef::from(None::<i32>);
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn owned_borrowed_eq_hash_and_bind_all_variants() {
+        use std::hash::{Hash, Hasher};
+        let mut conn = crate::connection::Connection::open_in_memory().unwrap();
+        for v in owned_variants() {
+            // Borrowed conversion + bind via a prepared statement (AppendAble::stmt_append).
+            {
+                let mut r = DuckValueRef::from(&v);
+                let _ = conn.execute_with("SELECT $1", &mut [&mut r]);
+            }
+            // Owned conversion, equality, and hashing.
+            let owned = DuckValueRef::from(v);
+            assert_eq!(owned, owned.clone());
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            owned.hash(&mut h);
+            let _ = h.finish();
+        }
+    }
 }
