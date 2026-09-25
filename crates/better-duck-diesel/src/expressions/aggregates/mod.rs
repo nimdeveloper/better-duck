@@ -5,4 +5,5 @@
 pub mod approximate;
 pub mod bit_agg;
 pub mod general;
+pub mod json;
 pub mod statistical;

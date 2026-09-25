@@ -97,3 +97,24 @@ define_sql_function! {
     /// `lcm(a, b)` — least common multiple.
     fn lcm(a: diesel::sql_types::BigInt, b: diesel::sql_types::BigInt) -> diesel::sql_types::BigInt;
 }
+define_sql_function! {
+    /// `mod(a, b)` — integer/decimal remainder (the `%` operator in SQL).
+    #[sql_name = "mod"]
+    fn mod_(a: diesel::sql_types::BigInt, b: diesel::sql_types::BigInt) -> diesel::sql_types::BigInt;
+}
+define_sql_function! {
+    /// `xor(a, b)` — bitwise exclusive-or.
+    fn xor(a: diesel::sql_types::BigInt, b: diesel::sql_types::BigInt) -> diesel::sql_types::BigInt;
+}
+define_sql_function! {
+    /// `bit_count(x)` — number of set bits in the two's-complement of `x` (returns `TINYINT`).
+    fn bit_count(x: diesel::sql_types::BigInt) -> crate::types::duckdb_types::DuckTinyInt;
+}
+define_sql_function! {
+    /// `greatest(a, b)` — the larger of two numeric values.
+    fn greatest<T: SingleValue>(a: T, b: T) -> T;
+}
+define_sql_function! {
+    /// `least(a, b)` — the smaller of two numeric values.
+    fn least<T: SingleValue>(a: T, b: T) -> T;
+}

@@ -40,3 +40,8 @@ define_sql_function! {
     #[aggregate]
     fn any_value(x: Text) -> diesel::sql_types::Nullable<Text>;
 }
+define_sql_function! {
+    /// `array_agg(x)` — collect all input values into a `LIST`.
+    #[aggregate]
+    fn array_agg(x: Text) -> crate::types::duckdb_types::DuckList;
+}
