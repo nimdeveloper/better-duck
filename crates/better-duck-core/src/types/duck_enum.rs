@@ -305,4 +305,38 @@ mod tests {
             other => panic!("expected Enum, got {other:?}"),
         }
     }
+
+    #[test]
+    fn enum_write_paths_conversions_and_logical_types() {
+        use crate::connection::Connection;
+        use std::hash::{Hash, Hasher};
+
+        let e = DuckEnum::from_label(mood(), "happy").unwrap();
+        // From<DuckEnum> for DuckValue + accessors.
+        assert!(matches!(DuckValue::from(e.clone()), DuckValue::Enum(_)));
+        assert_eq!(e.index(), 2);
+        assert_eq!(e.dictionary().len(), 3);
+        // Hash.
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        e.hash(&mut h);
+        let _ = h.finish();
+        // Instance logical type builds a real ENUM type; the type-level impl errors
+        // (a bare `DuckEnum` has no dictionary to build one from).
+        assert!(e.logical_type().is_ok());
+        assert!(<DuckEnum as DuckLogicalType>::duck_logical_type().is_err());
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        // stmt_append (bind) → to_duck.
+        let _ = conn.execute_with("SELECT $1", &mut [&mut e.clone()]);
+        // appender_append into a real ENUM column.
+        conn.execute_batch(
+            "CREATE TYPE mood AS ENUM ('sad','ok','happy'); CREATE TABLE t (v mood)",
+        )
+        .unwrap();
+        {
+            let mut app = conn.appender("t", "main").unwrap();
+            app.append(&mut e.clone()).unwrap();
+            app.save().unwrap();
+        }
+    }
 }

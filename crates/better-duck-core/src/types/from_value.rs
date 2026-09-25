@@ -422,6 +422,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn integer_widening_covers_every_source_variant() {
+        assert_eq!(i16::from_duck_value(&DuckValue::SmallInt(1)).unwrap(), 1);
+        assert_eq!(i16::from_duck_value(&DuckValue::TinyInt(1)).unwrap(), 1);
+        for v in [DuckValue::Int(1), DuckValue::SmallInt(1), DuckValue::TinyInt(1)] {
+            assert_eq!(i32::from_duck_value(&v).unwrap(), 1);
+        }
+        for v in
+            [DuckValue::BigInt(1), DuckValue::Int(1), DuckValue::SmallInt(1), DuckValue::TinyInt(1)]
+        {
+            assert_eq!(i64::from_duck_value(&v).unwrap(), 1);
+        }
+        for v in [
+            DuckValue::HugeInt(1),
+            DuckValue::BigInt(1),
+            DuckValue::Int(1),
+            DuckValue::SmallInt(1),
+            DuckValue::TinyInt(1),
+        ] {
+            assert_eq!(i128::from_duck_value(&v).unwrap(), 1);
+        }
+        assert_eq!(u16::from_duck_value(&DuckValue::USmallInt(1)).unwrap(), 1);
+        assert_eq!(u16::from_duck_value(&DuckValue::UTinyInt(1)).unwrap(), 1);
+        for v in [DuckValue::UInt(1), DuckValue::USmallInt(1), DuckValue::UTinyInt(1)] {
+            assert_eq!(u32::from_duck_value(&v).unwrap(), 1);
+        }
+        for v in [
+            DuckValue::UBigInt(1),
+            DuckValue::UInt(1),
+            DuckValue::USmallInt(1),
+            DuckValue::UTinyInt(1),
+        ] {
+            assert_eq!(u64::from_duck_value(&v).unwrap(), 1);
+        }
+        for v in [
+            DuckValue::UHugeInt(1),
+            DuckValue::UBigInt(1),
+            DuckValue::UInt(1),
+            DuckValue::USmallInt(1),
+            DuckValue::UTinyInt(1),
+        ] {
+            assert_eq!(u128::from_duck_value(&v).unwrap(), 1);
+        }
+    }
+
     #[cfg(feature = "chrono")]
     #[test]
     fn reads_chrono_temporals() {

@@ -566,4 +566,35 @@ mod test_numeric_conversion {
         assert_eq!(value, converted_value);
         unsafe { duckdb_destroy_value(&mut duck_value) };
     }
+
+    #[test]
+    fn wide_and_decimal_logical_types_from_and_bind_and_append() {
+        use super::*;
+        use crate::connection::Connection;
+        // duck_logical_type() for the wide/decimal types (raw handles ignored).
+        let _ = <u128 as DuckLogicalType>::duck_logical_type();
+        let _ = <Decimal as DuckLogicalType>::duck_logical_type();
+        // From<T> for DuckValue.
+        assert!(matches!(DuckValue::from(5u128), DuckValue::UHugeInt(5)));
+        assert!(matches!(DuckValue::from(Decimal::new(123, 2)), DuckValue::Decimal(_)));
+
+        let mut conn = Connection::open_in_memory().unwrap();
+        // stmt_append (bind) for i128 / u128 / Decimal.
+        let _ = conn.execute_with("SELECT $1", &mut [&mut 5i128]);
+        let _ = conn.execute_with("SELECT $1", &mut [&mut 5u128]);
+        let _ = conn.execute_with("SELECT $1", &mut [&mut Decimal::new(123, 2)]);
+        // appender_append for i128 / u128.
+        conn.execute_batch("CREATE TABLE hi (a HUGEINT)").unwrap();
+        {
+            let mut app = conn.appender("hi", "main").unwrap();
+            app.append(&mut 5i128).unwrap();
+            app.save().unwrap();
+        }
+        conn.execute_batch("CREATE TABLE ui (a UHUGEINT)").unwrap();
+        {
+            let mut app = conn.appender("ui", "main").unwrap();
+            app.append(&mut 5u128).unwrap();
+            app.save().unwrap();
+        }
+    }
 }
