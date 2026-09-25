@@ -467,6 +467,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn wrong_variant_hits_every_mismatch_arm() {
+        use crate::types::{Blob, DuckBignum, DuckBit, DuckDecimal, DuckUuid};
+        let wrong = DuckValue::Boolean(true);
+        assert!(bool::from_duck_value(&DuckValue::Int(0)).is_err());
+        assert!(f32::from_duck_value(&wrong).is_err());
+        assert!(f64::from_duck_value(&wrong).is_err());
+        assert!(String::from_duck_value(&wrong).is_err());
+        assert!(i8::from_duck_value(&wrong).is_err());
+        assert!(u8::from_duck_value(&wrong).is_err());
+        assert!(DuckDecimal::from_duck_value(&wrong).is_err());
+        assert!(DuckUuid::from_duck_value(&wrong).is_err());
+        assert!(Blob::from_duck_value(&wrong).is_err());
+        assert!(DuckBit::from_duck_value(&wrong).is_err());
+        assert!(DuckBignum::from_duck_value(&wrong).is_err());
+        assert!(Vec::<i32>::from_duck_value(&wrong).is_err());
+        assert!(std::collections::HashMap::<String, i32>::from_duck_value(&wrong).is_err());
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn chrono_temporal_wrong_variant_errors() {
+        use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+        let wrong = DuckValue::Boolean(true);
+        assert!(NaiveDate::from_duck_value(&wrong).is_err());
+        assert!(NaiveTime::from_duck_value(&wrong).is_err());
+        assert!(NaiveDateTime::from_duck_value(&wrong).is_err());
+        assert!(DateTime::<Utc>::from_duck_value(&wrong).is_err());
+        assert!(Duration::from_duck_value(&wrong).is_err());
+        assert!(crate::types::date_chrono::TimeTz::from_duck_value(&wrong).is_err());
+    }
+
     #[cfg(feature = "chrono")]
     #[test]
     fn reads_chrono_temporals() {
@@ -479,6 +511,16 @@ mod tests {
         assert_eq!(NaiveDate::from_duck_value(&DuckValue::Date(d)).unwrap(), d);
         assert_eq!(NaiveTime::from_duck_value(&DuckValue::Time(t)).unwrap(), t);
         assert_eq!(chrono::NaiveDateTime::from_duck_value(&DuckValue::Timestamp(dt)).unwrap(), dt);
+        // The same reader accepts every timestamp precision (or-pattern alternatives).
+        assert_eq!(chrono::NaiveDateTime::from_duck_value(&DuckValue::TimestampS(dt)).unwrap(), dt);
+        assert_eq!(
+            chrono::NaiveDateTime::from_duck_value(&DuckValue::TimestampMs(dt)).unwrap(),
+            dt
+        );
+        assert_eq!(
+            chrono::NaiveDateTime::from_duck_value(&DuckValue::TimestampNs(dt)).unwrap(),
+            dt
+        );
         let utc = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
         assert_eq!(DateTime::<Utc>::from_duck_value(&DuckValue::TimestampTz(utc)).unwrap(), utc);
         let dur = Duration::seconds(90);

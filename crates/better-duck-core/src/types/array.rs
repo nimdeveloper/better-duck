@@ -553,4 +553,33 @@ mod tests {
             Some(&DuckValue::Array(vec![DuckValue::Int(2), DuckValue::Int(3)].into_boxed_slice()))
         );
     }
+
+    #[test]
+    fn typed_collections_bind_and_append() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // Bind typed collections (stmt_append → build_typed_list/array_value).
+        let _ = conn.execute_with("SELECT $1", &mut [&mut vec![1i32, 2, 3]]);
+        let _ = conn.execute_with("SELECT $1", &mut [&mut vec![String::from("a")]]);
+        let mut arr: Box<[i32]> = vec![1i32, 2, 3].into_boxed_slice();
+        let _ = conn.execute_with("SELECT $1", &mut [&mut arr]);
+        // Empty typed list is fine; empty typed ARRAY is rejected (DuckDB requires size >= 1).
+        let mut empty_list: Vec<i32> = Vec::new();
+        let _ = conn.execute_with("SELECT $1", &mut [&mut empty_list]);
+        let mut empty_arr: Box<[i32]> = Vec::<i32>::new().into_boxed_slice();
+        assert!(conn.execute_with("SELECT $1", &mut [&mut empty_arr]).is_err());
+
+        // Append typed collections into LIST/ARRAY columns (appender_append path).
+        conn.execute_batch("CREATE TABLE l (a INTEGER[])").unwrap();
+        {
+            let mut app = conn.appender("l", "main").unwrap();
+            let _ = app.append(&mut vec![1i32, 2, 3]);
+            let _ = app.save();
+        }
+        conn.execute_batch("CREATE TABLE ar (a INTEGER[3])").unwrap();
+        {
+            let mut app = conn.appender("ar", "main").unwrap();
+            let _ = app.append(&mut vec![1i32, 2, 3].into_boxed_slice());
+            let _ = app.save();
+        }
+    }
 }

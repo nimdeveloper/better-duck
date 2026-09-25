@@ -492,4 +492,25 @@ mod tests {
         assert_eq!(DuckValue::from(string_map), expected);
         assert_eq!(DuckValue::from(vec![("name".to_owned(), DuckValue::Int(7))]), expected);
     }
+
+    #[test]
+    fn typed_map_binds_and_appends() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // Bind a typed HashMap<String, i32> (stmt_append → build_typed_map_value).
+        let mut m: std::collections::HashMap<String, i32> =
+            std::collections::HashMap::from([("a".to_owned(), 1), ("b".to_owned(), 2)]);
+        let _ = conn.execute_with("SELECT $1", &mut [&mut m]);
+        // Empty typed map.
+        let mut empty: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
+        let _ = conn.execute_with("SELECT $1", &mut [&mut empty]);
+        // Append into a MAP column (appender_append path).
+        conn.execute_batch("CREATE TABLE mt (m MAP(VARCHAR, INTEGER))").unwrap();
+        {
+            let mut app = conn.appender("mt", "main").unwrap();
+            let mut row: std::collections::HashMap<String, i32> =
+                std::collections::HashMap::from([("k".to_owned(), 9)]);
+            let _ = app.append(&mut row);
+            let _ = app.save();
+        }
+    }
 }

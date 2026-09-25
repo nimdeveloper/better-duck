@@ -349,4 +349,13 @@ mod tests {
         assert_ne!(Type::Array(Box::new([Type::Int])), Type::Array(Box::new([Type::BigInt])));
         assert_ne!(Type::Uuid, Type::Bignum);
     }
+
+    #[test]
+    fn primitive_appender_append_via_macro() {
+        let mut conn = crate::connection::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE b (v BOOLEAN)").unwrap();
+        let mut app = conn.appender("b", "main").unwrap();
+        app.append(&mut true).unwrap();
+        app.save().unwrap();
+    }
 }
