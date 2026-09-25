@@ -65,6 +65,27 @@ impl DuckDbConnection {
             statement_cache: StatementCache::new(),
         }
     }
+
+    /// Shared access to the underlying core [`Connection`](better_duck_core::connection::Connection).
+    pub fn inner(&self) -> &better_duck_core::connection::Connection {
+        &self.inner
+    }
+
+    /// Mutable access to the underlying core [`Connection`](better_duck_core::connection::Connection).
+    ///
+    /// This is the entry point for registering user-defined functions (scalar,
+    /// table, aggregate, cast) on a diesel connection: register on the core
+    /// connection, then declare the matching DSL function with
+    /// `diesel::define_sql_function!` (for a scalar/aggregate) so it can be called
+    /// without raw SQL. Registration requires `better-duck-core`'s `udf` feature.
+    ///
+    /// Note: with a shared connection pool
+    /// (`crate::pool::SharedDuckDbConnectionManager`), each pooled connection is a
+    /// separate `Connection` over the shared `Database`, so register on each
+    /// connection (e.g. in an `r2d2` `CustomizeConnection`), not just once.
+    pub fn inner_mut(&mut self) -> &mut better_duck_core::connection::Connection {
+        &mut self.inner
+    }
 }
 
 // Diesel sealed trait

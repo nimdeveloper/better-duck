@@ -29,6 +29,7 @@ default = ["decimal"]
 chrono  = ["better-duck-core/chrono", "diesel/chrono", "dep:chrono"]
 decimal = ["better-duck-core/decimal", "dep:rust_decimal"]
 r2d2    = ["diesel/r2d2"]
+udf     = ["better-duck-core/udf"]
 
 [dev-dependencies]
 tempfile = "3.27.0"
