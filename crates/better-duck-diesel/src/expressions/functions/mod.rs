@@ -10,4 +10,5 @@ pub mod json;
 pub mod numeric;
 pub mod regex;
 pub mod string;
+pub mod string_search;
 pub mod uuid;

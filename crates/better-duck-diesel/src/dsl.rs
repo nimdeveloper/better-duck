@@ -13,6 +13,7 @@ pub use crate::expressions::functions::json::*;
 pub use crate::expressions::functions::numeric::*;
 pub use crate::expressions::functions::regex::*;
 pub use crate::expressions::functions::string::*;
+pub use crate::expressions::functions::string_search::*;
 pub use crate::expressions::functions::uuid::*;
 pub use crate::expressions::operators::comparison::DuckExpressionMethods;
 pub use crate::expressions::operators::pattern::DuckTextExpressionMethods;
