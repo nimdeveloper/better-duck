@@ -136,7 +136,8 @@ jobs:
             "current": null,
             "lts": null,
             "api": {},
-            "releases": {}
+            "releases": {},
+            "preview": null
           }
           JSON
           else
@@ -358,6 +359,101 @@ jobs:
 
           printf '%s\n' "$stable_releases" > "$RUNNER_TEMP/stable-releases.json"
 
+      - name: Resolve upcoming preview version
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          # DuckDB-web's root `_config.yml` records the rolling channel versions as flat
+          # scalar keys, e.g.
+          #   current_short_duckdb_version: "1.5"
+          #   preview_short_duckdb_version: "2.0-dev"
+          # We read just those two keys (no YAML dependency needed) to learn which line
+          # DuckDB is currently shipping and which line it is previewing.
+          config_file="$RUNNER_TEMP/duckdb-web-config.yml"
+
+          http_code="$(
+            curl \
+              --silent \
+              --show-error \
+              --location \
+              --retry 4 \
+              --retry-delay 2 \
+              --retry-connrefused \
+              --write-out '%{http_code}' \
+              --output "$config_file" \
+              "https://raw.githubusercontent.com/${DUCKDB_WEB_REPO}/main/_config.yml"
+          )"
+
+          # Extracts a flat `key: "value"` (or unquoted) scalar from the config file.
+          read_config_key() {
+            grep -E "^[[:space:]]*$1[[:space:]]*:" "$config_file" |
+              head -n1 |
+              sed -E "s/^[[:space:]]*$1[[:space:]]*:[[:space:]]*//; s/^[\"']//; s/[\"'][[:space:]]*$//; s/[[:space:]]*$//"
+          }
+
+          preview_raw=""
+          current_short=""
+          if [ "$http_code" = "200" ]; then
+            preview_raw="$(read_config_key preview_short_duckdb_version || true)"
+            current_short="$(read_config_key current_short_duckdb_version || true)"
+          else
+            echo "::warning::Could not fetch _config.yml (HTTP ${http_code}); upcoming-version tracking is skipped this run."
+          fi
+
+          # `current_short` is authoritative for the shipped line; fall back to the line
+          # derived from the newest stable GitHub release if the key is absent.
+          current_line="$current_short"
+          if [ -z "$current_line" ]; then
+            current_line="$(jq -r '.current.line' "$RELEASE_CONTEXT")"
+          fi
+
+          # Reduce a version string (e.g. "2.0-dev", "2.1", "v2.0") to its `major.minor` line.
+          to_line() {
+            printf '%s' "$1" |
+              sed -E 's/^v//; s/-.*$//' |
+              awk -F. 'NF>=2 { print $1"."$2 } NF==1 { print $1".0" }'
+          }
+
+          # Numeric comparison of two `major.minor` lines: prints 1 if $1 > $2, else 0.
+          line_gt() {
+            awk -v a="$1" -v b="$2" '
+              BEGIN {
+                na = split(a, pa, ".");
+                nb = split(b, pb, ".");
+                amaj = pa[1] + 0; amin = (na >= 2 ? pa[2] : 0) + 0;
+                bmaj = pb[1] + 0; bmin = (nb >= 2 ? pb[2] : 0) + 0;
+                if (amaj > bmaj || (amaj == bmaj && amin > bmin)) { print 1 } else { print 0 }
+              }'
+          }
+
+          preview_line=""
+          has_upcoming="false"
+          if [ -n "$preview_raw" ] && [ -n "$current_line" ]; then
+            preview_line="$(to_line "$preview_raw")"
+            if [ "$(line_gt "$preview_line" "$current_line")" = "1" ]; then
+              has_upcoming="true"
+            fi
+          fi
+
+          jq -n \
+            --arg previewRaw "$preview_raw" \
+            --arg previewLine "$preview_line" \
+            --arg currentLine "$current_line" \
+            --arg hasUpcoming "$has_upcoming" \
+            '{
+              previewRaw: $previewRaw,
+              previewLine: $previewLine,
+              currentLine: $currentLine,
+              hasUpcoming: ($hasUpcoming == "true")
+            }' > "$RUNNER_TEMP/preview-context.json"
+
+          echo "PREVIEW_CONTEXT=$RUNNER_TEMP/preview-context.json" >> "$GITHUB_ENV"
+          echo "HAS_UPCOMING=$has_upcoming" >> "$GITHUB_ENV"
+
+          echo "Upcoming-version resolution:"
+          jq '.' "$RUNNER_TEMP/preview-context.json"
+
       - name: Discover documentation channels
         env:
           GH_TOKEN: ${{ github.token }}
@@ -481,6 +577,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/diffs"
 
           changed="[]"
+          preview_changed="false"
 
           while IFS= read -r channel; do
             name="$(jq -r '.name' <<<"$channel")"
@@ -501,6 +598,15 @@ jobs:
             fi
 
             diff -u "$old_file" "$new_file" > "$diff_file" || true
+
+            # The `preview` channel is tracked by the dedicated upcoming-version issue,
+            # not the generic C API issue — keep its diff but don't let it drive
+            # `API_CHANGED`, so preview drift never spawns a fresh generic issue.
+            if [ "$name" = "preview" ]; then
+              preview_changed="true"
+              continue
+            fi
+
             changed="$(jq -c --arg n "$name" '. + [$n]' <<<"$changed")"
           done < <(
             jq -c '.channels[]' "$DOC_CHANNELS"
@@ -514,8 +620,11 @@ jobs:
             echo "API_CHANGED=false" >> "$GITHUB_ENV"
           fi
 
-          echo "Changed channels:"
+          echo "PREVIEW_API_CHANGED=$preview_changed" >> "$GITHUB_ENV"
+
+          echo "Changed channels (excluding preview):"
           jq '.' "$RUNNER_TEMP/changed-channels.json"
+          echo "Preview channel changed: $preview_changed"
 
       - name: Detect unseen DuckDB releases
         shell: bash
@@ -880,8 +989,10 @@ jobs:
             exit 0
           fi
 
+          # The generic C API issue keys off the stable/LTS channels only; the
+          # `preview` channel is owned by the upcoming-version tracking issue.
           api_fingerprint="$(
-            jq -c '.' "$RUNNER_TEMP/api-hashes.json" |
+            jq -cS 'del(.preview)' "$RUNNER_TEMP/api-hashes.json" |
             sha256sum |
             cut -d' ' -f1
           )"
@@ -1270,6 +1381,204 @@ jobs:
       # Update local state
       # -----------------------------------------------------------------------
 
+      - name: Manage upcoming-version tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          # A bootstrap run establishes the baseline without creating history.
+          if [ "${STATE_BOOTSTRAP:-false}" = "true" ] || [ "${BOOTSTRAP_EFFECTIVE:-false}" = "true" ]; then
+            echo "Bootstrap mode; upcoming-version tracking is skipped this run."
+            exit 0
+          fi
+
+          # In a dry run, resolve and log the decision but never mutate issues.
+          DRY_RUN="${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}"
+
+          # Wrapper around `gh` that is a no-op (logs only) under a dry run.
+          gh_write() {
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "[dry-run] would run: gh $*"
+              return 0
+            fi
+            gh "$@"
+          }
+
+          has_upcoming="$(jq -r '.hasUpcoming' "$PREVIEW_CONTEXT")"
+          preview_line="$(jq -r '.previewLine' "$PREVIEW_CONTEXT")"
+          preview_raw="$(jq -r '.previewRaw' "$PREVIEW_CONTEXT")"
+          current_line="$(jq -r '.currentLine' "$PREVIEW_CONTEXT")"
+
+          # Previously tracked upcoming line + its issue, restored from state.
+          tracked_line="$(jq -r '.preview.line // empty' "$STATE_ROOT/state.json")"
+          tracked_issue="$(jq -r '.preview.issueNumber // empty' "$STATE_ROOT/state.json")"
+          tracked_raw="$(jq -r '.preview.rawVersion // empty' "$STATE_ROOT/state.json")"
+
+          now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          # Resolve a tracked issue number, preferring the persisted number and falling
+          # back to the hidden body marker (survives artifact expiry).
+          resolve_issue() {
+            local line="$1" num="$2" marker
+            if [ -n "$num" ]; then
+              if gh issue view "$num" --json number --jq '.number' >/dev/null 2>&1; then
+                printf '%s' "$num"
+                return 0
+              fi
+            fi
+            marker="duckdb-preview-monitor:${line}"
+            gh issue list \
+              --state all \
+              --limit 100 \
+              --search "\"${marker}\" in:body" \
+              --json number \
+              --jq '.[0].number // empty' 2>/dev/null || true
+          }
+
+          # Writes the issue body for the tracking issue to $1.
+          write_body() {
+            local out="$1"
+            {
+              echo "## Tracking upcoming DuckDB \`v${preview_line}\`"
+              echo
+              echo "DuckDB is previewing the **${preview_line}** line while this repository targets the current **${current_line}** line. This issue tracks C API changes for the upcoming line so the FFI bindings and safe wrappers can be prepared ahead of the stable release. It stays open — and is updated in place — until \`v${preview_line}\` ships as stable."
+              echo
+              echo "- Preview version: \`${preview_raw}\`"
+              echo "- Preview line: \`${preview_line}\`"
+              echo "- Current (shipped) line: \`${current_line}\`"
+              echo "- Last updated: \`${now}\`"
+              echo
+              echo "### Latest preview C API diff"
+              echo
+              echo '```diff'
+              if [ -s "$RUNNER_TEMP/diffs/preview.diff" ]; then
+                cat "$RUNNER_TEMP/diffs/preview.diff"
+              else
+                echo "(no C API changes detected in the preview channel this run)"
+              fi
+              echo '```'
+              echo
+              echo "Preview C API document: https://github.com/${DUCKDB_WEB_REPO}/blob/main/docs/preview/clients/c/api.md"
+              echo
+              echo "<!-- duckdb-preview-monitor:${preview_line} -->"
+            } > "$out"
+          }
+
+          if [ "$has_upcoming" != "true" ]; then
+            # No upcoming line right now. If we were tracking a line that has since
+            # shipped (current caught up), close its issue with a final comment.
+            if [ -n "$tracked_line" ]; then
+              issue="$(resolve_issue "$tracked_line" "$tracked_issue")"
+              if [ -n "$issue" ]; then
+                state="$(gh issue view "$issue" --json state --jq '.state' 2>/dev/null || echo "")"
+                if [ "$state" = "OPEN" ]; then
+                  gh_write issue comment "$issue" --body "DuckDB \`v${tracked_line}\` has shipped as a stable release (current line is now \`${current_line}\`). Closing this upcoming-version tracker; follow-up work belongs on the released-version issue." || true
+                  gh_write issue close "$issue" --reason completed || true
+                  echo "Closed shipped upcoming-version issue #${issue} for line ${tracked_line}."
+                fi
+              fi
+            fi
+            # Nothing to carry forward: the tracked line (if any) shipped and was closed.
+            echo "PREVIEW_TRACKED_ISSUE=" >> "$GITHUB_ENV"
+            echo "PREVIEW_TRACKED_LINE=" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          # From here, an upcoming line exists. If a previously tracked line differs and
+          # has already shipped (preview jumped forward), close the stale issue first.
+          if [ -n "$tracked_line" ] && [ "$tracked_line" != "$preview_line" ]; then
+            stale="$(resolve_issue "$tracked_line" "$tracked_issue")"
+            if [ -n "$stale" ]; then
+              stale_state="$(gh issue view "$stale" --json state --jq '.state' 2>/dev/null || echo "")"
+              if [ "$stale_state" = "OPEN" ]; then
+                gh_write issue comment "$stale" --body "DuckDB is now previewing \`v${preview_line}\`; the \`v${tracked_line}\` line is no longer the upcoming preview (it has shipped or been superseded). Closing this tracker." || true
+                gh_write issue close "$stale" --reason completed || true
+                echo "Closed superseded upcoming-version issue #${stale} for line ${tracked_line}."
+              fi
+            fi
+            tracked_line=""
+            tracked_issue=""
+            tracked_raw=""
+          fi
+
+          issue="$(resolve_issue "$preview_line" "$tracked_issue")"
+          write_body "$RUNNER_TEMP/preview-issue-body.md"
+
+          if [ -z "$issue" ]; then
+            # First sight of this upcoming line: create the tracking issue.
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "[dry-run] would create upcoming-version issue for line ${preview_line}:"
+              sed 's/^/[dry-run]   /' "$RUNNER_TEMP/preview-issue-body.md"
+              echo "PREVIEW_TRACKED_ISSUE=" >> "$GITHUB_ENV"
+              echo "PREVIEW_TRACKED_LINE=${preview_line}" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            issue="$(
+              gh issue create \
+                --title "Track upcoming DuckDB v${preview_line}" \
+                --body-file "$RUNNER_TEMP/preview-issue-body.md" \
+                --label "duckdb-upcoming" \
+                --label "upstream" \
+                | sed -nE 's#.*/issues/([0-9]+).*#\1#p'
+            )"
+            if [ -z "$issue" ]; then
+              echo "::warning::Failed to create the upcoming-version issue; will retry next run."
+              exit 0
+            fi
+            echo "Created upcoming-version issue #${issue} for line ${preview_line}."
+          else
+            # The issue exists. Reopen it if a human closed it while the line is still
+            # upcoming, then refresh the body. Add a dated comment only when something
+            # actually changed (a preview C API diff, or a version-string bump).
+            state="$(gh issue view "$issue" --json state --jq '.state' 2>/dev/null || echo "")"
+            if [ "$state" = "CLOSED" ]; then
+              gh_write issue reopen "$issue" || true
+            fi
+
+            changed_note=""
+            if [ "${PREVIEW_API_CHANGED:-false}" = "true" ]; then
+              changed_note="the preview C API document changed"
+            fi
+            if [ -n "$tracked_raw" ] && [ "$tracked_raw" != "$preview_raw" ]; then
+              if [ -n "$changed_note" ]; then
+                changed_note="${changed_note}; preview version moved from \`${tracked_raw}\` to \`${preview_raw}\`"
+              else
+                changed_note="preview version moved from \`${tracked_raw}\` to \`${preview_raw}\`"
+              fi
+            fi
+
+            if [ -n "$changed_note" ]; then
+              {
+                echo "### Preview update — \`${now}\`"
+                echo
+                echo "Detected: ${changed_note}."
+                echo
+                echo "- Preview version: \`${preview_raw}\`"
+                echo "- Preview line: \`${preview_line}\`"
+                echo
+                if [ -s "$RUNNER_TEMP/diffs/preview.diff" ]; then
+                  echo "Preview C API diff this run:"
+                  echo
+                  echo '```diff'
+                  cat "$RUNNER_TEMP/diffs/preview.diff"
+                  echo '```'
+                fi
+              } > "$RUNNER_TEMP/preview-issue-comment.md"
+              gh_write issue comment "$issue" --body-file "$RUNNER_TEMP/preview-issue-comment.md" || true
+              echo "Commented on upcoming-version issue #${issue}."
+            else
+              echo "No preview change since last run; leaving issue #${issue} body refreshed only."
+            fi
+
+            gh_write issue edit "$issue" --body-file "$RUNNER_TEMP/preview-issue-body.md" || true
+          fi
+
+          echo "PREVIEW_TRACKED_ISSUE=${issue}" >> "$GITHUB_ENV"
+          echo "PREVIEW_TRACKED_LINE=${preview_line}" >> "$GITHUB_ENV"
+
+
       - name: Build next persistent state
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         shell: bash
@@ -1348,6 +1657,11 @@ jobs:
             --arg ltsUrl "$lts_url" \
             --arg ltsPublished "$lts_published" \
             --argjson apiChannels "$api_channels" \
+            --arg previewLine "${PREVIEW_TRACKED_LINE:-}" \
+            --arg previewIssue "${PREVIEW_TRACKED_ISSUE:-}" \
+            --arg previewRaw "$(jq -r '.previewRaw // ""' "$PREVIEW_CONTEXT")" \
+            --arg previewApiSha "$(jq -r '.preview // ""' "$RUNNER_TEMP/api-hashes.json")" \
+            --arg now "$now" \
             '
             .schemaVersion = 1 |
             .createdAt = (
@@ -1372,7 +1686,24 @@ jobs:
               publishedAt: $ltsPublished
             } |
 
-            .api = { channels: $apiChannels }
+            .api = { channels: $apiChannels } |
+
+            # Upcoming-version tracking: keep a `preview` object only while an issue is
+            # actively tracking an upcoming line. Preserve its original createdAt.
+            .preview = (
+              if $previewLine == "" or $previewIssue == "" then
+                null
+              else
+                {
+                  line: $previewLine,
+                  rawVersion: $previewRaw,
+                  issueNumber: ($previewIssue | tonumber),
+                  apiSha256: (if $previewApiSha == "" then null else $previewApiSha end),
+                  createdAt: (.preview.createdAt // $now),
+                  updatedAt: $now
+                }
+              end
+            )
             ' \
             "$STATE_ROOT/state.json" \
             > "$RUNNER_TEMP/state.updated.json"
@@ -1477,6 +1808,18 @@ jobs:
               echo "- Changed channels:"
               jq -r 'if length == 0 then "  - (none)" else (.[] | "  - \(.)") end' \
                 "$RUNNER_TEMP/changed-channels.json"
+            fi
+            echo
+            echo "## Upcoming version tracking"
+            echo
+            if [ -f "$PREVIEW_CONTEXT" ] && [ "$(jq -r '.hasUpcoming' "$PREVIEW_CONTEXT")" = "true" ]; then
+              echo "- Upcoming preview: \`$(jq -r '.previewRaw' "$PREVIEW_CONTEXT")\` (line \`$(jq -r '.previewLine' "$PREVIEW_CONTEXT")\`)"
+              echo "- Preview C API changed this run: \`${PREVIEW_API_CHANGED:-false}\`"
+              if [ -n "${PREVIEW_TRACKED_ISSUE:-}" ]; then
+                echo "- Tracking issue: #${PREVIEW_TRACKED_ISSUE}"
+              fi
+            else
+              echo "- No upcoming preview line ahead of the current line."
             fi
             echo
             echo "## Monitored documentation channels"
