@@ -307,6 +307,18 @@
           "markdownDescription": "Denies the append_rows command without any pre-configured scope."
         },
         {
+          "description": "Enables the checkpoint command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-checkpoint",
+          "markdownDescription": "Enables the checkpoint command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the checkpoint command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-checkpoint",
+          "markdownDescription": "Denies the checkpoint command without any pre-configured scope."
+        },
+        {
           "description": "Enables the close command without any pre-configured scope.",
           "type": "string",
           "const": "allow-close",

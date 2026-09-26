@@ -5,6 +5,8 @@
 //! phase (see TASKS T4.5); the webview API is identical meanwhile.
 
 use std::collections::HashMap;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use better_duck_core::connection::Connection;
@@ -14,6 +16,7 @@ use better_duck_core::{AccessMode, Config};
 use serde_json::{Map, Value};
 
 use super::{resolve_path, DataFormat, DuckBackend, ExecuteResult, Row};
+use crate::checkpoint::CheckpointConfig;
 use crate::error::{Error, Result};
 use crate::json::{duck_to_json, json_to_duck};
 use crate::migration::Migration;
@@ -22,6 +25,19 @@ use crate::policy::Policy;
 /// A per-connection setup hook, run on every opened connection — the place to register
 /// UDFs (`#[duckdb_*]` macros) or `LOAD` extensions so each connection carries them.
 pub type ConnectHook = Arc<dyn Fn(&mut Connection) -> Result<()> + Send + Sync>;
+
+/// Full engine configuration, assembled by `core::Builder`.
+#[derive(Default)]
+pub struct EngineConfig {
+    /// Per-connection migrations, run on `load`.
+    pub migrations: HashMap<String, Vec<Migration>>,
+    /// Security policy.
+    pub policy: Policy,
+    /// Per-connection setup hooks.
+    pub on_connect: Vec<ConnectHook>,
+    /// Checkpoint strategy configuration.
+    pub checkpoint: CheckpointConfig,
+}
 
 /// A registry of open DuckDB databases keyed by connection string.
 ///
@@ -37,6 +53,10 @@ pub struct DuckEngine {
     policy: Policy,
     /// Hooks run on every opened connection (e.g. UDF registration).
     on_connect: Vec<ConnectHook>,
+    /// Checkpoint strategy configuration.
+    checkpoint_config: CheckpointConfig,
+    /// Count of write operations, for the `AfterWrites` strategy.
+    write_count: AtomicU64,
 }
 
 impl DuckEngine {
@@ -50,13 +70,31 @@ impl DuckEngine {
         DuckEngine { migrations, ..DuckEngine::default() }
     }
 
-    /// Creates an engine with migrations, a security policy, and per-connection hooks.
-    pub fn with_config(
-        migrations: HashMap<String, Vec<Migration>>,
-        policy: Policy,
-        on_connect: Vec<ConnectHook>,
-    ) -> DuckEngine {
-        DuckEngine { dbs: Mutex::new(HashMap::new()), migrations, policy, on_connect }
+    /// Creates an engine from a full [`EngineConfig`].
+    pub fn with_config(config: EngineConfig) -> DuckEngine {
+        DuckEngine {
+            dbs: Mutex::new(HashMap::new()),
+            migrations: config.migrations,
+            policy: config.policy,
+            on_connect: config.on_connect,
+            checkpoint_config: config.checkpoint,
+            write_count: AtomicU64::new(0),
+        }
+    }
+
+    /// Honors the `AfterWrites` checkpoint strategy after a write operation.
+    fn note_write(
+        &self,
+        conn_str: &str,
+    ) {
+        if let Some(n) = self.checkpoint_config.after_writes {
+            if n > 0 {
+                let count = self.write_count.fetch_add(1, Ordering::Relaxed) + 1;
+                if count.is_multiple_of(n) {
+                    let _ = self.checkpoint(conn_str, self.checkpoint_config.force);
+                }
+            }
+        }
     }
 
     fn with_conn<T>(
@@ -122,7 +160,20 @@ impl DuckBackend for DuckEngine {
     ) -> Result<()> {
         self.policy.check_connection(conn_str)?;
         let path = resolve_path(conn_str);
-        let db = if path == ":memory:" {
+        let migrations = self.migrations.get(conn_str).filter(|m| !m.is_empty());
+        let in_memory = path == ":memory:";
+
+        // For on-disk databases, run migrations through the crash-safe backup protocol
+        // BEFORE opening the long-lived handle, so it has exclusive file access. Skipped
+        // in read-only mode (migrations are writes) and for in-memory DBs (no file, and
+        // the data must live on the handle we actually register — handled below).
+        if let Some(migrations) = migrations {
+            if !in_memory && !self.policy.read_only {
+                crate::backup::migrate_with_backup(Path::new(&path), migrations)?;
+            }
+        }
+
+        let db = if in_memory {
             Database::open_in_memory().map_err(|e| Error::Backend(e.to_string()))?
         } else if self.policy.read_only {
             let config = Config::default()
@@ -133,13 +184,20 @@ impl DuckBackend for DuckEngine {
             Database::open(&path).map_err(|e| Error::Backend(e.to_string()))?
         };
 
-        // Run any configured migrations before publishing the connection, so a failed
-        // migration never leaves a half-migrated database registered.
-        if let Some(migrations) = self.migrations.get(conn_str) {
-            if !migrations.is_empty() {
+        // In-memory migrations must run on the registered handle (a separate open would
+        // discard them). No file to back up, so no crash-safe protocol applies.
+        if in_memory && !self.policy.read_only {
+            if let Some(migrations) = migrations {
                 let mut conn = db.connect().map_err(|e| Error::Backend(e.to_string()))?;
                 crate::migration::run_pending(&mut conn, migrations)?;
             }
+        }
+
+        // `Automatic` checkpoint strategy: set DuckDB's WAL-size auto-checkpoint threshold.
+        if let Some(threshold) = &self.checkpoint_config.threshold {
+            let mut conn = db.connect().map_err(|e| Error::Backend(e.to_string()))?;
+            conn.execute_batch(format!("SET checkpoint_threshold='{}'", threshold.replace('\'', "''")))
+                .map_err(|e| Error::Backend(e.to_string()))?;
         }
 
         self.dbs.lock().expect("duck registry poisoned").insert(conn_str.to_owned(), db);
@@ -171,11 +229,13 @@ impl DuckBackend for DuckEngine {
     ) -> Result<ExecuteResult> {
         self.policy.check_writable()?;
         self.policy.check_statement(sql)?;
-        self.with_conn(conn_str, |conn| {
+        let result = self.with_conn(conn_str, |conn| {
             run_with_params(conn, sql, &params, |mut result| {
                 Ok(ExecuteResult { rows_affected: result.changes() })
             })
-        })
+        })?;
+        self.note_write(conn_str);
+        Ok(result)
     }
 
     fn load_extension(
@@ -183,6 +243,7 @@ impl DuckBackend for DuckEngine {
         conn_str: &str,
         name: &str,
     ) -> Result<()> {
+        self.policy.check_extension(name)?;
         self.with_conn(conn_str, |conn| {
             conn.ensure_extension(name).map_err(|e| Error::Backend(e.to_string()))
         })
@@ -205,11 +266,13 @@ impl DuckBackend for DuckEngine {
         };
         let sql =
             format!("CREATE TABLE {table} AS SELECT * FROM {reader}({})", quote_literal(source));
-        self.with_conn(conn_str, |conn| {
+        let result = self.with_conn(conn_str, |conn| {
             run_with_params(conn, &sql, &[], |mut result| {
                 Ok(ExecuteResult { rows_affected: result.changes() })
             })
-        })
+        })?;
+        self.note_write(conn_str);
+        Ok(result)
     }
 
     fn export(
@@ -266,13 +329,15 @@ impl DuckBackend for DuckEngine {
 
         let column_list = columns.join(", ");
         let sql = format!("INSERT INTO {table} ({column_list}) VALUES {}", tuples.join(", "));
-        self.with_conn(conn_str, |conn| {
+        let result = self.with_conn(conn_str, |conn| {
             let mut binds: Vec<&mut dyn AppendAble> =
                 values.iter_mut().map(|v| v as &mut dyn AppendAble).collect();
             let mut result =
                 conn.execute_with(&sql, &mut binds).map_err(|e| Error::Backend(e.to_string()))?;
             Ok(ExecuteResult { rows_affected: result.changes() })
-        })
+        })?;
+        self.note_write(conn_str);
+        Ok(result)
     }
 
     fn list_tables(
@@ -348,6 +413,32 @@ impl DuckBackend for DuckEngine {
             }
             Ok(total)
         })
+    }
+
+    fn checkpoint(
+        &self,
+        conn_str: &str,
+        force: bool,
+    ) -> Result<()> {
+        let sql = if force { "FORCE CHECKPOINT" } else { "CHECKPOINT" };
+        self.with_conn(conn_str, |conn| {
+            conn.execute_batch(sql).map_err(|e| Error::Backend(e.to_string()))
+        })
+    }
+
+    fn checkpoint_all(
+        &self,
+        force: bool,
+    ) {
+        let sql = if force { "FORCE CHECKPOINT" } else { "CHECKPOINT" };
+        // Snapshot the handles under the lock, then checkpoint outside it (best-effort).
+        let dbs: Vec<Database> =
+            self.dbs.lock().expect("duck registry poisoned").values().cloned().collect();
+        for db in dbs {
+            if let Ok(mut conn) = db.connect() {
+                let _ = conn.execute_batch(sql);
+            }
+        }
     }
 }
 

@@ -11,7 +11,7 @@ use crate::error::Result;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod engine;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
-pub use engine::{ConnectHook, DuckEngine};
+pub use engine::{ConnectHook, DuckEngine, EngineConfig};
 
 /// One result row as a JSON object (column name → JSON value).
 pub type Row = Map<String, Value>;
@@ -132,6 +132,19 @@ pub trait DuckBackend: Send + Sync + 'static {
         chunk_size: usize,
         on_batch: &mut dyn FnMut(Vec<Row>) -> Result<()>,
     ) -> Result<u64>;
+
+    /// Flush the WAL into the main database file (`FORCE CHECKPOINT` when `force`).
+    fn checkpoint(
+        &self,
+        conn_str: &str,
+        force: bool,
+    ) -> Result<()>;
+
+    /// Checkpoint every currently-loaded connection (used by background strategies).
+    fn checkpoint_all(
+        &self,
+        force: bool,
+    );
 }
 
 /// Normalize a connection string to a DuckDB path: strips a leading `duckdb:` and

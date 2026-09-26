@@ -60,7 +60,7 @@ pub(crate) fn run_pending(
 }
 
 /// Reads the set of already-applied migration versions.
-fn applied_versions(conn: &mut Connection) -> Result<Vec<i64>> {
+pub(crate) fn applied_versions(conn: &mut Connection) -> Result<Vec<i64>> {
     let result = conn
         .execute("SELECT version FROM __better_duck_migrations")
         .map_err(|e| Error::Backend(e.to_string()))?;
@@ -72,6 +72,32 @@ fn applied_versions(conn: &mut Connection) -> Result<Vec<i64>> {
         }
     }
     Ok(versions)
+}
+
+/// Returns whether any `Up` migration has not yet been applied. Does not create the
+/// bookkeeping table (read-only), so it is safe to call before taking a backup.
+pub(crate) fn has_pending(
+    conn: &mut Connection,
+    migrations: &[Migration],
+) -> Result<bool> {
+    let exists = migrations_table_exists(conn)?;
+    let applied = if exists { applied_versions(conn)? } else { Vec::new() };
+    Ok(migrations
+        .iter()
+        .filter(|m| m.kind == MigrationKind::Up)
+        .any(|m| !applied.contains(&m.version)))
+}
+
+/// Checks whether the `__better_duck_migrations` table exists (without creating it).
+fn migrations_table_exists(conn: &mut Connection) -> Result<bool> {
+    let result = conn
+        .execute(
+            "SELECT 1 FROM information_schema.tables \
+             WHERE table_name = '__better_duck_migrations' LIMIT 1",
+        )
+        .map_err(|e| Error::Backend(e.to_string()))?;
+    let rows = result.materialize().map_err(|e| Error::Backend(e.to_string()))?;
+    Ok(!rows.rows().is_empty())
 }
 
 /// Runs one migration and records its version, all inside a single transaction.

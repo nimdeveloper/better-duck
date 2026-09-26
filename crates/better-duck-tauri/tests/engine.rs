@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use better_duck_tauri::backend::{DataFormat, DuckBackend, DuckEngine};
+use better_duck_tauri::backend::{DataFormat, DuckBackend, DuckEngine, EngineConfig};
 use better_duck_tauri::{Migration, MigrationKind, Policy};
 use serde_json::json;
 
@@ -128,7 +128,7 @@ fn migrations_run_on_load() {
 #[test]
 fn read_only_policy_rejects_writes_but_allows_reads() {
     let policy = Policy { read_only: true, ..Policy::default() };
-    let engine = DuckEngine::with_config(HashMap::new(), policy, Vec::new());
+    let engine = DuckEngine::with_config(EngineConfig { policy, ..Default::default() });
     engine.load(MEM).unwrap();
     assert!(engine.execute(MEM, "CREATE TABLE t (id INTEGER)", vec![]).is_err());
     assert!(engine.select(MEM, "SELECT 42 AS n", vec![]).is_ok());
@@ -137,7 +137,7 @@ fn read_only_policy_rejects_writes_but_allows_reads() {
 #[test]
 fn risky_statement_policy_rejects_attach() {
     let policy = Policy { deny_risky_statements: true, ..Policy::default() };
-    let engine = DuckEngine::with_config(HashMap::new(), policy, Vec::new());
+    let engine = DuckEngine::with_config(EngineConfig { policy, ..Default::default() });
     engine.load(MEM).unwrap();
     assert!(engine.execute(MEM, "ATTACH ':memory:' AS other", vec![]).is_err());
     // Ordinary DDL is not a "risky" statement kind and stays allowed.
@@ -150,7 +150,7 @@ fn path_allow_list_blocks_outside_import() {
     let outside = tempfile::tempdir().unwrap();
     let policy =
         Policy { allowed_paths: Some(vec![allowed.path().to_path_buf()]), ..Policy::default() };
-    let engine = DuckEngine::with_config(HashMap::new(), policy, Vec::new());
+    let engine = DuckEngine::with_config(EngineConfig { policy, ..Default::default() });
     engine.load(MEM).unwrap();
 
     let outside_file = outside.path().join("data.csv");
@@ -163,7 +163,7 @@ fn path_allow_list_blocks_outside_import() {
 fn connection_allow_list_blocks_unlisted() {
     let policy =
         Policy { allowed_connections: Some(vec!["duckdb:ok.db".to_owned()]), ..Policy::default() };
-    let engine = DuckEngine::with_config(HashMap::new(), policy, Vec::new());
+    let engine = DuckEngine::with_config(EngineConfig { policy, ..Default::default() });
     assert!(engine.load("duckdb::memory:").is_err());
 }
 
@@ -223,12 +223,138 @@ fn on_connect_hook_runs_per_connection() {
         conn.execute_batch("CREATE OR REPLACE MACRO plus_one(x) AS x + 1")
             .map_err(|e| Error::Backend(e.to_string()))
     });
-    let engine = DuckEngine::with_config(HashMap::new(), Policy::default(), vec![hook]);
+    let engine = DuckEngine::with_config(EngineConfig { on_connect: vec![hook], ..Default::default() });
     engine.load(MEM).unwrap();
 
     let rows = engine.select(MEM, "SELECT plus_one(41) AS v", vec![]).unwrap();
     assert_eq!(rows[0]["v"], json!(42));
 }
+
+#[test]
+fn network_extension_blocked_by_default() {
+    // `httpfs` enables network egress; the default policy must refuse it before any
+    // install/network attempt.
+    let engine = DuckEngine::new();
+    engine.load(MEM).unwrap();
+    assert!(engine.load_extension(MEM, "httpfs").is_err());
+}
+
+fn up(version: i64, sql: &str) -> Migration {
+    Migration { version, description: format!("m{version}"), sql: sql.to_owned(), kind: MigrationKind::Up }
+}
+
+#[test]
+fn checkpoint_flushes_and_all_is_best_effort() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("c.duckdb");
+    let conn = format!("duckdb:{}", db.to_str().unwrap());
+
+    let engine = DuckEngine::new();
+    engine.load(&conn).unwrap();
+    engine.execute(&conn, "CREATE TABLE t (id INTEGER)", vec![]).unwrap();
+    engine.execute(&conn, "INSERT INTO t VALUES (1)", vec![]).unwrap();
+
+    engine.checkpoint(&conn, false).unwrap();
+    engine.checkpoint(&conn, true).unwrap();
+    engine.checkpoint_all(true); // sweeps all loaded connections without panicking
+
+    let rows = engine.select(&conn, "SELECT id FROM t", vec![]).unwrap();
+    assert_eq!(rows[0]["id"], json!(1));
+}
+
+#[test]
+fn checkpoint_threshold_is_applied_on_load() {
+    use better_duck_tauri::CheckpointConfig;
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("thr.duckdb");
+    let conn = format!("duckdb:{}", db.to_str().unwrap());
+
+    let engine = DuckEngine::with_config(EngineConfig {
+        checkpoint: CheckpointConfig { threshold: Some("64MB".to_owned()), ..Default::default() },
+        ..Default::default()
+    });
+    engine.load(&conn).unwrap();
+
+    let rows = engine
+        .select(&conn, "SELECT current_setting('checkpoint_threshold') AS v", vec![])
+        .unwrap();
+    assert!(matches!(&rows[0]["v"], serde_json::Value::String(s) if !s.is_empty()));
+}
+
+#[test]
+fn after_writes_strategy_runs_clean() {
+    use better_duck_tauri::CheckpointConfig;
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("aw.duckdb");
+    let conn = format!("duckdb:{}", db.to_str().unwrap());
+
+    let engine = DuckEngine::with_config(EngineConfig {
+        checkpoint: CheckpointConfig { after_writes: Some(2), force: true, ..Default::default() },
+        ..Default::default()
+    });
+    engine.load(&conn).unwrap();
+    engine.execute(&conn, "CREATE TABLE t (id INTEGER)", vec![]).unwrap(); // write 1
+    engine.execute(&conn, "INSERT INTO t VALUES (1)", vec![]).unwrap(); // write 2 → checkpoint
+
+    let rows = engine.select(&conn, "SELECT count(*) AS c FROM t", vec![]).unwrap();
+    assert_eq!(rows[0]["c"], json!(1));
+}
+
+#[test]
+fn on_disk_migrations_apply_and_leave_no_artifacts() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("app.duckdb");
+    let conn = format!("duckdb:{}", db.to_str().unwrap());
+
+    let mut map = HashMap::new();
+    map.insert(conn.clone(), vec![up(1, "CREATE TABLE t (id INTEGER)"), up(2, "INSERT INTO t VALUES (7)")]);
+    let engine = DuckEngine::with_migrations(map);
+    engine.load(&conn).unwrap();
+
+    let rows = engine.select(&conn, "SELECT id FROM t", vec![]).unwrap();
+    assert_eq!(rows[0]["id"], json!(7));
+
+    // The backup protocol cleans up after a successful run.
+    assert!(!dir.path().join("app.duckdb.bak").exists());
+    assert!(!dir.path().join("app.duckdb.migrate-journal").exists());
+}
+
+#[test]
+fn interrupted_migration_recovers_from_backup() {
+    use std::fs;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("app.duckdb");
+    let conn = format!("duckdb:{}", db.to_str().unwrap());
+
+    // Establish the pre-batch state and capture a backup of it.
+    let setup = DuckEngine::new();
+    setup.load(&conn).unwrap();
+    setup.execute(&conn, "CREATE TABLE base (id INTEGER)", vec![]).unwrap();
+    setup.execute(&conn, "INSERT INTO base VALUES (1)", vec![]).unwrap();
+    setup.close(&conn).unwrap(); // clean close checkpoints, so the file is self-contained
+    fs::copy(&db, dir.path().join("app.duckdb.bak")).unwrap();
+
+    // Simulate an interrupted run: a half-applied change plus a leftover journal.
+    let dirty = DuckEngine::new();
+    dirty.load(&conn).unwrap();
+    dirty.execute(&conn, "CREATE TABLE partial (x INTEGER)", vec![]).unwrap();
+    dirty.close(&conn).unwrap();
+    fs::write(dir.path().join("app.duckdb.migrate-journal"), "{}").unwrap();
+
+    // Recovery: restore the backup (dropping `partial`), then apply the migration.
+    let mut map = HashMap::new();
+    map.insert(conn.clone(), vec![up(10, "CREATE TABLE migrated (id INTEGER)")]);
+    let engine = DuckEngine::with_migrations(map);
+    engine.load(&conn).unwrap();
+
+    assert_eq!(engine.select(&conn, "SELECT id FROM base", vec![]).unwrap()[0]["id"], json!(1));
+    assert!(engine.select(&conn, "SELECT * FROM migrated", vec![]).is_ok());
+    assert!(engine.select(&conn, "SELECT * FROM partial", vec![]).is_err(), "restore should drop the half-applied table");
+    assert!(!dir.path().join("app.duckdb.bak").exists());
+    assert!(!dir.path().join("app.duckdb.migrate-journal").exists());
+}
+
 
 
 

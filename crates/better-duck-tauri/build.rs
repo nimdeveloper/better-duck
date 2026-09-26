@@ -17,6 +17,7 @@ const COMMANDS: &[&str] = &[
     "columns",
     "explain",
     "stream",
+    "checkpoint",
 ];
 
 fn main() {

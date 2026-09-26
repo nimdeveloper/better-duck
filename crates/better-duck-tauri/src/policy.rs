@@ -26,6 +26,9 @@ pub struct Policy {
     pub allowed_paths: Option<Vec<PathBuf>>,
     /// Reject risky statements (see [`RISKY_KEYWORDS`]) passed to `select`/`execute`.
     pub deny_risky_statements: bool,
+    /// Allow loading network-backed extensions (`httpfs`/`aws`/`azure`). Off by default —
+    /// these enable SQL-driven network egress (SSRF / data exfiltration).
+    pub allow_network: bool,
 }
 
 impl Policy {
@@ -78,6 +81,19 @@ impl Policy {
         let keyword = leading_keyword(sql);
         if RISKY_KEYWORDS.iter().any(|risky| risky.eq_ignore_ascii_case(keyword)) {
             Err(Error::Denied(format!("statement kind not allowed: {keyword}")))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Rejects a network-backed extension unless network access is allowed.
+    pub(crate) fn check_extension(
+        &self,
+        name: &str,
+    ) -> Result<()> {
+        const NETWORK: &[&str] = &["httpfs", "aws", "azure"];
+        if !self.allow_network && NETWORK.iter().any(|e| e.eq_ignore_ascii_case(name)) {
+            Err(Error::Denied(format!("network extension {name:?} requires allow_network")))
         } else {
             Ok(())
         }

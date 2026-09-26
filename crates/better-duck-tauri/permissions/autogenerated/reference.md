@@ -48,6 +48,32 @@ Denies the append_rows command without any pre-configured scope.
 <tr>
 <td>
 
+`better-duck-tauri:allow-checkpoint`
+
+</td>
+<td>
+
+Enables the checkpoint command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:deny-checkpoint`
+
+</td>
+<td>
+
+Denies the checkpoint command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `better-duck-tauri:allow-close`
 
 </td>

@@ -24,6 +24,10 @@ mod state;
 pub mod backend;
 
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
+mod backup;
+#[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
+mod checkpoint;
+#[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod json;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod migration;
@@ -38,7 +42,9 @@ use tauri::{Manager, Runtime};
 pub use backend::{DataFormat, DuckBackend, ExecuteResult, Row};
 pub use error::{Error, Result};
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
-pub use backend::ConnectHook;
+pub use backend::{ConnectHook, EngineConfig};
+#[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
+pub use checkpoint::CheckpointConfig;
 /// The core DuckDB connection type, re-exported for writing `on_connect` hooks.
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 pub use better_duck_core::connection::Connection;
@@ -49,8 +55,15 @@ pub use policy::Policy;
 
 use state::DuckState;
 
-/// Builds the plugin around a chosen backend instance.
-fn build_plugin<R: Runtime>(backend: Arc<dyn DuckBackend>) -> TauriPlugin<R> {
+/// Builds the plugin around a chosen backend instance and checkpoint strategy.
+fn build_plugin<R: Runtime>(
+    backend: Arc<dyn DuckBackend>,
+    checkpoint: CheckpointConfig,
+) -> TauriPlugin<R> {
+    let interval = checkpoint.interval;
+    let on_exit = checkpoint.on_exit;
+    let force = checkpoint.force;
+    let exit_backend = backend.clone();
     Builder::new("duck")
         .invoke_handler(tauri::generate_handler![
             commands::load,
@@ -64,11 +77,26 @@ fn build_plugin<R: Runtime>(backend: Arc<dyn DuckBackend>) -> TauriPlugin<R> {
             commands::tables,
             commands::columns,
             commands::explain,
-            commands::stream
+            commands::stream,
+            commands::checkpoint
         ])
         .setup(move |app, _api| {
-            app.manage(DuckState::new(backend));
+            app.manage(DuckState::new(backend.clone()));
+            // `Interval` strategy: a background thread sweeps all loaded connections.
+            if let Some(period) = interval {
+                let bg = backend.clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(period);
+                    bg.checkpoint_all(force);
+                });
+            }
             Ok(())
+        })
+        .on_event(move |_app, event| {
+            // `OnAppLifecycle` strategy: checkpoint everything as the app exits.
+            if on_exit && matches!(event, tauri::RunEvent::Exit) {
+                exit_backend.checkpoint_all(force);
+            }
         })
         .build()
 }
@@ -79,23 +107,26 @@ pub mod core {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::time::Duration;
 
     use better_duck_core::connection::Connection;
     use tauri::plugin::TauriPlugin;
     use tauri::Runtime;
 
-    use crate::backend::ConnectHook;
+    use crate::backend::{ConnectHook, EngineConfig};
+    use crate::checkpoint::CheckpointConfig;
     use crate::error::Result;
     use crate::migration::Migration;
     use crate::policy::Policy;
 
     /// Builder for the core-backed plugin: register per-connection migrations, the
-    /// security policy, and connection setup hooks (e.g. UDF registration) before init.
+    /// security policy, connection setup hooks, and checkpoint strategies before init.
     #[derive(Default)]
     pub struct Builder {
         migrations: HashMap<String, Vec<Migration>>,
         policy: Policy,
         on_connect: Vec<ConnectHook>,
+        checkpoint: CheckpointConfig,
     }
 
     impl Builder {
@@ -155,6 +186,16 @@ pub mod core {
             self
         }
 
+        /// Allows loading network-backed extensions (`httpfs`/`aws`/`azure`). Off by default.
+        #[must_use]
+        pub fn allow_network(
+            mut self,
+            enabled: bool,
+        ) -> Builder {
+            self.policy.allow_network = enabled;
+            self
+        }
+
         /// Registers a hook run on every opened connection — the place to register UDFs
         /// or `LOAD` extensions so each connection carries them.
         #[must_use]
@@ -166,13 +207,66 @@ pub mod core {
             self
         }
 
+        /// `Automatic` checkpoint strategy: sets DuckDB's `checkpoint_threshold` (e.g. "64MB").
+        #[must_use]
+        pub fn checkpoint_threshold(
+            mut self,
+            threshold: impl Into<String>,
+        ) -> Builder {
+            self.checkpoint.threshold = Some(threshold.into());
+            self
+        }
+
+        /// `AfterWrites` checkpoint strategy: checkpoint after every `n` write operations.
+        #[must_use]
+        pub fn checkpoint_after_writes(
+            mut self,
+            n: u64,
+        ) -> Builder {
+            self.checkpoint.after_writes = Some(n);
+            self
+        }
+
+        /// `Interval` checkpoint strategy: a background thread sweeps all connections.
+        #[must_use]
+        pub fn checkpoint_interval(
+            mut self,
+            period: Duration,
+        ) -> Builder {
+            self.checkpoint.interval = Some(period);
+            self
+        }
+
+        /// `OnAppLifecycle` checkpoint strategy: checkpoint all connections on app exit.
+        #[must_use]
+        pub fn checkpoint_on_exit(
+            mut self,
+            enabled: bool,
+        ) -> Builder {
+            self.checkpoint.on_exit = enabled;
+            self
+        }
+
+        /// Use `FORCE CHECKPOINT` (waits for the lock) for background / after-write sweeps.
+        #[must_use]
+        pub fn checkpoint_force(
+            mut self,
+            enabled: bool,
+        ) -> Builder {
+            self.checkpoint.force = enabled;
+            self
+        }
+
         /// Builds the plugin.
         pub fn build<R: Runtime>(self) -> TauriPlugin<R> {
-            super::build_plugin(Arc::new(crate::backend::DuckEngine::with_config(
-                self.migrations,
-                self.policy,
-                self.on_connect,
-            )))
+            let checkpoint = self.checkpoint.clone();
+            let engine = crate::backend::DuckEngine::with_config(EngineConfig {
+                migrations: self.migrations,
+                policy: self.policy,
+                on_connect: self.on_connect,
+                checkpoint: self.checkpoint,
+            });
+            super::build_plugin(Arc::new(engine), checkpoint)
         }
     }
 
@@ -193,8 +287,10 @@ pub mod diesel {
     use tauri::plugin::TauriPlugin;
     use tauri::Runtime;
 
+    use crate::checkpoint::CheckpointConfig;
+
     /// Initialize the plugin on the `better-duck-diesel` backend.
     pub fn init<R: Runtime>() -> TauriPlugin<R> {
-        super::build_plugin(Arc::new(crate::backend::DuckEngine::new()))
+        super::build_plugin(Arc::new(crate::backend::DuckEngine::new()), CheckpointConfig::default())
     }
 }

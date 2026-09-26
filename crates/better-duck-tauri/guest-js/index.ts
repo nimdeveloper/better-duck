@@ -129,4 +129,9 @@ export default class Database {
       channel,
     })
   }
+
+  /** Flush the WAL into the main database file (FORCE CHECKPOINT when `force`). */
+  async checkpoint(force = false): Promise<void> {
+    return await invoke('plugin:duck|checkpoint', { db: this.path, force })
+  }
 }

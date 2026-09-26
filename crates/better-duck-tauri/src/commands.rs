@@ -176,3 +176,17 @@ pub(crate) async fn stream(
     .await
     .map_err(join_err)?
 }
+
+/// Flush the WAL into the main database file (`FORCE CHECKPOINT` when `force`).
+#[tauri::command]
+pub(crate) async fn checkpoint(
+    state: State<'_, DuckState>,
+    db: String,
+    force: Option<bool>,
+) -> Result<()> {
+    let backend = state.backend();
+    let force = force.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || backend.checkpoint(&db, force))
+        .await
+        .map_err(join_err)?
+}
