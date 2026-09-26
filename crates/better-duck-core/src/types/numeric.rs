@@ -571,18 +571,15 @@ mod test_numeric_conversion {
     fn wide_and_decimal_logical_types_from_and_bind_and_append() {
         use super::*;
         use crate::connection::Connection;
-        // duck_logical_type() for the wide/decimal types (raw handles ignored).
+        // duck_logical_type() for the wide integer type (raw handle ignored).
         let _ = <u128 as DuckLogicalType>::duck_logical_type();
-        let _ = <Decimal as DuckLogicalType>::duck_logical_type();
         // From<T> for DuckValue.
         assert!(matches!(DuckValue::from(5u128), DuckValue::UHugeInt(5)));
-        assert!(matches!(DuckValue::from(Decimal::new(123, 2)), DuckValue::Decimal(_)));
 
         let mut conn = Connection::open_in_memory().unwrap();
-        // stmt_append (bind) for i128 / u128 / Decimal.
+        // stmt_append (bind) for i128 / u128.
         let _ = conn.execute_with("SELECT $1", &mut [&mut 5i128]);
         let _ = conn.execute_with("SELECT $1", &mut [&mut 5u128]);
-        let _ = conn.execute_with("SELECT $1", &mut [&mut Decimal::new(123, 2)]);
         // appender_append for i128 / u128.
         conn.execute_batch("CREATE TABLE hi (a HUGEINT)").unwrap();
         {
@@ -596,5 +593,18 @@ mod test_numeric_conversion {
             app.append(&mut 5u128).unwrap();
             app.save().unwrap();
         }
+    }
+
+    #[cfg(feature = "decimal")]
+    #[test]
+    fn decimal_logical_type_from_and_bind() {
+        use super::*;
+        use crate::connection::Connection;
+        // duck_logical_type() + From<Decimal> for DuckValue (decimal feature only).
+        let _ = <Decimal as DuckLogicalType>::duck_logical_type();
+        assert!(matches!(DuckValue::from(Decimal::new(123, 2)), DuckValue::Decimal(_)));
+        // stmt_append (bind) for Decimal.
+        let mut conn = Connection::open_in_memory().unwrap();
+        let _ = conn.execute_with("SELECT $1", &mut [&mut Decimal::new(123, 2)]);
     }
 }
