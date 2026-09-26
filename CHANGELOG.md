@@ -9,10 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Completion of full DuckDB v1.5.5 C-API coverage: the retained surface is now
-**403 methods = 393 production-used + 10 documented safe alternatives**, with no
-`pending` rows. This is a pre-1.0 beta, so some value-model contracts changed; the
-breaks are called out below.
+---
+
+## [0.1.0-beta.4] — 2026-09-26
+
+Two themes. First, completion of full DuckDB v1.5.5 C-API coverage: the retained
+surface is now **403 methods = 393 production-used + 10 documented safe
+alternatives**, with no `pending` rows. Second, a large ergonomics and ORM push —
+data derives (`FromRow`/`ToRow`/`DuckEnum`/`DuckStruct`), the `#[duckdb_aggregate]`
+and `#[duckdb_cast]` UDF macros, `transaction!`/`params!` helpers, an extensive
+Diesel DSL of DuckDB-specific SQL, calling registered UDFs through the Diesel DSL,
+a spatial module, and an upstream **upcoming-version monitor** in CI. This is a
+pre-1.0 beta, so some value-model contracts changed; the breaks are called out below.
 
 ### `better-duck-core`
 
@@ -63,6 +71,23 @@ breaks are called out below.
   `Database::open`), the external task scheduler (`TaskState`/`execute_tasks`), the
   query-profiling tree (`ProfilingNode`), and numeric/temporal conversion helpers
   (`hugeint_to_double`/`double_to_hugeint`, `TimestampParts`, …).
+- **Fallible value reads (`FromDuckValue`).** A `trait FromDuckValue` (read
+  counterpart to `AppendAble`) with impls for every scalar/temporal/composite type,
+  `Option<T>`, `Vec<T>` (LIST/ARRAY), and `HashMap<String, V>` (STRUCT); the legacy
+  panicking `From<DuckValue>` impls now delegate to it.
+- **Transactions.** `Connection::{begin, commit, rollback, transaction}` plus a RAII
+  `Transaction` guard (`begin_transaction`) that rolls back on drop unless committed.
+  DuckDB has no `SAVEPOINT`, so no savepoint API is exposed.
+- **Extension management.** `Connection::{install_extension, load_extension,
+  is_extension_loaded, ensure_extension}` (names validated), reading state from
+  `duckdb_extensions()`.
+- **Data derives (`derive` feature).** `#[derive(FromRow)]` (+ `ResultSet::to_structs`),
+  `#[derive(ToRow)]` (append/bind a struct as one row), `#[derive(DuckEnum)]`
+  (Rust unit enum ↔ DuckDB `ENUM`), and `#[derive(DuckStruct)]` (Rust struct ↔ DuckDB
+  `STRUCT`), with `#[duck(rename/rename_all)]` / `#[duck_enum(...)]` attributes. Plus
+  the `transaction!(conn, { … })` and `params![…]` helper macros.
+- **GEOMETRY reads.** `GEOMETRY` columns (type-id 40) now read as their WKB bytes
+  (`DuckValue::Blob`) instead of erroring.
 
 **User-defined functions**
 - **Table function extras** — `VTab::named_parameters()`/`supports_projection_pushdown()` (both
@@ -118,6 +143,50 @@ breaks are called out below.
   key aborts `duckdb_profiling_info_get_value` (C++ exceptions unwinding across the FFI
   boundary); the PK-appender-destroy deadlock on ART-indexed tables.
 
+### `better-duck-diesel`
+
+#### Added
+
+- **DuckDB SQL DSL (`use better_duck_diesel::dsl::*;`).** A large library of DuckDB-specific
+  SQL that stock Diesel doesn't ship, all typed:
+  - **Operators as extension methods** — `ilike`/`not_ilike`, `similar_to`/`not_similar_to`,
+    `glob`, `regexp_matches`/`not_regexp_matches`, `starts_with_op` (`^@`), and null-safe
+    `is_distinct_from`/`is_not_distinct_from` (`DuckTextExpressionMethods`/`DuckExpressionMethods`).
+  - **Scalar functions** — string / search / similarity (`levenshtein`, `jaro_winkler_similarity`,
+    `lpad`, `split_part`, …), numeric & trig (`sqrt`, `pow`, `gcd`, `sin`, `atan2`, `mod`, `xor`,
+    `bit_count`, …), regex, date/time (`date_trunc`, `strftime`, `make_timestamp`, `datediff`,
+    `dayname`, `quarter`, …), UUID, hashing (`sha256`/`sha1`), encoding (`base64`, `hex`), JSON,
+    `LIST`/`MAP` helpers, formatting, and utility (`version`, `typeof`).
+  - **Aggregates** — general (`string_agg`, `array_agg`, `bool_and/or`, `arg_max/min`, `product`,
+    `any_value`), statistical (`stddev`, `var`, `corr`, `regr_*`, `skewness`, `kurtosis`, `median`,
+    …), approximate (`approx_count_distinct`, `approx_quantile`, `reservoir_quantile`,
+    `quantile_cont/disc`), bitwise (`bit_and/or/xor`), and JSON (`json_group_array/object`).
+- **Custom-typed value newtypes (`better_duck_diesel::values::*`)** — `TinyInt`, `UTinyInt`,
+  `USmallInt`, `UInt`, `UBigInt`, `HugeInt`, `UHugeInt`, `Uuid`, `Bit`, `Bignum`: local
+  `#[derive(AsExpression, FromSqlRow)]` wrappers that bind and load DuckDB-specific-typed
+  values (which coherence forbids implementing directly for foreign types), closing the
+  `i128`/`u128`/`UUID`/… bind+load gap.
+- **UDFs through the DSL (`udf` feature).** `DuckDbConnection::inner()`/`inner_mut()` expose the
+  underlying core connection for registering UDFs; a registered scalar UDF declared with
+  `define_sql_function!` is then callable as a typed method in the query DSL — no raw SQL.
+- **Data-derive emission (`derive` feature).** With it on, `#[derive(DuckEnum)]` and
+  `#[derive(DuckStruct)]` additionally emit Diesel `FromSql`/`ToSql`, so a derived Rust
+  enum/struct binds and loads at its `sql_types::DuckEnum`/`DuckStruct` column type. The four
+  data derives are re-exported from `better_duck_diesel`.
+- **Spatial (`spatial` feature).** `ensure_loaded(conn)` (install + load the `spatial` extension
+  on demand) plus `ST_Point`, `ST_GeomFromText`, `ST_AsText`, `ST_Distance`, `ST_Area` typed DSL;
+  geometries travel as WKB (`Binary`).
+- **`json` feature** — bundles DuckDB's JSON extension so the JSON DSL works without a runtime
+  autoload/network fetch.
+- **`SharedDuckDbConnectionManager::on_connect`** — a per-connection setup hook to register UDFs
+  or `LOAD` extensions on every pooled connection.
+
+#### Fixed
+
+- **`approx_quantile`** — the position argument is typed `FLOAT` (not `DOUBLE`), matching DuckDB's
+  actual signature so the aggregate binds.
+- **`strpos`/`instr`** — return `BIGINT`, matching DuckDB (was mistyped as `INTEGER`).
+
 ### Infrastructure
 
 #### Added
@@ -141,6 +210,12 @@ breaks are called out below.
   `better-duck-core`'s default `chrono` feature while leaving `better-duck-diesel`'s own, separately
   toggled `chrono` feature off, producing a false-positive "unresolved import" on
   `better-duck-diesel`'s non-chrono `date_native` module.
+- **`duckdb-monitor.yml` upcoming-version tracking** — the upstream monitor now reads DuckDB-web's
+  `_config.yml` to detect the previewed next line (e.g. `2.0-dev`) and maintains a single tracking
+  issue for it: created on first sight, updated in place (dated comment + refreshed body) as the
+  preview evolves, and closed with a final comment once that line ships as stable. The issue number
+  is preserved across runs in the state artifact (with a hidden body marker as a fallback). Preview
+  C-API drift no longer spawns duplicate generic issues.
 
 #### Fixed
 
@@ -407,6 +482,7 @@ upgrading.
 
 ---
 
-[Unreleased]: https://github.com/nimdeveloper/better-duck/compare/v0.1.0-beta.3...HEAD
+[Unreleased]: https://github.com/nimdeveloper/better-duck/compare/v0.1.0-beta.4...HEAD
+[0.1.0-beta.4]: https://github.com/nimdeveloper/better-duck/compare/v0.1.0-beta.3...v0.1.0-beta.4
 [0.1.0-beta.3]: https://github.com/nimdeveloper/better-duck/releases/tag/v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/nimdeveloper/better-duck/releases/tag/v0.1.0-beta.2
