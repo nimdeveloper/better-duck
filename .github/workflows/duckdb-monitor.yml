@@ -1515,6 +1515,21 @@ jobs:
               echo "PREVIEW_TRACKED_LINE=${preview_line}" >> "$GITHUB_ENV"
               exit 0
             fi
+            # The labels must exist before `gh issue create --label` can attach them;
+            # create them idempotently (a pre-existing label makes `gh label create`
+            # fail, hence `|| true`), mirroring the C API / release issue steps.
+            gh label create \
+              "duckdb-upcoming" \
+              --description "Tracking issues for upcoming DuckDB versions" \
+              --color "FBCA04" \
+              >/dev/null 2>&1 || true
+
+            gh label create \
+              "upstream" \
+              --description "Upstream dependency changes" \
+              --color "0366D6" \
+              >/dev/null 2>&1 || true
+
             issue="$(
               gh issue create \
                 --title "Track upcoming DuckDB v${preview_line}" \
