@@ -2,6 +2,7 @@
 //! blocks the async runtime. Keep the list in sync with `build.rs`'s `COMMANDS`.
 
 use serde_json::{Map, Value};
+use tauri::ipc::Channel;
 use tauri::State;
 
 use crate::backend::{DataFormat, ExecuteResult, Row};
@@ -116,4 +117,62 @@ pub(crate) async fn append_rows(
     tauri::async_runtime::spawn_blocking(move || backend.append_rows(&db, &table, rows))
         .await
         .map_err(join_err)?
+}
+
+/// List the tables in the `main` schema.
+#[tauri::command]
+pub(crate) async fn tables(
+    state: State<'_, DuckState>,
+    db: String,
+) -> Result<Vec<Row>> {
+    let backend = state.backend();
+    tauri::async_runtime::spawn_blocking(move || backend.list_tables(&db)).await.map_err(join_err)?
+}
+
+/// List a table's columns.
+#[tauri::command]
+pub(crate) async fn columns(
+    state: State<'_, DuckState>,
+    db: String,
+    table: String,
+) -> Result<Vec<Row>> {
+    let backend = state.backend();
+    tauri::async_runtime::spawn_blocking(move || backend.list_columns(&db, &table))
+        .await
+        .map_err(join_err)?
+}
+
+/// Return the query plan for a statement.
+#[tauri::command]
+pub(crate) async fn explain(
+    state: State<'_, DuckState>,
+    db: String,
+    query: String,
+) -> Result<Vec<Row>> {
+    let backend = state.backend();
+    tauri::async_runtime::spawn_blocking(move || backend.explain(&db, &query))
+        .await
+        .map_err(join_err)?
+}
+
+/// Stream a read query's rows to the frontend in chunks over a channel.
+/// Resolves to the total number of rows streamed.
+#[tauri::command]
+pub(crate) async fn stream(
+    state: State<'_, DuckState>,
+    db: String,
+    query: String,
+    values: Vec<Value>,
+    chunk: Option<usize>,
+    channel: Channel<Vec<Row>>,
+) -> Result<u64> {
+    let backend = state.backend();
+    let size = chunk.unwrap_or(1024);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut sink =
+            |batch: Vec<Row>| channel.send(batch).map_err(|e| Error::Backend(e.to_string()));
+        backend.select_stream(&db, &query, values, size, &mut sink)
+    })
+    .await
+    .map_err(join_err)?
 }

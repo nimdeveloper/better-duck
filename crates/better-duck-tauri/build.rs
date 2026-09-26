@@ -13,6 +13,10 @@ const COMMANDS: &[&str] = &[
     "import",
     "export",
     "append_rows",
+    "tables",
+    "columns",
+    "explain",
+    "stream",
 ];
 
 fn main() {

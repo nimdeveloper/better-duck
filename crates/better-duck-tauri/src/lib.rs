@@ -38,6 +38,11 @@ use tauri::{Manager, Runtime};
 pub use backend::{DataFormat, DuckBackend, ExecuteResult, Row};
 pub use error::{Error, Result};
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
+pub use backend::ConnectHook;
+/// The core DuckDB connection type, re-exported for writing `on_connect` hooks.
+#[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
+pub use better_duck_core::connection::Connection;
+#[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 pub use migration::{Migration, MigrationKind};
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 pub use policy::Policy;
@@ -55,7 +60,11 @@ fn build_plugin<R: Runtime>(backend: Arc<dyn DuckBackend>) -> TauriPlugin<R> {
             commands::load_extension,
             commands::import,
             commands::export,
-            commands::append_rows
+            commands::append_rows,
+            commands::tables,
+            commands::columns,
+            commands::explain,
+            commands::stream
         ])
         .setup(move |app, _api| {
             app.manage(DuckState::new(backend));
@@ -71,18 +80,22 @@ pub mod core {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    use better_duck_core::connection::Connection;
     use tauri::plugin::TauriPlugin;
     use tauri::Runtime;
 
+    use crate::backend::ConnectHook;
+    use crate::error::Result;
     use crate::migration::Migration;
     use crate::policy::Policy;
 
-    /// Builder for the core-backed plugin: register per-connection migrations and the
-    /// security policy (read-only, allow-lists, statement filter) before initializing.
+    /// Builder for the core-backed plugin: register per-connection migrations, the
+    /// security policy, and connection setup hooks (e.g. UDF registration) before init.
     #[derive(Default)]
     pub struct Builder {
         migrations: HashMap<String, Vec<Migration>>,
         policy: Policy,
+        on_connect: Vec<ConnectHook>,
     }
 
     impl Builder {
@@ -142,11 +155,23 @@ pub mod core {
             self
         }
 
+        /// Registers a hook run on every opened connection — the place to register UDFs
+        /// or `LOAD` extensions so each connection carries them.
+        #[must_use]
+        pub fn on_connect(
+            mut self,
+            hook: impl Fn(&mut Connection) -> Result<()> + Send + Sync + 'static,
+        ) -> Builder {
+            self.on_connect.push(Arc::new(hook));
+            self
+        }
+
         /// Builds the plugin.
         pub fn build<R: Runtime>(self) -> TauriPlugin<R> {
             super::build_plugin(Arc::new(crate::backend::DuckEngine::with_config(
                 self.migrations,
                 self.policy,
+                self.on_connect,
             )))
         }
     }

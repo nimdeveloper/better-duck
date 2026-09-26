@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-tables"
+description = "Enables the tables command without any pre-configured scope."
+commands.allow = ["tables"]
+
+[[permission]]
+identifier = "deny-tables"
+description = "Denies the tables command without any pre-configured scope."
+commands.deny = ["tables"]

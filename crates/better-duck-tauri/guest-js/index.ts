@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, Channel } from '@tauri-apps/api/core'
 
 /** Result of a write/DDL statement. */
 export interface ExecuteResult {
@@ -93,5 +93,40 @@ export default class Database {
   /** Bulk-insert rows (objects keyed by column name) into a table. */
   async appendRows(table: string, rows: Record<string, unknown>[]): Promise<ExecuteResult> {
     return await invoke('plugin:duck|append_rows', { db: this.path, table, rows })
+  }
+
+  /** List the tables in the `main` schema. */
+  async tables<T = Record<string, unknown>>(): Promise<T[]> {
+    return await invoke('plugin:duck|tables', { db: this.path })
+  }
+
+  /** List a table's columns (name, type, nullability). */
+  async columns<T = Record<string, unknown>>(table: string): Promise<T[]> {
+    return await invoke('plugin:duck|columns', { db: this.path, table })
+  }
+
+  /** Return the query plan for a statement. */
+  async explain<T = Record<string, unknown>>(query: string): Promise<T[]> {
+    return await invoke('plugin:duck|explain', { db: this.path, query })
+  }
+
+  /**
+   * Stream a query's rows to `onBatch` in chunks; resolves to the total row count.
+   */
+  async stream<T = Record<string, unknown>>(
+    query: string,
+    onBatch: (rows: T[]) => void,
+    values: unknown[] = [],
+    chunk?: number,
+  ): Promise<number> {
+    const channel = new Channel<T[]>()
+    channel.onmessage = onBatch
+    return await invoke('plugin:duck|stream', {
+      db: this.path,
+      query,
+      values,
+      chunk,
+      channel,
+    })
   }
 }

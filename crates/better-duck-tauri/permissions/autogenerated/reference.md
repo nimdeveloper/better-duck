@@ -74,6 +74,32 @@ Denies the close command without any pre-configured scope.
 <tr>
 <td>
 
+`better-duck-tauri:allow-columns`
+
+</td>
+<td>
+
+Enables the columns command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:deny-columns`
+
+</td>
+<td>
+
+Denies the columns command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `better-duck-tauri:allow-execute`
 
 </td>
@@ -93,6 +119,32 @@ Enables the execute command without any pre-configured scope.
 <td>
 
 Denies the execute command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:allow-explain`
+
+</td>
+<td>
+
+Enables the explain command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:deny-explain`
+
+</td>
+<td>
+
+Denies the explain command without any pre-configured scope.
 
 </td>
 </tr>
@@ -223,6 +275,58 @@ Enables the select command without any pre-configured scope.
 <td>
 
 Denies the select command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:allow-stream`
+
+</td>
+<td>
+
+Enables the stream command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:deny-stream`
+
+</td>
+<td>
+
+Denies the stream command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:allow-tables`
+
+</td>
+<td>
+
+Enables the tables command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:deny-tables`
+
+</td>
+<td>
+
+Denies the tables command without any pre-configured scope.
 
 </td>
 </tr>

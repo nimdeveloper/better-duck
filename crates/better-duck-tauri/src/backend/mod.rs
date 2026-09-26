@@ -11,7 +11,7 @@ use crate::error::Result;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod engine;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
-pub use engine::DuckEngine;
+pub use engine::{ConnectHook, DuckEngine};
 
 /// One result row as a JSON object (column name → JSON value).
 pub type Row = Map<String, Value>;
@@ -101,6 +101,37 @@ pub trait DuckBackend: Send + Sync + 'static {
         table: &str,
         rows: Vec<Map<String, Value>>,
     ) -> Result<ExecuteResult>;
+
+    /// List the tables in the `main` schema.
+    fn list_tables(
+        &self,
+        conn_str: &str,
+    ) -> Result<Vec<Row>>;
+
+    /// List a table's columns (name, type, nullability).
+    fn list_columns(
+        &self,
+        conn_str: &str,
+        table: &str,
+    ) -> Result<Vec<Row>>;
+
+    /// Return the query plan for `sql` (`EXPLAIN`).
+    fn explain(
+        &self,
+        conn_str: &str,
+        sql: &str,
+    ) -> Result<Vec<Row>>;
+
+    /// Run a read query, delivering rows to `on_batch` in chunks of `chunk_size`.
+    /// Returns the total number of rows streamed.
+    fn select_stream(
+        &self,
+        conn_str: &str,
+        sql: &str,
+        params: Vec<Value>,
+        chunk_size: usize,
+        on_batch: &mut dyn FnMut(Vec<Row>) -> Result<()>,
+    ) -> Result<u64>;
 }
 
 /// Normalize a connection string to a DuckDB path: strips a leading `duckdb:` and

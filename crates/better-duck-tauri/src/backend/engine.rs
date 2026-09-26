@@ -5,7 +5,7 @@
 //! phase (see TASKS T4.5); the webview API is identical meanwhile.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use better_duck_core::connection::Connection;
 use better_duck_core::database::Database;
@@ -19,6 +19,10 @@ use crate::json::{duck_to_json, json_to_duck};
 use crate::migration::Migration;
 use crate::policy::Policy;
 
+/// A per-connection setup hook, run on every opened connection — the place to register
+/// UDFs (`#[duckdb_*]` macros) or `LOAD` extensions so each connection carries them.
+pub type ConnectHook = Arc<dyn Fn(&mut Connection) -> Result<()> + Send + Sync>;
+
 /// A registry of open DuckDB databases keyed by connection string.
 ///
 /// `Database` is cheap to clone (an `Arc`) and `Send + Sync`; each operation opens a
@@ -31,6 +35,8 @@ pub struct DuckEngine {
     migrations: HashMap<String, Vec<Migration>>,
     /// Security policy enforced on every operation.
     policy: Policy,
+    /// Hooks run on every opened connection (e.g. UDF registration).
+    on_connect: Vec<ConnectHook>,
 }
 
 impl DuckEngine {
@@ -41,15 +47,16 @@ impl DuckEngine {
 
     /// Creates an engine that runs the given per-connection migrations on `load`.
     pub fn with_migrations(migrations: HashMap<String, Vec<Migration>>) -> DuckEngine {
-        DuckEngine { dbs: Mutex::new(HashMap::new()), migrations, policy: Policy::default() }
+        DuckEngine { migrations, ..DuckEngine::default() }
     }
 
-    /// Creates an engine with both migrations and a security policy.
+    /// Creates an engine with migrations, a security policy, and per-connection hooks.
     pub fn with_config(
         migrations: HashMap<String, Vec<Migration>>,
         policy: Policy,
+        on_connect: Vec<ConnectHook>,
     ) -> DuckEngine {
-        DuckEngine { dbs: Mutex::new(HashMap::new()), migrations, policy }
+        DuckEngine { dbs: Mutex::new(HashMap::new()), migrations, policy, on_connect }
     }
 
     fn with_conn<T>(
@@ -60,8 +67,37 @@ impl DuckEngine {
         let dbs = self.dbs.lock().expect("duck registry poisoned");
         let db = dbs.get(conn_str).ok_or_else(|| Error::UnknownConnection(conn_str.to_owned()))?;
         let mut conn = db.connect().map_err(|e| Error::Backend(e.to_string()))?;
+        for hook in &self.on_connect {
+            hook(&mut conn)?;
+        }
         f(&mut conn)
     }
+
+    /// Runs a read query and collects all rows as JSON. Does not apply the statement
+    /// policy — callers that forward raw webview SQL must check the policy first.
+    fn query(
+        &self,
+        conn_str: &str,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<Vec<Row>> {
+        self.with_conn(conn_str, |conn| run_with_params(conn, sql, params, collect_rows))
+    }
+}
+
+/// Materializes a query result into JSON row objects.
+fn collect_rows(result: better_duck_core::DuckResult) -> Result<Vec<Row>> {
+    let rs = result.materialize().map_err(|e| Error::Backend(e.to_string()))?;
+    let names = rs.column_names();
+    let mut rows = Vec::with_capacity(rs.len());
+    for row in rs.rows() {
+        let mut obj = Map::new();
+        for (i, name) in names.iter().enumerate() {
+            obj.insert(name.to_string(), row.get_idx(i).map_or(Value::Null, duck_to_json));
+        }
+        rows.push(obj);
+    }
+    Ok(rows)
 }
 
 /// Binds JSON params as consecutive positional parameters and runs `f` with the result.
@@ -124,22 +160,7 @@ impl DuckBackend for DuckEngine {
         params: Vec<Value>,
     ) -> Result<Vec<Row>> {
         self.policy.check_statement(sql)?;
-        self.with_conn(conn_str, |conn| {
-            run_with_params(conn, sql, &params, |result| {
-                let rs = result.materialize().map_err(|e| Error::Backend(e.to_string()))?;
-                let names = rs.column_names();
-                let mut rows = Vec::with_capacity(rs.len());
-                for row in rs.rows() {
-                    let mut obj = Map::new();
-                    for (i, name) in names.iter().enumerate() {
-                        let value = row.get_idx(i).map_or(Value::Null, duck_to_json);
-                        obj.insert(name.to_string(), value);
-                    }
-                    rows.push(obj);
-                }
-                Ok(rows)
-            })
-        })
+        self.query(conn_str, sql, &params)
     }
 
     fn execute(
@@ -251,6 +272,81 @@ impl DuckBackend for DuckEngine {
             let mut result =
                 conn.execute_with(&sql, &mut binds).map_err(|e| Error::Backend(e.to_string()))?;
             Ok(ExecuteResult { rows_affected: result.changes() })
+        })
+    }
+
+    fn list_tables(
+        &self,
+        conn_str: &str,
+    ) -> Result<Vec<Row>> {
+        self.query(
+            conn_str,
+            "SELECT table_name FROM information_schema.tables \
+             WHERE table_schema = 'main' ORDER BY table_name",
+            &[],
+        )
+    }
+
+    fn list_columns(
+        &self,
+        conn_str: &str,
+        table: &str,
+    ) -> Result<Vec<Row>> {
+        self.query(
+            conn_str,
+            "SELECT column_name, data_type, is_nullable FROM information_schema.columns \
+             WHERE table_name = $1 ORDER BY ordinal_position",
+            &[Value::String(table.to_owned())],
+        )
+    }
+
+    fn explain(
+        &self,
+        conn_str: &str,
+        sql: &str,
+    ) -> Result<Vec<Row>> {
+        self.policy.check_statement(sql)?;
+        self.query(conn_str, &format!("EXPLAIN {sql}"), &[])
+    }
+
+    fn select_stream(
+        &self,
+        conn_str: &str,
+        sql: &str,
+        params: Vec<Value>,
+        chunk_size: usize,
+        on_batch: &mut dyn FnMut(Vec<Row>) -> Result<()>,
+    ) -> Result<u64> {
+        self.policy.check_statement(sql)?;
+        let chunk = chunk_size.max(1);
+        self.with_conn(conn_str, |conn| {
+            let mut duck: Vec<better_duck_core::types::value::DuckValue> =
+                params.iter().map(json_to_duck).collect();
+            let mut binds: Vec<&mut dyn AppendAble> =
+                duck.iter_mut().map(|v| v as &mut dyn AppendAble).collect();
+            let result =
+                conn.execute_with(sql, &mut binds).map_err(|e| Error::Backend(e.to_string()))?;
+            let names: Vec<String> =
+                result.column_names().iter().map(std::string::ToString::to_string).collect();
+
+            let mut batch: Vec<Row> = Vec::with_capacity(chunk);
+            let mut total = 0u64;
+            for row in result {
+                let row = row.map_err(|e| Error::Backend(e.to_string()))?;
+                let mut obj = Map::new();
+                for (i, name) in names.iter().enumerate() {
+                    obj.insert(name.clone(), row.get_idx(i).map_or(Value::Null, duck_to_json));
+                }
+                batch.push(obj);
+                total += 1;
+                if batch.len() >= chunk {
+                    on_batch(std::mem::take(&mut batch))?;
+                }
+            }
+            if !batch.is_empty() {
+                on_batch(batch)?;
+            }
+            Ok(total)
         })
     }
 }

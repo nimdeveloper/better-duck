@@ -319,6 +319,18 @@
           "markdownDescription": "Denies the close command without any pre-configured scope."
         },
         {
+          "description": "Enables the columns command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-columns",
+          "markdownDescription": "Enables the columns command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the columns command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-columns",
+          "markdownDescription": "Denies the columns command without any pre-configured scope."
+        },
+        {
           "description": "Enables the execute command without any pre-configured scope.",
           "type": "string",
           "const": "allow-execute",
@@ -329,6 +341,18 @@
           "type": "string",
           "const": "deny-execute",
           "markdownDescription": "Denies the execute command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the explain command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-explain",
+          "markdownDescription": "Enables the explain command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the explain command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-explain",
+          "markdownDescription": "Denies the explain command without any pre-configured scope."
         },
         {
           "description": "Enables the export command without any pre-configured scope.",
@@ -389,6 +413,30 @@
           "type": "string",
           "const": "deny-select",
           "markdownDescription": "Denies the select command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stream",
+          "markdownDescription": "Enables the stream command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stream",
+          "markdownDescription": "Denies the stream command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the tables command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-tables",
+          "markdownDescription": "Enables the tables command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the tables command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-tables",
+          "markdownDescription": "Denies the tables command without any pre-configured scope."
         },
         {
           "description": "Read access to loaded DuckDB databases: open/close a connection and run read-only\n`select` queries. Writes (`execute`) and raw arbitrary SQL are NOT included here and\nmust be granted explicitly (e.g. `duck:allow-execute`, `duck:allow-raw-sql`).\n\n#### This default permission set includes:\n\n- `allow-load`\n- `allow-close`\n- `allow-select`",
