@@ -24,6 +24,18 @@ pub struct ExecuteResult {
     pub rows_affected: u64,
 }
 
+/// A columnar file format for import/export.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DataFormat {
+    /// Apache Parquet.
+    Parquet,
+    /// CSV (auto-detected schema on import).
+    Csv,
+    /// Newline-delimited / array JSON (auto-detected schema on import).
+    Json,
+}
+
 /// A pluggable DuckDB execution backend behind the plugin's commands.
 pub trait DuckBackend: Send + Sync + 'static {
     /// Open and register a connection for `conn_str`
@@ -53,6 +65,41 @@ pub trait DuckBackend: Send + Sync + 'static {
         conn_str: &str,
         sql: &str,
         params: Vec<Value>,
+    ) -> Result<ExecuteResult>;
+
+    /// Load (installing first if needed) a DuckDB extension.
+    fn load_extension(
+        &self,
+        conn_str: &str,
+        name: &str,
+    ) -> Result<()>;
+
+    /// Create `table` from a data file via `read_parquet` / `read_csv_auto` /
+    /// `read_json_auto` (`source` may be a path or glob).
+    fn import(
+        &self,
+        conn_str: &str,
+        table: &str,
+        source: &str,
+        format: DataFormat,
+    ) -> Result<ExecuteResult>;
+
+    /// Export a query's result to a file via `COPY (…) TO`.
+    fn export(
+        &self,
+        conn_str: &str,
+        query: &str,
+        path: &str,
+        format: DataFormat,
+    ) -> Result<ExecuteResult>;
+
+    /// Bulk-insert JSON object rows into `table`. Column order is taken from the first
+    /// row; missing keys in later rows bind `NULL`.
+    fn append_rows(
+        &self,
+        conn_str: &str,
+        table: &str,
+        rows: Vec<Map<String, Value>>,
     ) -> Result<ExecuteResult>;
 }
 

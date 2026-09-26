@@ -10,12 +10,14 @@ use std::sync::Mutex;
 use better_duck_core::connection::Connection;
 use better_duck_core::database::Database;
 use better_duck_core::types::appendable::AppendAble;
+use better_duck_core::{AccessMode, Config};
 use serde_json::{Map, Value};
 
-use super::{resolve_path, DuckBackend, ExecuteResult, Row};
+use super::{resolve_path, DataFormat, DuckBackend, ExecuteResult, Row};
 use crate::error::{Error, Result};
 use crate::json::{duck_to_json, json_to_duck};
 use crate::migration::Migration;
+use crate::policy::Policy;
 
 /// A registry of open DuckDB databases keyed by connection string.
 ///
@@ -27,17 +29,27 @@ pub struct DuckEngine {
     dbs: Mutex<HashMap<String, Database>>,
     /// Pending migrations per connection string, run on `load` (backend-core engine).
     migrations: HashMap<String, Vec<Migration>>,
+    /// Security policy enforced on every operation.
+    policy: Policy,
 }
 
 impl DuckEngine {
-    /// Creates an empty engine with no migrations.
+    /// Creates an empty engine with no migrations and a permissive policy.
     pub fn new() -> DuckEngine {
         DuckEngine::default()
     }
 
     /// Creates an engine that runs the given per-connection migrations on `load`.
     pub fn with_migrations(migrations: HashMap<String, Vec<Migration>>) -> DuckEngine {
-        DuckEngine { dbs: Mutex::new(HashMap::new()), migrations }
+        DuckEngine { dbs: Mutex::new(HashMap::new()), migrations, policy: Policy::default() }
+    }
+
+    /// Creates an engine with both migrations and a security policy.
+    pub fn with_config(
+        migrations: HashMap<String, Vec<Migration>>,
+        policy: Policy,
+    ) -> DuckEngine {
+        DuckEngine { dbs: Mutex::new(HashMap::new()), migrations, policy }
     }
 
     fn with_conn<T>(
@@ -72,10 +84,18 @@ impl DuckBackend for DuckEngine {
         &self,
         conn_str: &str,
     ) -> Result<()> {
+        self.policy.check_connection(conn_str)?;
         let path = resolve_path(conn_str);
-        let db =
-            if path == ":memory:" { Database::open_in_memory() } else { Database::open(&path) }
+        let db = if path == ":memory:" {
+            Database::open_in_memory().map_err(|e| Error::Backend(e.to_string()))?
+        } else if self.policy.read_only {
+            let config = Config::default()
+                .access_mode(AccessMode::ReadOnly)
                 .map_err(|e| Error::Backend(e.to_string()))?;
+            Database::open_with_flags(&path, config).map_err(|e| Error::Backend(e.to_string()))?
+        } else {
+            Database::open(&path).map_err(|e| Error::Backend(e.to_string()))?
+        };
 
         // Run any configured migrations before publishing the connection, so a failed
         // migration never leaves a half-migrated database registered.
@@ -103,6 +123,7 @@ impl DuckBackend for DuckEngine {
         sql: &str,
         params: Vec<Value>,
     ) -> Result<Vec<Row>> {
+        self.policy.check_statement(sql)?;
         self.with_conn(conn_str, |conn| {
             run_with_params(conn, sql, &params, |result| {
                 let rs = result.materialize().map_err(|e| Error::Backend(e.to_string()))?;
@@ -127,10 +148,124 @@ impl DuckBackend for DuckEngine {
         sql: &str,
         params: Vec<Value>,
     ) -> Result<ExecuteResult> {
+        self.policy.check_writable()?;
+        self.policy.check_statement(sql)?;
         self.with_conn(conn_str, |conn| {
             run_with_params(conn, sql, &params, |mut result| {
                 Ok(ExecuteResult { rows_affected: result.changes() })
             })
         })
+    }
+
+    fn load_extension(
+        &self,
+        conn_str: &str,
+        name: &str,
+    ) -> Result<()> {
+        self.with_conn(conn_str, |conn| {
+            conn.ensure_extension(name).map_err(|e| Error::Backend(e.to_string()))
+        })
+    }
+
+    fn import(
+        &self,
+        conn_str: &str,
+        table: &str,
+        source: &str,
+        format: DataFormat,
+    ) -> Result<ExecuteResult> {
+        self.policy.check_writable()?;
+        self.policy.check_path(source)?;
+        validate_identifier(table)?;
+        let reader = match format {
+            DataFormat::Parquet => "read_parquet",
+            DataFormat::Csv => "read_csv_auto",
+            DataFormat::Json => "read_json_auto",
+        };
+        let sql =
+            format!("CREATE TABLE {table} AS SELECT * FROM {reader}({})", quote_literal(source));
+        self.with_conn(conn_str, |conn| {
+            run_with_params(conn, &sql, &[], |mut result| {
+                Ok(ExecuteResult { rows_affected: result.changes() })
+            })
+        })
+    }
+
+    fn export(
+        &self,
+        conn_str: &str,
+        query: &str,
+        path: &str,
+        format: DataFormat,
+    ) -> Result<ExecuteResult> {
+        self.policy.check_path(path)?;
+        let fmt = match format {
+            DataFormat::Parquet => "PARQUET",
+            DataFormat::Csv => "CSV",
+            DataFormat::Json => "JSON",
+        };
+        let sql = format!("COPY ({query}) TO {} (FORMAT {fmt})", quote_literal(path));
+        self.with_conn(conn_str, |conn| {
+            run_with_params(conn, &sql, &[], |mut result| {
+                Ok(ExecuteResult { rows_affected: result.changes() })
+            })
+        })
+    }
+
+    fn append_rows(
+        &self,
+        conn_str: &str,
+        table: &str,
+        rows: Vec<Map<String, Value>>,
+    ) -> Result<ExecuteResult> {
+        self.policy.check_writable()?;
+        validate_identifier(table)?;
+        if rows.is_empty() {
+            return Ok(ExecuteResult { rows_affected: 0 });
+        }
+        let columns: Vec<&str> = rows[0].keys().map(String::as_str).collect();
+        for &column in &columns {
+            validate_identifier(column)?;
+        }
+
+        let mut values: Vec<better_duck_core::types::value::DuckValue> =
+            Vec::with_capacity(rows.len() * columns.len());
+        let mut tuples: Vec<String> = Vec::with_capacity(rows.len());
+        let mut idx = 1usize;
+        for row in &rows {
+            let mut placeholders = Vec::with_capacity(columns.len());
+            for &column in &columns {
+                let value = row.get(column).cloned().unwrap_or(Value::Null);
+                values.push(json_to_duck(&value));
+                placeholders.push(format!("${idx}"));
+                idx += 1;
+            }
+            tuples.push(format!("({})", placeholders.join(", ")));
+        }
+
+        let column_list = columns.join(", ");
+        let sql = format!("INSERT INTO {table} ({column_list}) VALUES {}", tuples.join(", "));
+        self.with_conn(conn_str, |conn| {
+            let mut binds: Vec<&mut dyn AppendAble> =
+                values.iter_mut().map(|v| v as &mut dyn AppendAble).collect();
+            let mut result =
+                conn.execute_with(&sql, &mut binds).map_err(|e| Error::Backend(e.to_string()))?;
+            Ok(ExecuteResult { rows_affected: result.changes() })
+        })
+    }
+}
+
+/// Quotes a value as a SQL single-quoted string literal (doubling embedded quotes).
+fn quote_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+/// Validates that `name` is a safe bare SQL identifier (ASCII alnum + `_`). This is a
+/// baseline guard until the P2 scope model enforces table/path allow-lists.
+fn validate_identifier(name: &str) -> Result<()> {
+    if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        Ok(())
+    } else {
+        Err(Error::Backend(format!("invalid table identifier: {name:?}")))
     }
 }

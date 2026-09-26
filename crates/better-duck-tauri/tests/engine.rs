@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 
-use better_duck_tauri::backend::{DuckBackend, DuckEngine};
-use better_duck_tauri::{Migration, MigrationKind};
+use better_duck_tauri::backend::{DataFormat, DuckBackend, DuckEngine};
+use better_duck_tauri::{Migration, MigrationKind, Policy};
 use serde_json::json;
 
 const MEM: &str = "duckdb::memory:";
@@ -53,6 +53,51 @@ fn select_maps_composite_and_decimal_to_json() {
 }
 
 #[test]
+fn export_then_import_csv_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.csv");
+    let path_str = path.to_str().unwrap();
+
+    let engine = DuckEngine::new();
+    engine.load(MEM).unwrap();
+    engine.execute(MEM, "CREATE TABLE src (id INTEGER, name VARCHAR)", vec![]).unwrap();
+    engine.execute(MEM, "INSERT INTO src VALUES (1, 'a'), (2, 'b')", vec![]).unwrap();
+
+    engine.export(MEM, "SELECT * FROM src ORDER BY id", path_str, DataFormat::Csv).unwrap();
+    engine.import(MEM, "dst", path_str, DataFormat::Csv).unwrap();
+
+    let rows = engine.select(MEM, "SELECT id, name FROM dst ORDER BY id", vec![]).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["name"], json!("a"));
+    assert_eq!(rows[1]["id"], json!(2));
+}
+
+#[test]
+fn import_rejects_bad_table_identifier() {
+    let engine = DuckEngine::new();
+    engine.load(MEM).unwrap();
+    assert!(engine.import(MEM, "bad; DROP TABLE x", "whatever.csv", DataFormat::Csv).is_err());
+}
+
+#[test]
+fn append_rows_bulk_inserts() {
+    let engine = DuckEngine::new();
+    engine.load(MEM).unwrap();
+    engine.execute(MEM, "CREATE TABLE t (id INTEGER, name VARCHAR)", vec![]).unwrap();
+
+    let rows = vec![
+        json!({ "id": 1, "name": "a" }).as_object().unwrap().clone(),
+        json!({ "id": 2, "name": "b" }).as_object().unwrap().clone(),
+    ];
+    let res = engine.append_rows(MEM, "t", rows).unwrap();
+    assert_eq!(res.rows_affected, 2);
+
+    let out = engine.select(MEM, "SELECT id, name FROM t ORDER BY id", vec![]).unwrap();
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[1]["name"], json!("b"));
+}
+
+#[test]
 fn migrations_run_on_load() {
     let mut map = HashMap::new();
     map.insert(
@@ -79,3 +124,46 @@ fn migrations_run_on_load() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["id"], json!(42));
 }
+
+#[test]
+fn read_only_policy_rejects_writes_but_allows_reads() {
+    let policy = Policy { read_only: true, ..Policy::default() };
+    let engine = DuckEngine::with_config(HashMap::new(), policy);
+    engine.load(MEM).unwrap();
+    assert!(engine.execute(MEM, "CREATE TABLE t (id INTEGER)", vec![]).is_err());
+    assert!(engine.select(MEM, "SELECT 42 AS n", vec![]).is_ok());
+}
+
+#[test]
+fn risky_statement_policy_rejects_attach() {
+    let policy = Policy { deny_risky_statements: true, ..Policy::default() };
+    let engine = DuckEngine::with_config(HashMap::new(), policy);
+    engine.load(MEM).unwrap();
+    assert!(engine.execute(MEM, "ATTACH ':memory:' AS other", vec![]).is_err());
+    // Ordinary DDL is not a "risky" statement kind and stays allowed.
+    assert!(engine.execute(MEM, "CREATE TABLE t (id INTEGER)", vec![]).is_ok());
+}
+
+#[test]
+fn path_allow_list_blocks_outside_import() {
+    let allowed = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let policy =
+        Policy { allowed_paths: Some(vec![allowed.path().to_path_buf()]), ..Policy::default() };
+    let engine = DuckEngine::with_config(HashMap::new(), policy);
+    engine.load(MEM).unwrap();
+
+    let outside_file = outside.path().join("data.csv");
+    assert!(engine
+        .import(MEM, "t", outside_file.to_str().unwrap(), DataFormat::Csv)
+        .is_err());
+}
+
+#[test]
+fn connection_allow_list_blocks_unlisted() {
+    let policy =
+        Policy { allowed_connections: Some(vec!["duckdb:ok.db".to_owned()]), ..Policy::default() };
+    let engine = DuckEngine::with_config(HashMap::new(), policy);
+    assert!(engine.load("duckdb::memory:").is_err());
+}
+

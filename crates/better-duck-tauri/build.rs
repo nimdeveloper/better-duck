@@ -4,7 +4,16 @@
 /// Commands callable from the webview. `execute`/`select` take raw SQL and are the
 /// pieces gated behind `duck:allow-raw-sql` in a capability (kept out of `default`
 /// except `select`, which is read-only). Keep in sync with `src/commands.rs`.
-const COMMANDS: &[&str] = &["load", "close", "select", "execute"];
+const COMMANDS: &[&str] = &[
+    "load",
+    "close",
+    "select",
+    "execute",
+    "load_extension",
+    "import",
+    "export",
+    "append_rows",
+];
 
 fn main() {
     tauri_plugin::Builder::new(COMMANDS).build();

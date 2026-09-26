@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-append-rows"
+description = "Enables the append_rows command without any pre-configured scope."
+commands.allow = ["append_rows"]
+
+[[permission]]
+identifier = "deny-append-rows"
+description = "Denies the append_rows command without any pre-configured scope."
+commands.deny = ["append_rows"]

@@ -42,3 +42,6 @@ backend-diesel = [
     "dep:diesel",
     "dep:diesel_migrations",
 ]
+
+[dev-dependencies]
+tempfile = "3.27.0"

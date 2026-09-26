@@ -22,6 +22,32 @@ must be granted explicitly (e.g. `duck:allow-execute`, `duck:allow-raw-sql`).
 <tr>
 <td>
 
+`better-duck-tauri:allow-append-rows`
+
+</td>
+<td>
+
+Enables the append_rows command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:deny-append-rows`
+
+</td>
+<td>
+
+Denies the append_rows command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `better-duck-tauri:allow-close`
 
 </td>
@@ -74,6 +100,58 @@ Denies the execute command without any pre-configured scope.
 <tr>
 <td>
 
+`better-duck-tauri:allow-export`
+
+</td>
+<td>
+
+Enables the export command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:deny-export`
+
+</td>
+<td>
+
+Denies the export command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:allow-import`
+
+</td>
+<td>
+
+Enables the import command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:deny-import`
+
+</td>
+<td>
+
+Denies the import command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `better-duck-tauri:allow-load`
 
 </td>
@@ -93,6 +171,32 @@ Enables the load command without any pre-configured scope.
 <td>
 
 Denies the load command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:allow-load-extension`
+
+</td>
+<td>
+
+Enables the load_extension command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:deny-load-extension`
+
+</td>
+<td>
+
+Denies the load_extension command without any pre-configured scope.
 
 </td>
 </tr>

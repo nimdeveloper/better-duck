@@ -6,6 +6,9 @@ export interface ExecuteResult {
   rowsAffected: number
 }
 
+/** A columnar file format for import/export. */
+export type DataFormat = 'parquet' | 'csv' | 'json'
+
 /**
  * A handle to a loaded DuckDB database, mirroring the plugin's Rust commands.
  *
@@ -45,5 +48,50 @@ export default class Database {
   /** Run a write/DDL statement. */
   async execute(query: string, values: unknown[] = []): Promise<ExecuteResult> {
     return await invoke('plugin:duck|execute', { db: this.path, query, values })
+  }
+
+  /** Load (installing if needed) a DuckDB extension, e.g. `spatial`, `json`, `vss`. */
+  async loadExtension(name: string): Promise<void> {
+    return await invoke('plugin:duck|load_extension', { db: this.path, name })
+  }
+
+  /** Create `table` from a data file (path or glob). */
+  async import(table: string, source: string, format: DataFormat): Promise<ExecuteResult> {
+    return await invoke('plugin:duck|import', { db: this.path, table, source, format })
+  }
+
+  /** Create `table` from Parquet file(s). */
+  async importParquet(table: string, source: string): Promise<ExecuteResult> {
+    return this.import(table, source, 'parquet')
+  }
+
+  /** Create `table` from CSV file(s). */
+  async importCsv(table: string, source: string): Promise<ExecuteResult> {
+    return this.import(table, source, 'csv')
+  }
+
+  /** Create `table` from JSON file(s). */
+  async importJson(table: string, source: string): Promise<ExecuteResult> {
+    return this.import(table, source, 'json')
+  }
+
+  /** Export a query's result to a data file. */
+  async export(query: string, path: string, format: DataFormat): Promise<ExecuteResult> {
+    return await invoke('plugin:duck|export', { db: this.path, query, path, format })
+  }
+
+  /** Export a query's result to a Parquet file. */
+  async exportParquet(query: string, path: string): Promise<ExecuteResult> {
+    return this.export(query, path, 'parquet')
+  }
+
+  /** Export a query's result to a CSV file. */
+  async exportCsv(query: string, path: string): Promise<ExecuteResult> {
+    return this.export(query, path, 'csv')
+  }
+
+  /** Bulk-insert rows (objects keyed by column name) into a table. */
+  async appendRows(table: string, rows: Record<string, unknown>[]): Promise<ExecuteResult> {
+    return await invoke('plugin:duck|append_rows', { db: this.path, table, rows })
   }
 }

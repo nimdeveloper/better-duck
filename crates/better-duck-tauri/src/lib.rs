@@ -27,16 +27,20 @@ pub mod backend;
 mod json;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod migration;
+#[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
+mod policy;
 
 use std::sync::Arc;
 
 use tauri::plugin::{Builder, TauriPlugin};
 use tauri::{Manager, Runtime};
 
-pub use backend::{DuckBackend, ExecuteResult, Row};
+pub use backend::{DataFormat, DuckBackend, ExecuteResult, Row};
 pub use error::{Error, Result};
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 pub use migration::{Migration, MigrationKind};
+#[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
+pub use policy::Policy;
 
 use state::DuckState;
 
@@ -47,7 +51,11 @@ fn build_plugin<R: Runtime>(backend: Arc<dyn DuckBackend>) -> TauriPlugin<R> {
             commands::load,
             commands::close,
             commands::select,
-            commands::execute
+            commands::execute,
+            commands::load_extension,
+            commands::import,
+            commands::export,
+            commands::append_rows
         ])
         .setup(move |app, _api| {
             app.manage(DuckState::new(backend));
@@ -60,18 +68,21 @@ fn build_plugin<R: Runtime>(backend: Arc<dyn DuckBackend>) -> TauriPlugin<R> {
 pub mod core {
     //! Entry point for the `better-duck-core` backend.
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     use tauri::plugin::TauriPlugin;
     use tauri::Runtime;
 
     use crate::migration::Migration;
+    use crate::policy::Policy;
 
-    /// Builder for the core-backed plugin, allowing per-connection migrations to be
-    /// registered before the plugin is initialized (run on `Database.load`).
+    /// Builder for the core-backed plugin: register per-connection migrations and the
+    /// security policy (read-only, allow-lists, statement filter) before initializing.
     #[derive(Default)]
     pub struct Builder {
         migrations: HashMap<String, Vec<Migration>>,
+        policy: Policy,
     }
 
     impl Builder {
@@ -91,15 +102,56 @@ pub mod core {
             self
         }
 
+        /// Opens databases read-only and rejects write operations.
+        #[must_use]
+        pub fn read_only(
+            mut self,
+            enabled: bool,
+        ) -> Builder {
+            self.policy.read_only = enabled;
+            self
+        }
+
+        /// Restricts `load` to this connection string (repeatable).
+        #[must_use]
+        pub fn allow_connection(
+            mut self,
+            conn_str: impl Into<String>,
+        ) -> Builder {
+            self.policy.allowed_connections.get_or_insert_with(Vec::new).push(conn_str.into());
+            self
+        }
+
+        /// Restricts import/export to files within this directory (repeatable).
+        #[must_use]
+        pub fn allow_path(
+            mut self,
+            dir: impl Into<PathBuf>,
+        ) -> Builder {
+            self.policy.allowed_paths.get_or_insert_with(Vec::new).push(dir.into());
+            self
+        }
+
+        /// Rejects risky statements (ATTACH/INSTALL/LOAD/PRAGMA/COPY/…) in `select`/`execute`.
+        #[must_use]
+        pub fn deny_risky_statements(
+            mut self,
+            enabled: bool,
+        ) -> Builder {
+            self.policy.deny_risky_statements = enabled;
+            self
+        }
+
         /// Builds the plugin.
         pub fn build<R: Runtime>(self) -> TauriPlugin<R> {
-            super::build_plugin(Arc::new(crate::backend::DuckEngine::with_migrations(
+            super::build_plugin(Arc::new(crate::backend::DuckEngine::with_config(
                 self.migrations,
+                self.policy,
             )))
         }
     }
 
-    /// Initialize the plugin on the `better-duck-core` backend with no migrations.
+    /// Initialize the plugin on the `better-duck-core` backend with defaults.
     pub fn init<R: Runtime>() -> TauriPlugin<R> {
         Builder::new().build()
     }

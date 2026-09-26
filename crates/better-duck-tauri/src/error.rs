@@ -12,6 +12,9 @@ pub enum Error {
     /// No connection was loaded for the given connection string.
     #[error("unknown connection: {0}")]
     UnknownConnection(String),
+    /// The operation was denied by the configured security policy.
+    #[error("denied by policy: {0}")]
+    Denied(String),
     /// The underlying DuckDB backend failed.
     #[error("backend error: {0}")]
     Backend(String),

@@ -295,6 +295,18 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the append_rows command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-append-rows",
+          "markdownDescription": "Enables the append_rows command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the append_rows command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-append-rows",
+          "markdownDescription": "Denies the append_rows command without any pre-configured scope."
+        },
+        {
           "description": "Enables the close command without any pre-configured scope.",
           "type": "string",
           "const": "allow-close",
@@ -319,6 +331,30 @@
           "markdownDescription": "Denies the execute command without any pre-configured scope."
         },
         {
+          "description": "Enables the export command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-export",
+          "markdownDescription": "Enables the export command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the export command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-export",
+          "markdownDescription": "Denies the export command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the import command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-import",
+          "markdownDescription": "Enables the import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the import command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-import",
+          "markdownDescription": "Denies the import command without any pre-configured scope."
+        },
+        {
           "description": "Enables the load command without any pre-configured scope.",
           "type": "string",
           "const": "allow-load",
@@ -329,6 +365,18 @@
           "type": "string",
           "const": "deny-load",
           "markdownDescription": "Denies the load command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the load_extension command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-load-extension",
+          "markdownDescription": "Enables the load_extension command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the load_extension command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-load-extension",
+          "markdownDescription": "Denies the load_extension command without any pre-configured scope."
         },
         {
           "description": "Enables the select command without any pre-configured scope.",
