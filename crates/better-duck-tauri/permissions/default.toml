@@ -1,0 +1,9 @@
+"$schema" = "schemas/schema.json"
+
+[default]
+description = """
+Read access to loaded DuckDB databases: open/close a connection and run read-only
+`select` queries. Writes (`execute`) and raw arbitrary SQL are NOT included here and
+must be granted explicitly (e.g. `duck:allow-execute`, `duck:allow-raw-sql`).
+"""
+permissions = ["allow-load", "allow-close", "allow-select"]

@@ -1,0 +1,9 @@
+"$schema" = "schemas/schema.json"
+
+# Umbrella permission for running arbitrary SQL from the webview. NOT part of the
+# `default` set — a capability must opt in explicitly (the webview is untrusted, and
+# DuckDB SQL can reach the filesystem/network).
+[[set]]
+identifier = "allow-raw-sql"
+description = "Allows running arbitrary SQL through the `select` and `execute` commands."
+permissions = ["allow-select", "allow-execute"]
