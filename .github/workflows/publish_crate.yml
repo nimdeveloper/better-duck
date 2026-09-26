@@ -6,15 +6,23 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+" # Stable releases (e.g., v1.0.0)
       - "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+" # Beta releases (e.g., v1.0.0-beta.1)
 
+# This workflow calls two reusable workflows whose nested jobs need scopes
+# beyond a plain `contents: read`. A reusable workflow can only receive scopes
+# present in the CALLER's top-level permissions ceiling — a grant on the calling
+# job alone is not honored for these (validation fails with e.g. "requesting
+# 'actions: read', but is only allowed 'actions: none'"). So the ceiling here is
+# the union of everything any called workflow needs:
+#   * ci.yml's `audit` job  -> checks / issues / pull-requests: write
+#   * SLSA generic generator -> actions: read, id-token: write, contents: write
+# The actual compute jobs below (create_crate_artifact, publish) narrow
+# themselves back down to least privilege with their own `permissions:` blocks.
 permissions:
-  contents: read
-  # The SLSA generic generator's reusable workflow (generate_slsa_provenance)
-  # has an internal `generator` job that requests `actions: read`. Reusable
-  # workflows can only receive an `actions` scope that is present in the
-  # caller's TOP-LEVEL permissions ceiling — a job-level grant alone is not
-  # enough for this scope — so without this line the call fails validation
-  # with "requesting 'actions: read', but is only allowed 'actions: none'".
+  contents: write
   actions: read
+  id-token: write
+  checks: write
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -34,6 +42,9 @@ jobs:
   create_crate_artifact:
     needs: verify
     runs-on: ubuntu-latest
+    # Pure build/inspection job: narrow back down from the broad top-level ceiling.
+    permissions:
+      contents: read
     outputs:
       crate_digest: ${{ steps.calculate_digest.outputs.digest }}
       crate_name: ${{ steps.get_crate_info.outputs.crate_name }}
