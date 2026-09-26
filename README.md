@@ -54,432 +54,18 @@ better-duck-diesel = "0.1.0-beta.4"
 > `better-duck-macros` is pulled in automatically by the `udf` / `derive` feature flags — you don't
 > depend on it directly.
 
+## What sets better-duck apart
 
-## Quick start
+Beyond being a safe DuckDB client, better-duck adds capabilities that other Rust DuckDB bindings don't offer. Each is opt-in behind a feature flag, and each is designed to need **no `unsafe` and no manual FFI** on your side.
 
-Minimal, runnable examples for each crate. Expand the one you need.
+### Map Rust types to DuckDB with derives — `feature = "derive"`
 
-<details>
-<summary><b><code>better-duck-core</code></b> — connect, query, and bulk-insert</summary>
+Four derives turn plain Rust structs and enums into DuckDB rows, values, and types — no hand-written column indexing, no manual `DuckValue` matching.
 
-```rust
-use better_duck_core::connection::Connection;
-
-fn main() -> better_duck_core::error::Result<()> {
-    let mut conn = Connection::open_in_memory()?; // or Connection::open("app.duckdb")?
-
-    conn.execute_batch(
-        "CREATE TABLE events (id INTEGER, label TEXT, score DOUBLE);
-         INSERT INTO events VALUES (1, 'alpha', 9.5), (2, 'beta', 7.2);",
-    )?;
-
-    // `execute` returns an iterator of rows.
-    for row in conn.execute("SELECT id, label, score FROM events ORDER BY id")? {
-        let row = row?;
-        println!("{:?} {:?} {:?}", row.get("id"), row.get("label"), row.get("score"));
-    }
-    Ok(())
-}
-```
-
-</details>
-
-<details>
-<summary><b><code>better-duck-diesel</code></b> — Diesel ORM backend</summary>
-
-```rust
-use better_duck_diesel::DuckDbConnection;
-use diesel::{connection::SimpleConnection, prelude::*};
-
-diesel::table! {
-    products (id) { id -> Integer, name -> Text, price -> Double }
-}
-
-fn main() -> QueryResult<()> {
-    let mut conn = DuckDbConnection::establish(":memory:")?;
-    conn.batch_execute("CREATE TABLE products (id INTEGER, name VARCHAR, price DOUBLE)")?;
-
-    diesel::insert_into(products::table)
-        .values((products::id.eq(1), products::name.eq("widget"), products::price.eq(9.99)))
-        .execute(&mut conn)?;
-
-    let cheap: Vec<(i32, String)> = products::table
-        .filter(products::price.lt(20.0))
-        .select((products::id, products::name))
-        .load(&mut conn)?;
-    println!("{cheap:?}");
-    Ok(())
-}
-```
-
-</details>
-
-<details>
-<summary><b><code>better-duck-macros</code></b> — UDFs & data derives</summary>
-
-Enabled through core's `udf` / `derive` feature flags (`better-duck-core = { version = "0.1.0-beta.4", features = ["udf", "derive"] }`).
-
-```rust
-use better_duck_core::{connection::Connection, duckdb_scalar, FromRow};
-
-// Map a query row onto a struct.
-#[derive(FromRow, Debug)]
-struct Event { id: i32, label: String }
-
-// Register a plain Rust fn as a DuckDB scalar function — types inferred from the signature.
-#[duckdb_scalar]
-fn shout(s: &str) -> String { s.to_uppercase() }
-
-fn main() -> better_duck_core::error::Result<()> {
-    let mut conn = Connection::open_in_memory()?;
-    shout::register(&mut conn)?;
-    conn.execute_batch("CREATE TABLE events (id INTEGER, label TEXT); INSERT INTO events VALUES (1, 'a')")?;
-
-    let events: Vec<Event> = conn.execute("SELECT id, label FROM events")?.to_structs()?;
-    conn.execute("SELECT shout('hi')")?; // "HI"
-    println!("{events:?}");
-    Ok(())
-}
-```
-
-</details>
-
-<!-- REFERENCE-MARKER -->
-
-## Reference
-
-Full per-crate documentation. Each section is collapsed by default — expand what you need, or read the rendered API docs on [docs.rs](https://docs.rs/better-duck-core).
-
-<details>
-<summary><b><code>better-duck-core</code></b> — DuckDB client reference</summary>
-
-### Opening a connection
-
-```rust
-use better_duck_core::connection::Connection;
-
-let mut conn = Connection::open_in_memory()?;      // in-memory
-let mut conn = Connection::open("my_database.duckdb")?; // on-disk
-```
-
-### Executing and iterating rows
-
-`execute` returns a `DuckResult`, which is an `Iterator` of `DuckRow`:
-
-```rust
-let mut result = conn.execute("SELECT id, label FROM events ORDER BY id")?;
-for row in result {
-    let row = row?;
-    println!("{:?} {:?}", row.get("id"), row.get("label"));
-}
-```
-
-### Parameterized queries
-
-Parameters are positional (`$1`, `$2`, …). Pass them as `&mut [&mut dyn AppendAble]` — or use the
-`params!` macro (feature `derive`):
-
-```rust
-use better_duck_core::types::value::DuckValue;
-
-let mut threshold = DuckValue::Double(8.0);
-let rows = conn.execute_with(
-    "SELECT id, label FROM events WHERE score > $1",
-    &mut [&mut threshold],
-)?;
-```
-
-### Bulk insert with the Appender
-
-The `Appender` streams rows into DuckDB's bulk-ingest path — far faster than individual INSERTs.
-Implement `AppendAble` by hand, or derive it with `#[derive(ToRow)]` (feature `derive`):
-
-```rust
-use better_duck_core::{connection::Connection, ToRow};
-
-#[derive(ToRow)]
-struct NewItem { id: i32, name: String }
-
-let mut conn = Connection::open_in_memory()?;
-conn.execute_batch("CREATE TABLE items (id INTEGER, name TEXT)")?;
-
-let mut app = conn.appender("items", "main")?;
-app.append(&mut NewItem { id: 1, name: "a".to_owned() })?;
-app.save()?; // flush (also auto-flushes on drop)
-```
-
-### Sharing a database, pooling, and async
-
-`open_in_memory()` gives each connection its own database. To share one database across connections,
-open a `Database` and `connect()` from it:
-
-```rust
-use better_duck_core::database::Database;
-
-let db = Database::open_in_memory()?;
-let mut a = db.connect()?;
-let mut b = db.connect()?; // sees a's tables
-```
-
-- **`pool`** — `Database` backs an r2d2 pool: `DuckDbConnectionManager::memory()?` → `Pool::builder().build(manager)?`.
-- **`async`** — `AsyncConnection` runs each call on `spawn_blocking`, never blocking the executor; `async` + `pool` gives `AsyncPool::with(...)`.
-
-### Extension management
-
-```rust
-conn.ensure_extension("json")?;                 // load, installing first if needed
-let loaded = conn.is_extension_loaded("json")?; // query duckdb_extensions()
-```
-
-### `DuckValue` and supported types
-
-Rows are `DuckRow`; each column value is a `#[non_exhaustive]` `DuckValue` — match with a `_` arm to stay forward-compatible.
-
-| DuckDB type                    | Rust type                                                                    |
-| ------------------------------ | ---------------------------------------------------------------------------- |
-| `BOOLEAN`                      | `bool`                                                                       |
-| `TINYINT` / `UTINYINT`         | `i8` / `u8`                                                                  |
-| `SMALLINT` / `USMALLINT`       | `i16` / `u16`                                                                |
-| `INTEGER` / `UINTEGER`         | `i32` / `u32`                                                                |
-| `BIGINT` / `UBIGINT`           | `i64` / `u64`                                                                |
-| `HUGEINT` / `UHUGEINT`         | `i128` / `u128`                                                              |
-| `FLOAT` / `DOUBLE`             | `f32` / `f64`                                                                |
-| `DECIMAL` _(feature: decimal)_ | `rust_decimal::Decimal`                                                      |
-| `VARCHAR` / `TEXT`             | `String`                                                                     |
-| `BLOB`                         | `better_duck_core::types::blob::Blob`                                        |
-| `DATE` / `TIME` / `TIMESTAMP`  | `chrono::NaiveDate` / `NaiveTime` / `NaiveDateTime` _(chrono)_ / native      |
-| `TIMESTAMPTZ`                  | `chrono::DateTime<Utc>` _(chrono)_                                           |
-| `TIME_TZ`                      | `date_chrono::TimeTz` _(chrono)_ / `DuckTimeTz` — UTC offset preserved       |
-| `INTERVAL`                     | `chrono::Duration` _(chrono)_ / `std::time::Duration`                        |
-| `LIST` / `ARRAY`               | `Vec<DuckValue>` / `Box<[DuckValue]>`                                        |
-| `STRUCT` / `MAP`               | `HashMap<String, DuckValue>` / `HashMap<DuckValue, DuckValue>`               |
-| `UNION`                        | active member (see roadmap for multi-arm write)                              |
-| `ENUM`                         | `String` / a derived enum (`#[derive(DuckEnum)]`)                            |
-| `UUID` / `BIT` / `BIGNUM`      | `DuckUuid` / `DuckBit` / `DuckBignum`                                        |
-
-### User-defined functions _(feature: udf)_
-
-Register plain Rust functions with attribute macros — parameter/return types inferred from the signature, no `unsafe`. See the [`macros` reference](#reference) below for the full set (`#[duckdb_scalar]`, `#[duckdb_table_function]`, `#[duckdb_aggregate]`, `#[duckdb_cast]`), named parameters, projection pushdown, scalar state, and replacement scans.
-
-### Feature flags
-
-| Feature             | Default | Description                                                                         |
-| ------------------- | ------- | ----------------------------------------------------------------------------------- |
-| `bundled`           | ✓       | Compile and embed the DuckDB C library (no system install needed)                   |
-| `chrono`            | ✓       | `chrono` date/time conversions for DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL     |
-| `decimal`           | ✓       | `rust_decimal::Decimal` support for DECIMAL columns                                 |
-| `json`              | —       | Bundle DuckDB's JSON extension (requires `bundled`)                                 |
-| `parquet`           | —       | Bundle DuckDB's Parquet extension (requires `bundled`)                              |
-| `async`             | —       | Tokio async facade (`AsyncConnection`, `AsyncDatabase`, `AsyncPool`)                |
-| `pool`              | —       | `r2d2` connection pool backed by a shared `Database` handle                         |
-| `udf`               | —       | `#[duckdb_scalar]` / `#[duckdb_table_function]` / `#[duckdb_aggregate]` / `#[duckdb_cast]` |
-| `derive`            | —       | `#[derive(FromRow/ToRow/DuckEnum/DuckStruct)]` + `transaction!` / `params!`         |
-| `buildtime_bindgen` | —       | Regenerate FFI bindings at build time (requires LLVM/clang)                         |
-
-</details>
-
-<details>
-<summary><b><code>better-duck-diesel</code></b> — Diesel 2.3 backend reference</summary>
-
-### Connecting
-
-```rust
-use better_duck_diesel::DuckDbConnection;
-use diesel::prelude::*;
-
-let mut conn = DuckDbConnection::establish(":memory:")?;               // in-memory
-let mut conn = DuckDbConnection::establish("/path/to/db.duckdb")?;     // on-disk
-let mut conn = DuckDbConnection::establish("duckdb:///path/db.duckdb")?; // duckdb:// prefix stripped
-```
-
-### CRUD
-
-Standard Diesel — INSERT (with `RETURNING`), SELECT with filter/order, UPDATE, DELETE all work:
-
-```rust
-diesel::insert_into(products::table)
-    .values((products::id.eq(1), products::name.eq("widget"), products::price.eq(9.99)))
-    .returning(products::id)
-    .get_results::<i32>(&mut conn)?;
-
-let rows: Vec<(i32, String, f64)> = products::table
-    .filter(products::price.lt(20.0))
-    .order(products::name.asc())
-    .load(&mut conn)?;
-
-diesel::update(products::table.filter(products::id.eq(1)))
-    .set(products::price.eq(11.99))
-    .execute(&mut conn)?;
-
-diesel::delete(products::table.filter(products::id.eq(2))).execute(&mut conn)?;
-```
-
-### Transactions
-
-```rust
-conn.transaction(|conn| {
-    diesel::insert_into(products::table)
-        .values((products::id.eq(3), products::name.eq("doohickey"), products::price.eq(4.99)))
-        .execute(conn)?;
-    Ok::<_, diesel::result::Error>(()) // Err rolls back; Ok commits
-})?;
-```
-
-### DuckDB-specific SQL types
-
-Import types that have no standard Diesel equivalent via `sql_types`:
-
-```rust
-diesel::table! {
-    use diesel::sql_types::*;
-    use better_duck_diesel::sql_types::*;
-
-    readings (id) {
-        id     -> Integer,
-        sensor -> DuckEnum,        // ENUM
-        ts     -> DuckTimestamptz, // TIMESTAMPTZ
-        tags   -> DuckList,        // LIST
-    }
-}
-```
-
-### DuckDB SQL function / operator / aggregate DSL
-
-`use better_duck_diesel::dsl::*;` brings in a large library of DuckDB SQL that Diesel doesn't ship by
-default — string/search/similarity, numeric & trig, regex, date/time, hashing, encoding, JSON, list &
-map functions; general/statistical/approximate/bit aggregates; and operator methods like `.ilike()`,
-`.similar_to()`, `.glob()`, and `.is_distinct_from()`.
-
-```rust
-use better_duck_diesel::dsl::*;
-use diesel::prelude::*;
-
-let hits: Vec<i32> = products::table
-    .filter(products::name.ilike("wid%"))          // case-insensitive LIKE operator
-    .select(products::id)
-    .load(&mut conn)?;
-
-let n: f64 = diesel::select(sqrt(16.0_f64)).get_result(&mut conn)?; // scalar fn → 4.0
-```
-
-Custom-typed values (`u64`, `i128`, `UUID`, `BIT`, `BIGNUM`, …) bind and load through the
-`better_duck_diesel::values::*` newtypes (e.g. `values::UBigInt`, `values::Uuid`).
-
-### Spatial _(feature: spatial)_
-
-```rust
-use better_duck_diesel::spatial::{ensure_loaded, st_as_text, st_point};
-
-ensure_loaded(&mut conn)?; // INSTALL + LOAD the spatial extension if needed
-let wkt: String = diesel::select(st_as_text(st_point(1.0, 2.0))).get_result(&mut conn)?; // "POINT (1 2)"
-```
-
-### Type mapping
-
-**Standard Diesel types** (work out of the box):
-
-| Diesel SQL type | DuckDB type | Rust type                           |
-| --------------- | ----------- | ----------------------------------- |
-| `Bool`          | `BOOLEAN`   | `bool`                              |
-| `SmallInt`      | `SMALLINT`  | `i16`                               |
-| `Integer`       | `INTEGER`   | `i32`                               |
-| `BigInt`        | `BIGINT`    | `i64`                               |
-| `Float` / `Double` | `FLOAT` / `DOUBLE` | `f32` / `f64`                 |
-| `Text`          | `VARCHAR`   | `String`                            |
-| `Binary`        | `BLOB`      | `Vec<u8>`                           |
-| `Date` / `Time` / `Timestamp` | `DATE` / `TIME` / `TIMESTAMP` | `chrono::*` _(chrono)_ |
-| `Numeric`       | `DECIMAL`   | `rust_decimal::Decimal` _(decimal)_ |
-
-**DuckDB-specific types** (`use better_duck_diesel::sql_types::*;`):
-
-| Diesel SQL type | DuckDB type | Rust type |
-| --- | --- | --- |
-| `DuckTinyInt` / `DuckUTinyInt` | `TINYINT` / `UTINYINT` | `i8` / `u8` |
-| `DuckUSmallInt` / `DuckUInt` / `DuckUBigInt` | `USMALLINT` / `UINTEGER` / `UBIGINT` | `u16` / `u32` / `u64` |
-| `DuckHugeInt` / `DuckUHugeInt` | `HUGEINT` / `UHUGEINT` | `i128` / `u128` |
-| `DuckTimestamptz` / `DuckInterval` | `TIMESTAMPTZ` / `INTERVAL` | `chrono::DateTime<Utc>` / `Duration` _(chrono)_ |
-| `DuckTimeTz` / `DuckTimeNs` | `TIME WITH TIME ZONE` / `TIME_NS` | `TimeTz` / `NaiveTime` _(chrono)_ |
-| `DuckEnum` | `ENUM` | `String` or `#[derive(DuckEnum)]` |
-| `DuckList` / `DuckArray` | `LIST` / `ARRAY` | `Vec<DuckValue>` |
-| `DuckStruct` / `DuckMap` / `DuckUnion` | `STRUCT` / `MAP` / `UNION` | `HashMap<…>` / active member |
-| `DuckUuid` / `DuckBit` / `DuckBignum` | `UUID` / `BIT` / `BIGNUM` | `DuckUuid` / `DuckBit` / `DuckBignum` |
-
-> [!NOTE]
-> Date/time types map to `chrono` with the `chrono` feature, or to `better_duck_core::types::date_native`
-> plain structs without it. Only one set is compiled at a time.
-
-### Connection pooling
-
-- **`r2d2`** — Diesel's own `diesel::r2d2::ConnectionManager<DuckDbConnection>`, plus a
-  `SharedDuckDbConnectionManager` that shares one `Database` across the pool (so an in-memory pool
-  observes one consistent database). Its `.on_connect(|c| …)` hook registers UDFs / loads extensions
-  per pooled connection.
-
-### Data derives with Diesel _(feature: derive)_
-
-With `better-duck-diesel`'s `derive` feature, `#[derive(DuckEnum)]` and `#[derive(DuckStruct)]` also
-emit Diesel `FromSql`/`ToSql`, so a derived Rust enum/struct binds and loads at its `sql_types::DuckEnum`
-/ `sql_types::DuckStruct` column type (via `sql_query` + `QueryableByName`).
-
-### Feature flags
-
-| Feature   | Default | Description                                                                               |
-| --------- | ------- | ----------------------------------------------------------------------------------------- |
-| `bundled` | ✓       | Forwards to `better-duck-core/bundled`                                                    |
-| `decimal` | ✓       | Diesel `Numeric` ↔ `rust_decimal::Decimal`                                                |
-| `chrono`  | —       | Diesel date/time impls for DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL, TIME_TZ, TIME_NS |
-| `r2d2`    | —       | r2d2 connection pool support (`SharedDuckDbConnectionManager` + `diesel::r2d2`)           |
-| `udf`     | —       | Expose the underlying core connection for registering UDFs on a diesel connection         |
-| `derive`  | —       | Re-export the data derives with Diesel `FromSql`/`ToSql` emission                         |
-| `spatial` | —       | `ST_*` DSL functions + `ensure_loaded` helper for the DuckDB spatial extension            |
-| `json`    | —       | Bundle the JSON extension so the JSON DSL works offline                                   |
-
-</details>
-
-<details>
-<summary><b><code>better-duck-macros</code></b> — UDFs, derives & helper macros reference</summary>
-
-`better-duck-macros` is not a direct dependency — it's re-exported through `better-duck-core`'s
-`udf` and `derive` features (and `better-duck-diesel`'s `derive` feature for ORM emission).
-
-### User-defined function macros _(feature: udf)_
-
-| Macro | Applies to | Generates |
-| --- | --- | --- |
-| `#[duckdb_scalar]` | `fn(args) -> T` | a scalar function (one value per row) |
-| `#[duckdb_table_function]` | `fn(args) -> impl Iterator` | a table function (rows + columns, usable in `FROM`) |
-| `#[duckdb_aggregate]` | `mod { init, update, combine, finalize }` | a custom aggregate |
-| `#[duckdb_cast]` | `fn(from) -> to` | a `CAST` / `TRY_CAST` implementation |
-
-```rust
-use better_duck_core::{connection::Connection, duckdb_scalar, duckdb_table_function};
-
-#[duckdb_scalar]
-fn repeat_str(s: &str, n: i32) -> String { s.repeat(n.max(0) as usize) }
-
-#[duckdb_table_function(name = "series", columns("n"))]
-fn series(start: i64, stop: i64) -> impl Iterator<Item = i64> + Send { start..stop }
-
-let mut conn = Connection::open_in_memory()?;
-repeat_str::register(&mut conn)?;
-series::register(&mut conn)?;
-conn.execute("SELECT sum(n) FROM series(1, 101)")?; // 5050
-```
-
-Parameter/return types are inferred from the signature. `Option<T>` propagates `NULL`; a
-`Result<T, E>` return fails the query with `E`'s message. Table functions also support named
-(keyword) parameters, projection pushdown, and scalar functions support shared state — read via the
-`duck_projection!` / `duck_extra_info!` / `duck_state!` macros. Panics are caught and surfaced as
-query errors under `panic = "unwind"`.
-
-### Data derives _(feature: derive)_
-
-| Derive | Maps | Direction |
-| --- | --- | --- |
-| `#[derive(FromRow)]` | struct ← query row (by column name) | read |
-| `#[derive(ToRow)]` | struct → appender row / bind params | write |
-| `#[derive(DuckEnum)]` | unit enum ↔ DuckDB `ENUM` | read + write |
-| `#[derive(DuckStruct)]` | struct ↔ DuckDB `STRUCT` value | read + write |
+- **`#[derive(FromRow)]`** — read a query row into a struct by column name; `ResultSet::to_structs::<T>()` collects a whole result into `Vec<T>`.
+- **`#[derive(ToRow)]`** — append a struct's fields as one bulk-appender row, or bind them as consecutive statement parameters.
+- **`#[derive(DuckEnum)]`** — map a Rust unit enum to a DuckDB `ENUM` (read + write), with `#[duck_enum(rename_all = "…")]` / per-variant `rename`.
+- **`#[derive(DuckStruct)]`** — map a Rust struct to a DuckDB `STRUCT` value (read + write).
 
 ```rust
 use better_duck_core::{connection::Connection, DuckEnum, FromRow};
@@ -490,26 +76,110 @@ enum Priority { Low, High }
 
 #[derive(FromRow, Debug)]
 struct Task { id: i32, priority: Priority }
+
+let tasks: Vec<Task> = conn.execute("SELECT id, priority FROM tasks")?.to_structs()?;
 ```
 
-Field/variant naming is controlled with `#[duck(rename = "…")]` / `#[duck(rename_all = "…")]`
-(and `#[duck_enum(...)]` for `DuckEnum`). `ResultSet::to_structs::<T>()` reads a whole result into
-`Vec<T>` for a `FromRow` type. With `better-duck-diesel`'s `derive` feature on, `DuckEnum`/`DuckStruct`
-additionally emit Diesel `FromSql`/`ToSql`.
+Field/variant names honor `#[duck(rename = "…")]` and `#[duck(rename_all = "…")]`. With `better-duck-diesel`'s `derive` feature on, `DuckEnum`/`DuckStruct` **also** emit Diesel `FromSql`/`ToSql`, so the same type works through the ORM at its `sql_types::DuckEnum` / `sql_types::DuckStruct` column type.
 
-### Helper macros _(feature: derive)_
+### User-defined functions in plain Rust — `feature = "udf"`
+
+Register ordinary Rust functions as DuckDB functions with an attribute macro. Parameter and return types are inferred from the signature; `Option<T>` propagates `NULL`, a `Result<T, E>` return fails the query with `E`'s message, and panics are caught and surfaced as a query error rather than crossing the FFI boundary.
+
+| Macro | Applies to | Becomes |
+| --- | --- | --- |
+| `#[duckdb_scalar]` | `fn(args) -> T` | a scalar function (one value per row) |
+| `#[duckdb_table_function]` | `fn(args) -> impl Iterator` | a table function usable in `FROM` (named params, projection pushdown, shared state) |
+| `#[duckdb_aggregate]` | `mod { init, update, combine, finalize }` | a custom aggregate |
+| `#[duckdb_cast]` | `fn(from) -> to` | a `CAST` / `TRY_CAST` implementation |
 
 ```rust
-use better_duck_core::{params, transaction};
+use better_duck_core::{connection::Connection, duckdb_scalar, duckdb_table_function};
 
-// commit-on-Ok / rollback-on-Err transaction scope (works for core and diesel connections)
-transaction!(conn, {
-    conn.execute_with("INSERT INTO t VALUES ($1, $2)", &mut params![1_i32, "hi".to_owned()])?;
-    Ok(())
-})?;
+#[duckdb_scalar]
+fn shout(s: &str) -> String { s.to_uppercase() }
+
+#[duckdb_table_function(name = "series", columns("n"))]
+fn series(start: i64, stop: i64) -> impl Iterator<Item = i64> + Send { start..stop }
+
+shout::register(&mut conn)?;
+series::register(&mut conn)?;
+conn.execute("SELECT shout('hi')")?;             // "HI"
+conn.execute("SELECT sum(n) FROM series(1, 101)")?; // 5050
 ```
 
-</details>
+### Call your UDFs through Diesel — no raw SQL — `better-duck-diesel` `feature = "udf"`
+
+Register a UDF on the connection, declare it once as a Diesel function, and then call it as a typed method inside the query DSL — the same Rust function, reachable from the ORM without dropping to `sql_query`.
+
+```rust
+use better_duck_diesel::DuckDbConnection;
+use diesel::prelude::*;
+
+#[duckdb_scalar(name = "add_one")]
+fn add_one(x: i32) -> i32 { x + 1 }
+
+diesel::define_sql_function! { fn add_one(x: Integer) -> Integer; }
+
+add_one_impl::register(conn.inner_mut())?;          // register on the underlying connection
+let bumped: Vec<i32> = items::table.select(add_one(items::id)).load(&mut conn)?;
+```
+
+For connection pools, `SharedDuckDbConnectionManager::on_connect(|c| …)` runs a per-connection setup hook — the place to register UDFs (or `LOAD` extensions) so every pooled connection carries them.
+
+### The SQL surface Diesel doesn't ship — `use better_duck_diesel::dsl::*;`
+
+A large library of DuckDB-specific SQL, exposed as typed Diesel DSL that stock Diesel has no equivalent for:
+
+- **Operators as methods**: `.ilike()`, `.not_ilike()`, `.similar_to()`, `.glob()`, `.regexp_matches()`, `.starts_with_op()`, `.is_distinct_from()` / `.is_not_distinct_from()`.
+- **Scalar functions**: string / search / similarity (`levenshtein`, `jaro_winkler_similarity`, `lpad`, `split_part`, …), numeric & trig (`sqrt`, `pow`, `gcd`, `sin`, `atan2`, …), regex, date/time (`date_trunc`, `strftime`, `make_timestamp`, `datediff`, …), UUID, hashing (`sha256`), encoding (`base64`, `hex`), JSON, and `LIST` / `MAP` helpers.
+- **Aggregates**: general (`string_agg`, `array_agg`, `bool_and/or`, `arg_max/min`), statistical (`stddev`, `corr`, `regr_slope`, `skewness`, …), approximate (`approx_count_distinct`, `approx_quantile`), bitwise, and JSON aggregates.
+
+```rust
+use better_duck_diesel::dsl::*;
+
+let hits = products::table
+    .filter(products::name.ilike("wid%"))   // case-insensitive LIKE operator
+    .select(products::id)
+    .load::<i32>(&mut conn)?;
+```
+
+Custom-typed values (`u64`, `i128`, `UUID`, `BIT`, `BIGNUM`, …) bind and load through the `better_duck_diesel::values::*` newtypes, which sidestep the coherence limits that block binding those types directly.
+
+### Full DuckDB type coverage, safely
+
+Every scalar and composite DuckDB type round-trips through `DuckValue` and the Diesel `sql_types`: integers of every width (including `HUGEINT`/`UHUGEINT` ↔ `i128`/`u128`), `DECIMAL`, `UUID`, `BIT`, `BIGNUM`, all temporal precisions (`TIMESTAMP_S/MS/NS`, `TIMESTAMPTZ`, `TIME_TZ` with its offset preserved), and the composites `LIST` / `ARRAY` / `STRUCT` / `MAP` / `UNION` / `ENUM`. Date/time types map to `chrono` (`feature = "chrono"`) or to plain native structs without it.
+
+### Transaction & parameter ergonomics — `feature = "derive"`
+
+- **`transaction!(conn, { … })`** — a scope that commits on `Ok` and rolls back on `Err` or panic. It works for both the core `Connection` and a `DuckDbConnection`, since both expose `transaction(|c| -> Result<_>)`.
+- **`params![a, b, Null, …]`** — build the `&mut [&mut dyn AppendAble]` slice for `execute_with` without the boilerplate.
+
+### Extensions & spatial — `feature = "spatial"`
+
+`Connection` can `install` / `load` / `ensure` / query extensions (`ensure_extension("json")`). The diesel `spatial` module adds `ST_*` DSL functions plus `ensure_loaded(conn)`, which installs and loads DuckDB's spatial extension on demand; geometries travel as WKB.
+
+### Async & pooling — `feature = "async"` / `feature = "pool"` / `r2d2`
+
+An `async` facade (`AsyncConnection`, `AsyncDatabase`, `AsyncPool`) runs each call on `spawn_blocking` so it never blocks the executor, and connection pooling is available both through Diesel's own `r2d2` manager and a `SharedDuckDbConnectionManager` that shares one database across the pool.
+
+### Feature flags
+
+| Crate | Flag | What it enables |
+| --- | --- | --- |
+| core | `chrono` *(default)* | `chrono` date/time conversions |
+| core | `decimal` *(default)* | `rust_decimal::Decimal` for `DECIMAL` |
+| core | `json` / `parquet` | bundle DuckDB's JSON / Parquet extensions |
+| core | `udf` | the `#[duckdb_*]` function macros |
+| core | `derive` | `#[derive(FromRow/ToRow/DuckEnum/DuckStruct)]` + `transaction!` / `params!` |
+| core | `async` / `pool` | async facade / r2d2 pool over a shared database |
+| diesel | `derive` | re-export the data derives with Diesel `FromSql`/`ToSql` emission |
+| diesel | `udf` | register UDFs on a `DuckDbConnection` and call them in the DSL |
+| diesel | `spatial` | `ST_*` DSL functions + `ensure_loaded` helper |
+| diesel | `json` | bundle the JSON extension so the JSON DSL works offline |
+| diesel | `r2d2` / `chrono` | r2d2 pooling / Diesel date-time impls |
+
+Full API documentation lives on [docs.rs](https://docs.rs/better-duck-core).
 
 ## Supported platforms
 
