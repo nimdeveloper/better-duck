@@ -190,6 +190,7 @@ mod tests {
         let mut lt = DuckValue::logical_type_of(&value).unwrap();
         // SAFETY: `lt` is a valid UNION logical type, destroyed once below.
         assert_eq!(unsafe { duckdb_get_type_id(lt) }, crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_UNION);
+        // SAFETY: `lt` was created by `logical_type_of` above and is destroyed once here.
         unsafe { duckdb_destroy_logical_type(&mut lt) };
 
         let second = result.next().unwrap().unwrap();
