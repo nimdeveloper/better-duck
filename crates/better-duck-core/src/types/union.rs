@@ -161,4 +161,44 @@ mod tests {
             other => panic!("expected Union, got {other:?}"),
         }
     }
+
+    #[test]
+    fn multi_member_union_reads_the_active_arm_and_roundtrips() {
+        // A real multi-member UNION column exercises the tag read (child 0) selecting
+        // among several member vectors, and preserves the full member schema.
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (u UNION(num INTEGER, name VARCHAR))").unwrap();
+        conn.execute_batch(
+            "INSERT INTO t VALUES (union_value(num := 5)), (union_value(name := 'duck'))",
+        )
+        .unwrap();
+
+        let mut result = conn.execute("SELECT u FROM t").unwrap();
+
+        let first = result.next().unwrap().unwrap();
+        let first_union = match first.get("u").unwrap() {
+            DuckValue::Union(u) => u.clone(),
+            other => panic!("expected Union, got {other:?}"),
+        };
+        assert_eq!(first_union.active_name(), "num");
+        assert_eq!(first_union.value(), &DuckValue::Int(5));
+        // The member schema carries both arms, not just the active one.
+        assert_eq!(first_union.members().len(), 2);
+
+        // Round-trip: the read value rebuilds the same UNION logical type.
+        let value = DuckValue::Union(first_union);
+        let mut lt = DuckValue::logical_type_of(&value).unwrap();
+        // SAFETY: `lt` is a valid UNION logical type, destroyed once below.
+        assert_eq!(unsafe { duckdb_get_type_id(lt) }, crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_UNION);
+        unsafe { duckdb_destroy_logical_type(&mut lt) };
+
+        let second = result.next().unwrap().unwrap();
+        match second.get("u").unwrap() {
+            DuckValue::Union(u) => {
+                assert_eq!(u.active_name(), "name");
+                assert_eq!(u.value(), &DuckValue::text("duck"));
+            },
+            other => panic!("expected Union, got {other:?}"),
+        }
+    }
 }

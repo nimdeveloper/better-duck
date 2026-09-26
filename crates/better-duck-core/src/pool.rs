@@ -167,4 +167,44 @@ mod tests {
         let row = rows.next().unwrap().unwrap();
         assert_eq!(row.get("value").unwrap(), &crate::types::value::DuckValue::Int(9));
     }
+
+    #[test]
+    fn memory_with_flags_builds_a_usable_manager() {
+        let manager = DuckDbConnectionManager::memory_with_flags(Config::default()).unwrap();
+        // `database()` exposes the shared handle; connections from it share state.
+        let _db = manager.database();
+        let mut a = manager.connect().unwrap();
+        a.execute_batch("CREATE TABLE m (v INTEGER); INSERT INTO m VALUES (7)").unwrap();
+        drop(a);
+        let mut b = manager.connect().unwrap();
+        let mut rows = b.execute("SELECT v FROM m").unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("v").unwrap(), &crate::types::value::DuckValue::Int(7));
+    }
+
+    #[test]
+    fn file_with_flags_opens_and_persists() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("flags.duckdb");
+        let manager = DuckDbConnectionManager::file_with_flags(&path, Config::default()).unwrap();
+        let mut first = manager.connect().unwrap();
+        first.execute_batch("CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (3)").unwrap();
+        drop(first);
+        let mut second = manager.connect().unwrap();
+        let mut rows = second.execute("SELECT v FROM t").unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("v").unwrap(), &crate::types::value::DuckValue::Int(3));
+    }
+
+    #[test]
+    fn new_wraps_an_existing_database_and_has_broken_tracks_open_state() {
+        let db = Database::open_in_memory().unwrap();
+        let manager = DuckDbConnectionManager::new(db);
+        let mut conn = manager.connect().unwrap();
+        // A live connection is valid and not broken.
+        assert!(manager.is_valid(&mut conn).is_ok());
+        assert!(!manager.has_broken(&mut conn));
+        // Debug is derived; exercise it so the impl is covered.
+        assert!(format!("{manager:?}").contains("DuckDbConnectionManager"));
+    }
 }

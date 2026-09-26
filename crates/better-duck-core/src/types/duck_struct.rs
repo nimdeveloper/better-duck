@@ -312,6 +312,52 @@ mod tests {
     }
 
     #[test]
+    fn duck_struct_appender_append_writes_a_row() {
+        // Exercises `AppendAble::appender_append` for `DuckStruct` (distinct from the
+        // `stmt_append` bind path above).
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (v STRUCT(a INTEGER, b VARCHAR))").unwrap();
+        {
+            let mut app = conn.appender("t", "main").unwrap();
+            app.append(&mut DuckStruct::new(HashMap::from([
+                ("a".to_string(), DuckValue::Int(7)),
+                ("b".to_string(), DuckValue::text("row")),
+            ])))
+            .unwrap();
+            app.save().unwrap();
+        }
+        let mut result = conn.execute("SELECT v FROM t").unwrap();
+        let row = result.next().unwrap().unwrap();
+        match row.get("v").unwrap() {
+            DuckValue::Struct(m) => {
+                assert_eq!(m.get("a"), Some(&DuckValue::Int(7)));
+                assert_eq!(m.get("b"), Some(&DuckValue::text("row")));
+            },
+            other => panic!("expected Struct, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_struct_value_and_logical_type_recurse_into_children() {
+        use crate::ffi::{duckdb_destroy_logical_type, duckdb_destroy_value, duckdb_get_type_id};
+        // A struct holding a LIST child forces `struct_to_duck` / `struct_logical_type`
+        // to recurse into the child's own `to_duck` / `logical_type_of`.
+        let value = DuckValue::Struct(HashMap::from([
+            ("id".to_owned(), DuckValue::Int(1)),
+            ("tags".to_owned(), DuckValue::List(vec![DuckValue::text("x"), DuckValue::text("y")])),
+        ]));
+        let mut raw = value.to_duck().unwrap();
+        assert!(!raw.is_null());
+        // SAFETY: `raw` was created by `to_duck` and is destroyed once.
+        unsafe { duckdb_destroy_value(&mut raw) };
+
+        let mut lt = DuckValue::logical_type_of(&value).unwrap();
+        // SAFETY: `lt` is a valid struct logical type, destroyed once below.
+        assert_eq!(unsafe { duckdb_get_type_id(lt) }, crate::ffi::DUCKDB_TYPE_DUCKDB_TYPE_STRUCT);
+        unsafe { duckdb_destroy_logical_type(&mut lt) };
+    }
+
+    #[test]
     fn duck_struct_new_and_conversion_preserve_fields() {
         let fields = HashMap::from([("answer".to_owned(), DuckValue::Int(42))]);
         let value: DuckValue = DuckStruct::new(fields.clone()).into();

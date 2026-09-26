@@ -582,4 +582,58 @@ mod tests {
             let _ = app.save();
         }
     }
+
+    #[test]
+    fn duckvalue_list_and_array_to_duck_roundtrip_and_reject_empty() {
+        use crate::ffi::duckdb_destroy_value;
+
+        // `DuckValue::List(..)` / `Array(..)` route through `list_to_duck` / `array_to_duck`,
+        // which infer the element type from `items[0]` (distinct from the typed `Vec<T>` path).
+        let list = DuckValue::List(vec![DuckValue::Int(1), DuckValue::Int(2)]);
+        let mut raw = list.to_duck().unwrap();
+        assert!(!raw.is_null());
+        // SAFETY: `raw` was created by `to_duck` and is destroyed once.
+        unsafe { duckdb_destroy_value(&mut raw) };
+
+        let array = DuckValue::Array(vec![DuckValue::Int(3), DuckValue::Int(4)].into_boxed_slice());
+        let mut raw = array.to_duck().unwrap();
+        assert!(!raw.is_null());
+        // SAFETY: `raw` was created by `to_duck` and is destroyed once.
+        unsafe { duckdb_destroy_value(&mut raw) };
+
+        // Empty untyped collections cannot infer an element type → ConversionError.
+        assert!(matches!(
+            DuckValue::List(vec![]).to_duck(),
+            Err(DuckDBConversionError::ConversionError(_))
+        ));
+        assert!(matches!(
+            DuckValue::Array(Box::from([])).to_duck(),
+            Err(DuckDBConversionError::ConversionError(_))
+        ));
+    }
+
+    #[test]
+    fn duckvalue_list_and_array_bind_through_a_statement() {
+        // Binding a heterogeneous-free `DuckValue::List` / `Array` as a parameter exercises
+        // the `list_to_duck` / `array_to_duck` success + cleanup paths end to end.
+        let mut conn = Connection::open_in_memory().unwrap();
+        let mut list = DuckValue::List(vec![DuckValue::Int(10), DuckValue::Int(20)]);
+        let mut result = conn.execute_with("SELECT $1 AS v", &mut [&mut list]).unwrap();
+        match result.next().unwrap().unwrap().get("v").unwrap() {
+            DuckValue::List(items) => {
+                assert_eq!(items, &vec![DuckValue::Int(10), DuckValue::Int(20)]);
+            },
+            other => panic!("expected List, got {other:?}"),
+        }
+
+        let mut array =
+            DuckValue::Array(vec![DuckValue::Int(5), DuckValue::Int(6)].into_boxed_slice());
+        let mut result = conn.execute_with("SELECT $1 AS v", &mut [&mut array]).unwrap();
+        match result.next().unwrap().unwrap().get("v").unwrap() {
+            DuckValue::Array(items) => {
+                assert_eq!(&**items, &[DuckValue::Int(5), DuckValue::Int(6)][..]);
+            },
+            other => panic!("expected Array, got {other:?}"),
+        }
+    }
 }
