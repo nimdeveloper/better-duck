@@ -8,6 +8,13 @@ on:
 
 permissions:
   contents: read
+  # The SLSA generic generator's reusable workflow (generate_slsa_provenance)
+  # has an internal `generator` job that requests `actions: read`. Reusable
+  # workflows can only receive an `actions` scope that is present in the
+  # caller's TOP-LEVEL permissions ceiling — a job-level grant alone is not
+  # enough for this scope — so without this line the call fails validation
+  # with "requesting 'actions: read', but is only allowed 'actions: none'".
+  actions: read
 
 concurrency:
   group: publish-${{ github.ref }}
