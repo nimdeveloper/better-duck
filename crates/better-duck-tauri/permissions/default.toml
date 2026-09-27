@@ -4,6 +4,12 @@
 description = """
 Read access to loaded DuckDB databases: open/close a connection and run read-only
 `select` queries. Writes (`execute`) and raw arbitrary SQL are NOT included here and
-must be granted explicitly (e.g. `duck:allow-execute`, `duck:allow-raw-sql`).
+must be granted explicitly (e.g. `better-duck-tauri:allow-execute`,
+`better-duck-tauri:allow-raw-sql`).
+
+Note: `select` forwards arbitrary read SQL, which in DuckDB can reach the filesystem
+via table functions (`read_csv_auto`, `read_parquet`, `glob`, ...). Treat `select` as
+filesystem-read-capable; constrain untrusted webviews with a `read_only` policy and/or a
+connection allow-list rather than relying on this default alone.
 """
 permissions = ["allow-load", "allow-close", "allow-select"]

@@ -59,12 +59,23 @@ fn conn_matches(
     pattern == value
 }
 
-/// Path-prefix comparator for filesystem scope entries (a directory prefix allows its files).
+/// Path-prefix comparator for filesystem scope entries (a directory prefix allows its
+/// files). Component-aware and traversal-safe: a `..` segment in the value is rejected
+/// outright (so `data/` never allows `data/../secret`), and matching is on whole path
+/// components (so `data` allows `data/x` but not `database/x`). Backslashes are treated
+/// as separators for Windows paths.
 fn path_matches(
     prefix: &str,
     value: &str,
 ) -> bool {
-    value == prefix || value.starts_with(prefix)
+    let value = value.replace('\\', "/");
+    // A `..` segment escapes the prefix — deny any traversal.
+    if value.split('/').any(|seg| seg == "..") {
+        return false;
+    }
+    let prefix = prefix.replace('\\', "/");
+    let prefix = prefix.trim_end_matches('/');
+    prefix.is_empty() || value == prefix || value.starts_with(&format!("{prefix}/"))
 }
 
 /// Open (and register) a database connection.
@@ -331,5 +342,23 @@ mod tests {
         let allow = ["data/"];
         assert!(scope_decision("data/exports/out.parquet", &allow, &[], path_matches).is_ok());
         assert!(scope_decision("/etc/passwd", &allow, &[], path_matches).is_err());
+    }
+
+    #[test]
+    fn path_scope_rejects_traversal() {
+        let allow = ["data/"];
+        // `..` must never escape the allowed prefix, even though the raw string starts with it.
+        assert!(scope_decision("data/../secret.db", &allow, &[], path_matches).is_err());
+        assert!(scope_decision("data/../../etc/passwd", &allow, &[], path_matches).is_err());
+        assert!(scope_decision("data\\..\\secret", &allow, &[], path_matches).is_err());
+    }
+
+    #[test]
+    fn path_scope_matches_whole_components() {
+        // A prefix of `data` allows `data/x` but not sibling names sharing the prefix bytes.
+        let allow = ["data"];
+        assert!(scope_decision("data/x.parquet", &allow, &[], path_matches).is_ok());
+        assert!(scope_decision("database/x", &allow, &[], path_matches).is_err());
+        assert!(scope_decision("data_secret/y", &allow, &[], path_matches).is_err());
     }
 }

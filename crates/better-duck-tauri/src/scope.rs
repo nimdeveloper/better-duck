@@ -15,6 +15,14 @@ use serde::{Deserialize, Serialize};
 
 /// One scope entry in a capability file's `"scope"` array for this plugin.
 ///
+/// Enforcement is **per field**: `load` checks `connection`, while `import`/`export` check
+/// `path`. Each field is evaluated independently — a deny match rejects, and if any allow
+/// entries exist *for that field* the value must match one. An empty allow list for a field
+/// means that field is **unconstrained** (the init-time [`Policy`](crate::policy::Policy)
+/// remains the mandatory layer). Consequence: a capability that declares only `path` entries
+/// does **not** restrict `connection`, and vice-versa — populate both fields if you mean to
+/// constrain both. Path matching is component-aware and rejects `..` traversal.
+///
 /// Example capability entry allowing an on-disk database and an export directory:
 ///
 /// ```json

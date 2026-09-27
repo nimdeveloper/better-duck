@@ -102,7 +102,14 @@ The webview is untrusted and DuckDB SQL can reach the filesystem/network, so loc
 - `allow_connection(...)` / `allow_path(...)` — allow-lists for `load` and import/export paths.
 - `deny_risky_statements(true)` — reject `ATTACH`/`INSTALL`/`LOAD`/`PRAGMA`/`COPY`/… in `select`/`execute`.
 - `allow_network(true)` — required to load network extensions (`httpfs`/`aws`/`azure`); off by default.
-- Raw `select`/`execute` are gated behind the `better-duck-tauri:allow-raw-sql` capability.
+- `execute` (writes/DDL) is out of the default set — grant it via `better-duck-tauri:allow-execute` or the `better-duck-tauri:allow-raw-sql` umbrella.
+
+> [!WARNING]
+> `select` is in the default set, but DuckDB `SELECT` can still reach the filesystem through
+> table functions (`read_csv_auto`, `read_parquet`, `glob`, …) — the leading-keyword
+> `deny_risky_statements` filter does not catch these. For an untrusted webview, pair `select`
+> with `read_only(true)` and/or a connection allow-list; a fully sandboxed read-only mode
+> (disabling DuckDB external file access) is a planned follow-up.
 
 ## Checkpoint strategies
 

@@ -147,11 +147,10 @@ impl DieselEngine {
                 .ok_or_else(|| Error::UnknownConnection(conn_str.to_owned()))?
         };
         let mut conn = pool.get().map_err(|e| Error::Backend(e.to_string()))?;
-        let core = conn.inner_mut();
-        for hook in &self.on_connect {
-            hook(core)?;
-        }
-        f(core)
+        // `on_connect` hooks are applied once per physical connection by the pool manager
+        // (see `load`), not here — re-running them on every checkout would, e.g., re-register
+        // UDFs on an already-initialized connection and fail.
+        f(conn.inner_mut())
     }
 
     /// Runs a read query and collects all rows as JSON (no statement-policy check here).
@@ -201,6 +200,16 @@ impl DuckBackend for DieselEngine {
         } else {
             SharedDuckDbConnectionManager::file(&path).map_err(|e| Error::Backend(e.to_string()))?
         };
+        // Attach the plugin's per-connection setup hooks to the manager so they run exactly
+        // once per physical connection (r2d2 reuses connections across checkouts).
+        let hooks = self.on_connect.clone();
+        let manager = manager.on_connect(move |c: &mut DuckDbConnection| {
+            for hook in &hooks {
+                hook(c.inner_mut())
+                    .map_err(|e| better_duck_core::error::Error::ToSqlConversionFailure(Box::new(e)))?;
+            }
+            Ok(())
+        });
         let pool = Pool::builder().build(manager).map_err(|e| Error::Backend(e.to_string()))?;
 
         // In-memory: migrations run on the shared pool handle (a separate open would discard
@@ -306,6 +315,7 @@ impl DuckBackend for DieselEngine {
         format: DataFormat,
     ) -> Result<ExecuteResult> {
         self.policy.check_path(path)?;
+        self.policy.check_statement(query)?;
         let fmt = match format {
             DataFormat::Parquet => "PARQUET",
             DataFormat::Csv => "CSV",

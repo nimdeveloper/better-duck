@@ -322,6 +322,7 @@ impl DuckBackend for DuckEngine {
         format: DataFormat,
     ) -> Result<ExecuteResult> {
         self.policy.check_path(path)?;
+        self.policy.check_statement(query)?;
         let fmt = match format {
             DataFormat::Parquet => "PARQUET",
             DataFormat::Csv => "CSV",
