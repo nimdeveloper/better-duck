@@ -31,6 +31,8 @@ mod backup;
 mod checkpoint;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod json;
+/// Capability-file scope entry schema (see [`scope::Entry`]).
+pub mod scope;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod migration;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
