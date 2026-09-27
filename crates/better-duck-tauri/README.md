@@ -11,7 +11,7 @@ A [Tauri v2](https://tauri.app) plugin that exposes [better-duck](https://crates
 
 ```toml
 [dependencies]
-better-duck-tauri = { version = "0.1.0-beta.5", features = ["backend-core"] }
+better-duck-tauri = { version = "0.1.0-beta.6", features = ["backend-core"] }
 ```
 
 Pick one backend feature: `backend-core` (default) or `backend-diesel`.

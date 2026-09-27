@@ -11,6 +11,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.0-beta.6] — 2026-09-28
+
+Primarily a `better-duck-tauri` release: a second backend, runtime capability-scope
+enforcement, and an example app, plus a **breaking** plugin-name fix. `better-duck-core` /
+`-diesel` / `-macros` / `-sys` are version-bumped with the workspace but are functionally
+unchanged since beta.5.
+
+### `better-duck-tauri`
+
+#### Breaking
+
+- **Plugin renamed `duck` → `better-duck-tauri`.** The runtime plugin name now matches the ACL
+  permission namespace (derived from the crate name): the invoke prefix is
+  `plugin:better-duck-tauri|…` and capabilities grant `better-duck-tauri:*`. Under beta.5's `duck`
+  name no capability could authorize the commands — every invoke was denied — so the plugin was
+  unusable in a real capability-gated app.
+
+#### Added
+
+- **Diesel-native backend** (`diesel::init` / `diesel::Builder`): an r2d2 pool of
+  `DuckDbConnection`s per connection string, `embed_migrations!` migrations via `MigrationHarness`
+  run through the crash-safe backup protocol, and dynamic SQL executed on the pooled connection's
+  underlying core connection.
+- **Capability-file scope enforcement** (`scope::Entry` + `global_scope_schema`): `load`, `import`,
+  and `export` enforce the merged `GlobalScope` / `CommandScope` at runtime — deny-first, then
+  require an allow-match, with traversal-safe, component-aware path matching.
+- **Per-platform default checkpoint strategies** (`Builder::checkpoint_platform_defaults`).
+- **`@better-duck/tauri` dist-js** build and a complete **example app** (`examples/tauri-app`).
+
+#### Fixed / hardened
+
+- Path-scope traversal bypass (`..` rejected; whole-component matching).
+- `on_connect` hooks now run once per pooled connection (were re-run on every checkout).
+- `export` runs the statement filter; chrono kept consistent in the `backend-diesel` feature.
+
+### Infrastructure
+
+- CI: Android arm64 cross-build (`cargo-ndk`), a dedicated Tauri-plugin job with the Linux
+  GTK/webkit deps, cached DuckDB C builds, and Pages docs that now include the plugin.
+
+---
+
 ## [0.1.0-beta.5] — 2026-09-27
 
 Adds a Tauri v2 plugin and an opt-in Arrow export path; the rest is release

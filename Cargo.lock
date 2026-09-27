@@ -367,7 +367,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "better-duck-core"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "better-duck-macros",
  "better-duck-sys",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "better-duck-diesel"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "better-duck-core",
  "chrono",
@@ -399,7 +399,7 @@ dependencies = [
 
 [[package]]
 name = "better-duck-macros"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -409,7 +409,7 @@ dependencies = [
 
 [[package]]
 name = "better-duck-sys"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "cc",
  "flate2",
@@ -420,7 +420,7 @@ dependencies = [
 
 [[package]]
 name = "better-duck-tauri"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "arrow",
  "better-duck-core",
