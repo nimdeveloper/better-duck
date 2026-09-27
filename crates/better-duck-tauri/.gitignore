@@ -1,0 +1,3 @@
+# Node/npm artifacts for the @better-duck/tauri frontend bindings.
+node_modules/
+dist-js/
