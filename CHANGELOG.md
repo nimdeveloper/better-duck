@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### `better-duck-core`
+
+- **Arrow export (`feature = "arrow"`).** Opt-in export of a query result through
+  the Arrow C Data Interface, with **no added dependencies** — the stable ABI
+  structs and their `release` callbacks are defined in-crate. A downstream
+  consumer with `arrow-rs` can reinterpret the exported handles as
+  `FFI_ArrowSchema` / `FFI_ArrowArray` and build `RecordBatch`es / Arrow IPC.
+
 ---
 
 ## [0.1.0-beta.4] — 2026-09-26

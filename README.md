@@ -17,7 +17,7 @@
 ## Highlights
 
 - **Bundled DuckDB** — the DuckDB C library compiles straight in; no system package, no runtime dependency to install.
-- **Row-oriented, Arrow-free** — direct access to rows and values with a lean dependency tree, ideal for application-level OLAP.
+- **Row-oriented, Arrow-optional** — direct access to rows and values with a lean dependency tree, ideal for application-level OLAP; an opt-in `arrow` feature exports results via the Arrow C Data Interface with **no added dependencies**.
 - **Safe by construction** — every FFI call is wrapped; nothing `unsafe` leaks into your code, across the full DuckDB type system.
 - **Comprehensive type coverage** — integers of every width, `DECIMAL`, `UUID`, `BIT`, `BIGNUM`, temporals, and the composite `LIST` / `ARRAY` / `STRUCT` / `MAP` / `UNION` / `ENUM` types.
 - **Diesel 2.3 ORM backend** — a full custom backend: query DSL, migrations, an r2d2 pool, and a large library of DuckDB-specific SQL functions, aggregates, and operators.
@@ -170,6 +170,7 @@ An `async` facade (`AsyncConnection`, `AsyncDatabase`, `AsyncPool`) runs each ca
 | core   | `chrono` _(default)_  | `chrono` date/time conversions                                              |
 | core   | `decimal` _(default)_ | `rust_decimal::Decimal` for `DECIMAL`                                       |
 | core   | `json` / `parquet`    | bundle DuckDB's JSON / Parquet extensions                                   |
+| core   | `arrow`               | zero-dependency Arrow C Data Interface export of query results              |
 | core   | `udf`                 | the `#[duckdb_*]` function macros                                           |
 | core   | `derive`              | `#[derive(FromRow/ToRow/DuckEnum/DuckStruct)]` + `transaction!` / `params!` |
 | core   | `async` / `pool`      | async facade / r2d2 pool over a shared database                             |
@@ -305,6 +306,7 @@ Register plain Rust functions with attribute macros — parameter/return types i
 | `decimal`           | ✓       | `rust_decimal::Decimal` support for DECIMAL columns                                        |
 | `json`              | —       | Bundle DuckDB's JSON extension (requires `bundled`)                                        |
 | `parquet`           | —       | Bundle DuckDB's Parquet extension (requires `bundled`)                                     |
+| `arrow`             | —       | Export query results via the Arrow C Data Interface (no added dependencies)                |
 | `async`             | —       | Tokio async facade (`AsyncConnection`, `AsyncDatabase`, `AsyncPool`)                       |
 | `pool`              | —       | `r2d2` connection pool backed by a shared `Database` handle                                |
 | `udf`               | —       | `#[duckdb_scalar]` / `#[duckdb_table_function]` / `#[duckdb_aggregate]` / `#[duckdb_cast]` |
