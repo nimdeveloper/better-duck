@@ -296,22 +296,191 @@ pub mod core {
 
 #[cfg(feature = "backend-diesel")]
 pub mod diesel {
-    //! Entry point for the `better-duck-diesel` backend.
-    //!
-    //! Currently shares the core execution path; the Diesel-native r2d2 pool and Diesel
-    //! migrations are layered on in a later phase (TASKS T4.5). The webview API is identical.
+    //! Entry point for the `better-duck-diesel` backend: a Diesel-native r2d2 pool of
+    //! `DuckDbConnection`s with `embed_migrations!` migrations. Dynamic SQL runs on the
+    //! pooled connection's underlying core connection, so the webview API is identical to
+    //! the core backend.
+    use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::sync::Arc;
+    use std::time::Duration;
 
+    use diesel_migrations::EmbeddedMigrations;
     use tauri::plugin::TauriPlugin;
     use tauri::Runtime;
 
+    use crate::backend::{ConnectHook, DieselEngine, DieselEngineConfig};
     use crate::checkpoint::CheckpointConfig;
+    use crate::error::Result;
+    use crate::policy::Policy;
+    use crate::Connection;
 
-    /// Initialize the plugin on the `better-duck-diesel` backend.
+    /// Builder for the Diesel-backed plugin: register per-connection Diesel embedded
+    /// migrations, the security policy, connection setup hooks, and checkpoint strategies.
+    #[derive(Default)]
+    pub struct Builder {
+        migrations: HashMap<String, EmbeddedMigrations>,
+        policy: Policy,
+        on_connect: Vec<ConnectHook>,
+        checkpoint: CheckpointConfig,
+    }
+
+    impl Builder {
+        /// Creates an empty builder.
+        pub fn new() -> Builder {
+            Builder::default()
+        }
+
+        /// Registers Diesel embedded migrations (from `embed_migrations!`) to run on
+        /// `load` for the given connection string.
+        #[must_use]
+        pub fn add_migrations(
+            mut self,
+            conn_str: impl Into<String>,
+            migrations: EmbeddedMigrations,
+        ) -> Builder {
+            self.migrations.insert(conn_str.into(), migrations);
+            self
+        }
+
+        // PLACEHOLDER_DIESEL_BUILDER
+
+        /// Opens databases read-only and rejects write operations.
+        #[must_use]
+        pub fn read_only(
+            mut self,
+            enabled: bool,
+        ) -> Builder {
+            self.policy.read_only = enabled;
+            self
+        }
+
+        /// Restricts `load` to this connection string (repeatable).
+        #[must_use]
+        pub fn allow_connection(
+            mut self,
+            conn_str: impl Into<String>,
+        ) -> Builder {
+            self.policy.allowed_connections.get_or_insert_with(Vec::new).push(conn_str.into());
+            self
+        }
+
+        /// Restricts import/export to files within this directory (repeatable).
+        #[must_use]
+        pub fn allow_path(
+            mut self,
+            dir: impl Into<PathBuf>,
+        ) -> Builder {
+            self.policy.allowed_paths.get_or_insert_with(Vec::new).push(dir.into());
+            self
+        }
+
+        /// Rejects risky statements (ATTACH/INSTALL/LOAD/PRAGMA/COPY/…) in `select`/`execute`.
+        #[must_use]
+        pub fn deny_risky_statements(
+            mut self,
+            enabled: bool,
+        ) -> Builder {
+            self.policy.deny_risky_statements = enabled;
+            self
+        }
+
+        /// Allows loading network-backed extensions (`httpfs`/`aws`/`azure`). Off by default.
+        #[must_use]
+        pub fn allow_network(
+            mut self,
+            enabled: bool,
+        ) -> Builder {
+            self.policy.allow_network = enabled;
+            self
+        }
+
+        /// Registers a hook run on every opened connection (UDFs / `LOAD` extensions).
+        #[must_use]
+        pub fn on_connect(
+            mut self,
+            hook: impl Fn(&mut Connection) -> Result<()> + Send + Sync + 'static,
+        ) -> Builder {
+            self.on_connect.push(Arc::new(hook));
+            self
+        }
+
+        // PLACEHOLDER_DIESEL_CHECKPOINT
+
+        /// `Automatic` checkpoint strategy: sets DuckDB's `checkpoint_threshold` (e.g. "64MB").
+        #[must_use]
+        pub fn checkpoint_threshold(
+            mut self,
+            threshold: impl Into<String>,
+        ) -> Builder {
+            self.checkpoint.threshold = Some(threshold.into());
+            self
+        }
+
+        /// `AfterWrites` checkpoint strategy: checkpoint after every `n` write operations.
+        #[must_use]
+        pub fn checkpoint_after_writes(
+            mut self,
+            n: u64,
+        ) -> Builder {
+            self.checkpoint.after_writes = Some(n);
+            self
+        }
+
+        /// `Interval` checkpoint strategy: a background thread sweeps all connections.
+        #[must_use]
+        pub fn checkpoint_interval(
+            mut self,
+            period: Duration,
+        ) -> Builder {
+            self.checkpoint.interval = Some(period);
+            self
+        }
+
+        /// `OnAppLifecycle` checkpoint strategy: checkpoint all connections on app exit.
+        #[must_use]
+        pub fn checkpoint_on_exit(
+            mut self,
+            enabled: bool,
+        ) -> Builder {
+            self.checkpoint.on_exit = enabled;
+            self
+        }
+
+        /// Use `FORCE CHECKPOINT` (waits for the lock) for background / after-write sweeps.
+        #[must_use]
+        pub fn checkpoint_force(
+            mut self,
+            enabled: bool,
+        ) -> Builder {
+            self.checkpoint.force = enabled;
+            self
+        }
+
+        /// Applies the per-platform default checkpoint strategy set (mobile → OnAppLifecycle).
+        #[must_use]
+        pub fn checkpoint_platform_defaults(mut self) -> Builder {
+            self.checkpoint.merge_defaults(CheckpointConfig::platform_default());
+            self
+        }
+
+        /// Builds the plugin.
+        pub fn build<R: Runtime>(self) -> TauriPlugin<R> {
+            let checkpoint = self.checkpoint.clone();
+            let engine = DieselEngine::with_config(DieselEngineConfig {
+                migrations: self.migrations,
+                policy: self.policy,
+                on_connect: self.on_connect,
+                checkpoint: self.checkpoint,
+            });
+            super::build_plugin(Arc::new(engine), checkpoint)
+        }
+
+
+    }
+
+    /// Initialize the plugin on the `better-duck-diesel` backend with defaults.
     pub fn init<R: Runtime>() -> TauriPlugin<R> {
-        super::build_plugin(
-            Arc::new(crate::backend::DuckEngine::new()),
-            CheckpointConfig::default(),
-        )
+        Builder::new().build()
     }
 }

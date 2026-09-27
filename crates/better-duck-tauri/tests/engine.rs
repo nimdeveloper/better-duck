@@ -431,3 +431,25 @@ fn interrupted_migration_recovers_from_backup() {
     assert!(!dir.path().join("app.duckdb.bak").exists());
     assert!(!dir.path().join("app.duckdb.migrate-journal").exists());
 }
+
+/// The Diesel-native backend (r2d2 pool of `DuckDbConnection`s) runs the same
+/// load/execute/select surface through the pooled connection's core handle.
+#[cfg(feature = "backend-diesel")]
+#[test]
+fn diesel_backend_roundtrip() {
+    use better_duck_tauri::backend::DieselEngine;
+
+    let engine = DieselEngine::new();
+    engine.load(MEM).unwrap();
+
+    engine.execute(MEM, "CREATE TABLE t (id INTEGER, name VARCHAR)", vec![]).unwrap();
+    engine.execute(MEM, "INSERT INTO t VALUES ($1, $2)", vec![json!(1), json!("duck")]).unwrap();
+
+    let rows = engine.select(MEM, "SELECT id, name FROM t ORDER BY id", vec![]).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["id"], json!(1));
+    assert_eq!(rows[0]["name"], json!("duck"));
+
+    assert!(engine.close(MEM).unwrap(), "close should report the connection existed");
+    assert!(engine.select(MEM, "SELECT 1", vec![]).is_err(), "closed connection is unknown");
+}

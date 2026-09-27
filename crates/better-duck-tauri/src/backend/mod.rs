@@ -12,6 +12,10 @@ use crate::error::Result;
 mod engine;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 pub use engine::{ConnectHook, DuckEngine, EngineConfig};
+#[cfg(feature = "backend-diesel")]
+mod diesel_engine;
+#[cfg(feature = "backend-diesel")]
+pub use diesel_engine::{DieselEngine, DieselEngineConfig};
 
 /// One result row as a JSON object (column name → JSON value).
 pub type Row = Map<String, Value>;

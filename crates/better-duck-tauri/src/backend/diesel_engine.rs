@@ -1,81 +1,88 @@
-//! `DuckEngine`: the connection registry + query execution built on `better-duck-core`.
+//! `DieselEngine`: the Diesel-native backend (feature `backend-diesel`).
 //!
-//! Both `core::init()` and (for now) `diesel::init()` construct this. The Diesel-native
-//! path (shared `DuckDbConnection` r2d2 pool + Diesel migrations) is layered on in a later
-//! phase (see TASKS T4.5); the webview API is identical meanwhile.
+//! Unlike [`DuckEngine`](super::engine::DuckEngine), which opens a short-lived core
+//! `Connection` per operation from a shared `Database`, this engine keeps a Diesel r2d2
+//! pool of [`DuckDbConnection`]s per connection string and runs Diesel
+//! (`embed_migrations!`) migrations through the `MigrationHarness`. Dynamic-column SQL
+//! (the plugin forwards arbitrary statements + JSON params) is executed on the pooled
+//! connection's underlying core `Connection` via `inner_mut()`, reusing the same
+//! `DuckValue`⇄JSON materialization as the core engine — Diesel's compile-time
+//! `QueryableByName` can't express the plugin's dynamic result shape.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use better_duck_core::connection::Connection;
 use better_duck_core::database::Database;
 use better_duck_core::types::appendable::AppendAble;
+use better_duck_core::types::value::DuckValue;
 use better_duck_core::{AccessMode, Config, QueryControl};
+use better_duck_diesel::pool::SharedDuckDbConnectionManager;
+use diesel::backend::Backend;
+use diesel::migration::{Migration, MigrationSource};
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness};
+use r2d2::Pool;
 use serde_json::{Map, Value};
 
+use super::engine::{
+    collect_rows, quote_literal, run_with_params, stream_batches, validate_identifier, ConnectHook,
+};
 use super::{resolve_path, DataFormat, DuckBackend, ExecuteResult, Row};
 use crate::checkpoint::CheckpointConfig;
 use crate::error::{Error, Result};
-use crate::json::{duck_to_json, json_to_duck};
-use crate::migration::Migration;
+use crate::json::json_to_duck;
 use crate::policy::Policy;
 
-/// A per-connection setup hook, run on every opened connection — the place to register
-/// UDFs (`#[duckdb_*]` macros) or `LOAD` extensions so each connection carries them.
-pub type ConnectHook = Arc<dyn Fn(&mut Connection) -> Result<()> + Send + Sync>;
-
-/// Full engine configuration, assembled by `core::Builder`.
+/// Full configuration for the Diesel-native engine, assembled by `diesel::Builder`.
 #[derive(Default)]
-pub struct EngineConfig {
-    /// Per-connection migrations, run on `load`.
-    pub migrations: HashMap<String, Vec<Migration>>,
+pub struct DieselEngineConfig {
+    /// Per-connection Diesel embedded migrations, run on `load`.
+    pub migrations: HashMap<String, EmbeddedMigrations>,
     /// Security policy.
     pub policy: Policy,
-    /// Per-connection setup hooks.
+    /// Per-connection setup hooks (run on the underlying core connection).
     pub on_connect: Vec<ConnectHook>,
     /// Checkpoint strategy configuration.
     pub checkpoint: CheckpointConfig,
 }
 
-/// A registry of open DuckDB databases keyed by connection string.
-///
-/// `Database` is cheap to clone (an `Arc`) and `Send + Sync`; each operation opens a
-/// short-lived `Connection` from it, so the registry needs no per-connection locking
-/// beyond guarding the map itself.
+/// Borrows a stored [`EmbeddedMigrations`] as an owned [`MigrationSource`]: the Diesel
+/// harness takes its source by value, but `EmbeddedMigrations` is neither `Clone` nor
+/// `Copy`, so we pass a thin by-value wrapper around a (Copy) reference and delegate.
+struct MigrationsRef<'a>(&'a EmbeddedMigrations);
+
+impl<DB: Backend> MigrationSource<DB> for MigrationsRef<'_> {
+    fn migrations(&self) -> diesel::migration::Result<Vec<Box<dyn Migration<DB>>>> {
+        MigrationSource::<DB>::migrations(self.0)
+    }
+}
+
+
+// PLACEHOLDER_ENGINE
+
+/// A registry of Diesel r2d2 pools keyed by connection string.
 #[derive(Default)]
-pub struct DuckEngine {
-    dbs: Mutex<HashMap<String, Database>>,
-    /// Pending migrations per connection string, run on `load` (backend-core engine).
-    migrations: HashMap<String, Vec<Migration>>,
-    /// Security policy enforced on every operation.
+pub struct DieselEngine {
+    pools: Mutex<HashMap<String, Pool<SharedDuckDbConnectionManager>>>,
+    migrations: HashMap<String, EmbeddedMigrations>,
     policy: Policy,
-    /// Hooks run on every opened connection (e.g. UDF registration).
     on_connect: Vec<ConnectHook>,
-    /// Checkpoint strategy configuration.
     checkpoint_config: CheckpointConfig,
-    /// Count of write operations, for the `AfterWrites` strategy.
     write_count: AtomicU64,
-    /// Interrupt handles for in-flight streaming queries, keyed by connection string.
     active_queries: Mutex<HashMap<String, QueryControl>>,
 }
 
-impl DuckEngine {
+impl DieselEngine {
     /// Creates an empty engine with no migrations and a permissive policy.
-    pub fn new() -> DuckEngine {
-        DuckEngine::default()
+    pub fn new() -> DieselEngine {
+        DieselEngine::default()
     }
 
-    /// Creates an engine that runs the given per-connection migrations on `load`.
-    pub fn with_migrations(migrations: HashMap<String, Vec<Migration>>) -> DuckEngine {
-        DuckEngine { migrations, ..DuckEngine::default() }
-    }
-
-    /// Creates an engine from a full [`EngineConfig`].
-    pub fn with_config(config: EngineConfig) -> DuckEngine {
-        DuckEngine {
-            dbs: Mutex::new(HashMap::new()),
+    /// Creates an engine from a full [`DieselEngineConfig`].
+    pub fn with_config(config: DieselEngineConfig) -> DieselEngine {
+        DieselEngine {
+            pools: Mutex::new(HashMap::new()),
             migrations: config.migrations,
             policy: config.policy,
             on_connect: config.on_connect,
@@ -100,28 +107,29 @@ impl DuckEngine {
         }
     }
 
+    /// Runs `f` with the underlying core `Connection` of a pooled Diesel connection,
+    /// applying the per-connection setup hooks first (matching `DuckEngine`'s semantics).
     fn with_conn<T>(
         &self,
         conn_str: &str,
         f: impl FnOnce(&mut Connection) -> Result<T>,
     ) -> Result<T> {
-        // Clone the handle (cheap Arc bump) and release the registry lock before running
-        // `f`, so a long operation (e.g. a stream) doesn't block other connections.
-        let db = {
-            let dbs = self.dbs.lock().expect("duck registry poisoned");
-            dbs.get(conn_str)
+        let pool = {
+            let pools = self.pools.lock().expect("diesel pool registry poisoned");
+            pools
+                .get(conn_str)
                 .cloned()
                 .ok_or_else(|| Error::UnknownConnection(conn_str.to_owned()))?
         };
-        let mut conn = db.connect().map_err(|e| Error::Backend(e.to_string()))?;
+        let mut conn = pool.get().map_err(|e| Error::Backend(e.to_string()))?;
+        let core = conn.inner_mut();
         for hook in &self.on_connect {
-            hook(&mut conn)?;
+            hook(core)?;
         }
-        f(&mut conn)
+        f(core)
     }
 
-    /// Runs a read query and collects all rows as JSON. Does not apply the statement
-    /// policy — callers that forward raw webview SQL must check the policy first.
+    /// Runs a read query and collects all rows as JSON (no statement-policy check here).
     fn query(
         &self,
         conn_str: &str,
@@ -132,114 +140,51 @@ impl DuckEngine {
     }
 }
 
-/// Materializes a query result into JSON row objects.
-pub(crate) fn collect_rows(result: better_duck_core::DuckResult) -> Result<Vec<Row>> {
-    let rs = result.materialize().map_err(|e| Error::Backend(e.to_string()))?;
-    let names = rs.column_names();
-    let mut rows = Vec::with_capacity(rs.len());
-    for row in rs.rows() {
-        let mut obj = Map::new();
-        for (i, name) in names.iter().enumerate() {
-            obj.insert(name.to_string(), row.get_idx(i).map_or(Value::Null, duck_to_json));
-        }
-        rows.push(obj);
-    }
-    Ok(rows)
-}
+// PLACEHOLDER_IMPL
 
-/// Iterates a query result lazily, delivering JSON row batches of at most `chunk` rows.
-pub(crate) fn stream_batches(
-    result: better_duck_core::DuckResult,
-    names: &[String],
-    chunk: usize,
-    on_batch: &mut dyn FnMut(Vec<Row>) -> Result<()>,
-) -> Result<u64> {
-    let mut batch: Vec<Row> = Vec::with_capacity(chunk);
-    let mut total = 0u64;
-    for row in result {
-        let row = row.map_err(|e| Error::Backend(e.to_string()))?;
-        let mut obj = Map::new();
-        for (i, name) in names.iter().enumerate() {
-            obj.insert(name.clone(), row.get_idx(i).map_or(Value::Null, duck_to_json));
-        }
-        batch.push(obj);
-        total += 1;
-        if batch.len() >= chunk {
-            on_batch(std::mem::take(&mut batch))?;
-        }
-    }
-    if !batch.is_empty() {
-        on_batch(batch)?;
-    }
-    Ok(total)
-}
-
-/// Binds JSON params as consecutive positional parameters and runs `f` with the result.
-pub(crate) fn run_with_params<T>(
-    conn: &mut Connection,
-    sql: &str,
-    params: &[Value],
-    f: impl FnOnce(better_duck_core::DuckResult) -> Result<T>,
-) -> Result<T> {
-    let mut duck: Vec<better_duck_core::types::value::DuckValue> =
-        params.iter().map(json_to_duck).collect();
-    let mut binds: Vec<&mut dyn AppendAble> =
-        duck.iter_mut().map(|v| v as &mut dyn AppendAble).collect();
-    let result = conn.execute_with(sql, &mut binds).map_err(|e| Error::Backend(e.to_string()))?;
-    f(result)
-}
-
-impl DuckBackend for DuckEngine {
+impl DuckBackend for DieselEngine {
     fn load(
         &self,
         conn_str: &str,
     ) -> Result<()> {
         self.policy.check_connection(conn_str)?;
         let path = resolve_path(conn_str);
-        let migrations = self.migrations.get(conn_str).filter(|m| !m.is_empty());
         let in_memory = path == ":memory:";
 
-        // For on-disk databases, run migrations through the crash-safe backup protocol
-        // BEFORE opening the long-lived handle, so it has exclusive file access. Skipped
-        // in read-only mode (migrations are writes) and for in-memory DBs (no file, and
-        // the data must live on the handle we actually register — handled below).
-        if let Some(migrations) = migrations {
-            if !in_memory && !self.policy.read_only {
-                crate::backup::migrate_with_backup(Path::new(&path), migrations)?;
-            }
-        }
-
-        let db = if in_memory {
-            Database::open_in_memory().map_err(|e| Error::Backend(e.to_string()))?
+        let manager = if in_memory {
+            SharedDuckDbConnectionManager::memory().map_err(|e| Error::Backend(e.to_string()))?
         } else if self.policy.read_only {
             let config = Config::default()
                 .access_mode(AccessMode::ReadOnly)
                 .map_err(|e| Error::Backend(e.to_string()))?;
-            Database::open_with_flags(&path, config).map_err(|e| Error::Backend(e.to_string()))?
+            let db = Database::open_with_flags(&path, config)
+                .map_err(|e| Error::Backend(e.to_string()))?;
+            SharedDuckDbConnectionManager::new(db)
         } else {
-            Database::open(&path).map_err(|e| Error::Backend(e.to_string()))?
+            SharedDuckDbConnectionManager::file(&path).map_err(|e| Error::Backend(e.to_string()))?
         };
+        let pool = Pool::builder().build(manager).map_err(|e| Error::Backend(e.to_string()))?;
 
-        // In-memory migrations must run on the registered handle (a separate open would
-        // discard them). No file to back up, so no crash-safe protocol applies.
-        if in_memory && !self.policy.read_only {
-            if let Some(migrations) = migrations {
-                let mut conn = db.connect().map_err(|e| Error::Backend(e.to_string()))?;
-                crate::migration::run_pending(&mut conn, migrations)?;
+        // Diesel embedded migrations via the harness (skipped read-only — migrations write).
+        // Note: unlike the core engine, the Diesel path does not (yet) wrap these in the
+        // crash-safe whole-batch backup protocol; each migration is its own transaction.
+        if !self.policy.read_only {
+            if let Some(embedded) = self.migrations.get(conn_str) {
+                let mut conn = pool.get().map_err(|e| Error::Backend(e.to_string()))?;
+                conn.run_pending_migrations(MigrationsRef(embedded))
+                    .map_err(|e| Error::Backend(e.to_string()))?;
             }
         }
 
         // `Automatic` checkpoint strategy: set DuckDB's WAL-size auto-checkpoint threshold.
         if let Some(threshold) = &self.checkpoint_config.threshold {
-            let mut conn = db.connect().map_err(|e| Error::Backend(e.to_string()))?;
-            conn.execute_batch(format!(
-                "SET checkpoint_threshold='{}'",
-                threshold.replace('\'', "''")
-            ))
-            .map_err(|e| Error::Backend(e.to_string()))?;
+            let mut conn = pool.get().map_err(|e| Error::Backend(e.to_string()))?;
+            conn.inner_mut()
+                .execute_batch(format!("SET checkpoint_threshold='{}'", threshold.replace('\'', "''")))
+                .map_err(|e| Error::Backend(e.to_string()))?;
         }
 
-        self.dbs.lock().expect("duck registry poisoned").insert(conn_str.to_owned(), db);
+        self.pools.lock().expect("diesel pool registry poisoned").insert(conn_str.to_owned(), pool);
         Ok(())
     }
 
@@ -247,8 +192,10 @@ impl DuckBackend for DuckEngine {
         &self,
         conn_str: &str,
     ) -> Result<bool> {
-        Ok(self.dbs.lock().expect("duck registry poisoned").remove(conn_str).is_some())
+        Ok(self.pools.lock().expect("diesel pool registry poisoned").remove(conn_str).is_some())
     }
+
+    // PLACEHOLDER_METHODS
 
     fn select(
         &self,
@@ -335,6 +282,8 @@ impl DuckBackend for DuckEngine {
         })
     }
 
+    // PLACEHOLDER_METHODS2
+
     fn append_rows(
         &self,
         conn_str: &str,
@@ -351,8 +300,7 @@ impl DuckBackend for DuckEngine {
             validate_identifier(column)?;
         }
 
-        let mut values: Vec<better_duck_core::types::value::DuckValue> =
-            Vec::with_capacity(rows.len() * columns.len());
+        let mut values: Vec<DuckValue> = Vec::with_capacity(rows.len() * columns.len());
         let mut tuples: Vec<String> = Vec::with_capacity(rows.len());
         let mut idx = 1usize;
         for row in &rows {
@@ -413,6 +361,8 @@ impl DuckBackend for DuckEngine {
         self.query(conn_str, &format!("EXPLAIN {sql}"), &[])
     }
 
+    // PLACEHOLDER_METHODS3
+
     fn select_stream(
         &self,
         conn_str: &str,
@@ -424,23 +374,19 @@ impl DuckBackend for DuckEngine {
         self.policy.check_statement(sql)?;
         let chunk = chunk_size.max(1);
         self.with_conn(conn_str, |conn| {
-            let mut duck: Vec<better_duck_core::types::value::DuckValue> =
-                params.iter().map(json_to_duck).collect();
+            let mut duck: Vec<DuckValue> = params.iter().map(json_to_duck).collect();
             let mut binds: Vec<&mut dyn AppendAble> =
                 duck.iter_mut().map(|v| v as &mut dyn AppendAble).collect();
             let result =
                 conn.execute_with(sql, &mut binds).map_err(|e| Error::Backend(e.to_string()))?;
             let names: Vec<String> =
                 result.column_names().iter().map(std::string::ToString::to_string).collect();
-
-            // Register an interrupt handle so `interrupt(conn_str)` can cancel this scan
-            // from another thread; always deregister when the stream ends.
             self.active_queries
                 .lock()
-                .expect("duck query registry poisoned")
+                .expect("diesel query registry poisoned")
                 .insert(conn_str.to_owned(), conn.query_control());
             let outcome = stream_batches(result, &names, chunk, on_batch);
-            self.active_queries.lock().expect("duck query registry poisoned").remove(conn_str);
+            self.active_queries.lock().expect("diesel query registry poisoned").remove(conn_str);
             outcome
         })
     }
@@ -451,7 +397,7 @@ impl DuckBackend for DuckEngine {
     ) -> bool {
         self.active_queries
             .lock()
-            .expect("duck query registry poisoned")
+            .expect("diesel query registry poisoned")
             .get(conn_str)
             .is_some_and(QueryControl::interrupt)
     }
@@ -472,12 +418,11 @@ impl DuckBackend for DuckEngine {
         force: bool,
     ) {
         let sql = if force { "FORCE CHECKPOINT" } else { "CHECKPOINT" };
-        // Snapshot the handles under the lock, then checkpoint outside it (best-effort).
-        let dbs: Vec<Database> =
-            self.dbs.lock().expect("duck registry poisoned").values().cloned().collect();
-        for db in dbs {
-            if let Ok(mut conn) = db.connect() {
-                let _ = conn.execute_batch(sql);
+        let pools: Vec<Pool<SharedDuckDbConnectionManager>> =
+            self.pools.lock().expect("diesel pool registry poisoned").values().cloned().collect();
+        for pool in pools {
+            if let Ok(mut conn) = pool.get() {
+                let _ = conn.inner_mut().execute_batch(sql);
             }
         }
     }
@@ -487,11 +432,25 @@ impl DuckBackend for DuckEngine {
         conn_str: &str,
     ) -> Result<Option<i64>> {
         self.policy.check_writable()?;
-        let migrations = self.migrations.get(conn_str).map_or(&[][..], Vec::as_slice);
-        let reverted =
-            self.with_conn(conn_str, |conn| crate::migration::revert_last(conn, migrations))?;
+        let Some(embedded) = self.migrations.get(conn_str) else {
+            return Ok(None);
+        };
+        // Revert on a pooled connection; map the Diesel version string to i64 best-effort
+        // (default Diesel migration versions are numeric timestamps). A missing last
+        // migration surfaces as an error from the harness.
+        let pool = {
+            let pools = self.pools.lock().expect("diesel pool registry poisoned");
+            pools
+                .get(conn_str)
+                .cloned()
+                .ok_or_else(|| Error::UnknownConnection(conn_str.to_owned()))?
+        };
+        let mut conn = pool.get().map_err(|e| Error::Backend(e.to_string()))?;
+        let version = conn
+            .revert_last_migration(MigrationsRef(embedded))
+            .map_err(|e| Error::Backend(e.to_string()))?;
         self.note_write(conn_str);
-        Ok(reverted)
+        Ok(version.to_string().parse::<i64>().ok())
     }
 
     #[cfg(feature = "arrow")]
@@ -503,8 +462,7 @@ impl DuckBackend for DuckEngine {
     ) -> Result<Vec<u8>> {
         self.policy.check_statement(sql)?;
         self.with_conn(conn_str, |conn| {
-            let mut duck: Vec<better_duck_core::types::value::DuckValue> =
-                params.iter().map(json_to_duck).collect();
+            let mut duck: Vec<DuckValue> = params.iter().map(json_to_duck).collect();
             let mut binds: Vec<&mut dyn AppendAble> =
                 duck.iter_mut().map(|v| v as &mut dyn AppendAble).collect();
             let result =
@@ -514,17 +472,4 @@ impl DuckBackend for DuckEngine {
     }
 }
 
-/// Quotes a value as a SQL single-quoted string literal (doubling embedded quotes).
-pub(crate) fn quote_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
 
-/// Validates that `name` is a safe bare SQL identifier (ASCII alnum + `_`). This is a
-/// baseline guard until the P2 scope model enforces table/path allow-lists.
-pub(crate) fn validate_identifier(name: &str) -> Result<()> {
-    if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        Ok(())
-    } else {
-        Err(Error::Backend(format!("invalid table identifier: {name:?}")))
-    }
-}
