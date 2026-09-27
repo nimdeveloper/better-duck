@@ -190,3 +190,15 @@ pub(crate) async fn checkpoint(
         .await
         .map_err(join_err)?
 }
+
+/// Cancel the in-flight streaming query on a connection. Returns whether one was signalled.
+#[tauri::command]
+pub(crate) async fn interrupt(
+    state: State<'_, DuckState>,
+    db: String,
+) -> Result<bool> {
+    let backend = state.backend();
+    tauri::async_runtime::spawn_blocking(move || -> Result<bool> { Ok(backend.interrupt(&db)) })
+        .await
+        .map_err(join_err)?
+}

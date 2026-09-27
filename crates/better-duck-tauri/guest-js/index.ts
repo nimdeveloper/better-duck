@@ -134,4 +134,9 @@ export default class Database {
   async checkpoint(force = false): Promise<void> {
     return await invoke('plugin:duck|checkpoint', { db: this.path, force })
   }
+
+  /** Cancel the in-flight streaming query on this connection; resolves to whether one was signalled. */
+  async interrupt(): Promise<boolean> {
+    return await invoke('plugin:duck|interrupt', { db: this.path })
+  }
 }

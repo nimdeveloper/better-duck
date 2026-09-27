@@ -239,6 +239,27 @@ fn network_extension_blocked_by_default() {
     assert!(engine.load_extension(MEM, "httpfs").is_err());
 }
 
+#[test]
+fn interrupt_tracks_active_stream_lifecycle() {
+    let engine = DuckEngine::new();
+    engine.load(MEM).unwrap();
+    // Nothing streaming yet.
+    assert!(!engine.interrupt(MEM));
+
+    engine.execute(MEM, "CREATE TABLE t (id INTEGER)", vec![]).unwrap();
+    engine.execute(MEM, "INSERT INTO t VALUES (1), (2)", vec![]).unwrap();
+    let mut n = 0u64;
+    engine
+        .select_stream(MEM, "SELECT id FROM t", vec![], 10, &mut |b| {
+            n += b.len() as u64;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(n, 2);
+    // The interrupt handle is deregistered once the stream finishes.
+    assert!(!engine.interrupt(MEM));
+}
+
 fn up(version: i64, sql: &str) -> Migration {
     Migration { version, description: format!("m{version}"), sql: sql.to_owned(), kind: MigrationKind::Up }
 }

@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use better_duck_core::connection::Connection;
 use better_duck_core::database::Database;
 use better_duck_core::types::appendable::AppendAble;
-use better_duck_core::{AccessMode, Config};
+use better_duck_core::{AccessMode, Config, QueryControl};
 use serde_json::{Map, Value};
 
 use super::{resolve_path, DataFormat, DuckBackend, ExecuteResult, Row};
@@ -57,6 +57,8 @@ pub struct DuckEngine {
     checkpoint_config: CheckpointConfig,
     /// Count of write operations, for the `AfterWrites` strategy.
     write_count: AtomicU64,
+    /// Interrupt handles for in-flight streaming queries, keyed by connection string.
+    active_queries: Mutex<HashMap<String, QueryControl>>,
 }
 
 impl DuckEngine {
@@ -79,6 +81,7 @@ impl DuckEngine {
             on_connect: config.on_connect,
             checkpoint_config: config.checkpoint,
             write_count: AtomicU64::new(0),
+            active_queries: Mutex::new(HashMap::new()),
         }
     }
 
@@ -102,8 +105,12 @@ impl DuckEngine {
         conn_str: &str,
         f: impl FnOnce(&mut Connection) -> Result<T>,
     ) -> Result<T> {
-        let dbs = self.dbs.lock().expect("duck registry poisoned");
-        let db = dbs.get(conn_str).ok_or_else(|| Error::UnknownConnection(conn_str.to_owned()))?;
+        // Clone the handle (cheap Arc bump) and release the registry lock before running
+        // `f`, so a long operation (e.g. a stream) doesn't block other connections.
+        let db = {
+            let dbs = self.dbs.lock().expect("duck registry poisoned");
+            dbs.get(conn_str).cloned().ok_or_else(|| Error::UnknownConnection(conn_str.to_owned()))?
+        };
         let mut conn = db.connect().map_err(|e| Error::Backend(e.to_string()))?;
         for hook in &self.on_connect {
             hook(&mut conn)?;
@@ -136,6 +143,33 @@ fn collect_rows(result: better_duck_core::DuckResult) -> Result<Vec<Row>> {
         rows.push(obj);
     }
     Ok(rows)
+}
+
+/// Iterates a query result lazily, delivering JSON row batches of at most `chunk` rows.
+fn stream_batches(
+    result: better_duck_core::DuckResult,
+    names: &[String],
+    chunk: usize,
+    on_batch: &mut dyn FnMut(Vec<Row>) -> Result<()>,
+) -> Result<u64> {
+    let mut batch: Vec<Row> = Vec::with_capacity(chunk);
+    let mut total = 0u64;
+    for row in result {
+        let row = row.map_err(|e| Error::Backend(e.to_string()))?;
+        let mut obj = Map::new();
+        for (i, name) in names.iter().enumerate() {
+            obj.insert(name.clone(), row.get_idx(i).map_or(Value::Null, duck_to_json));
+        }
+        batch.push(obj);
+        total += 1;
+        if batch.len() >= chunk {
+            on_batch(std::mem::take(&mut batch))?;
+        }
+    }
+    if !batch.is_empty() {
+        on_batch(batch)?;
+    }
+    Ok(total)
 }
 
 /// Binds JSON params as consecutive positional parameters and runs `f` with the result.
@@ -394,25 +428,27 @@ impl DuckBackend for DuckEngine {
             let names: Vec<String> =
                 result.column_names().iter().map(std::string::ToString::to_string).collect();
 
-            let mut batch: Vec<Row> = Vec::with_capacity(chunk);
-            let mut total = 0u64;
-            for row in result {
-                let row = row.map_err(|e| Error::Backend(e.to_string()))?;
-                let mut obj = Map::new();
-                for (i, name) in names.iter().enumerate() {
-                    obj.insert(name.clone(), row.get_idx(i).map_or(Value::Null, duck_to_json));
-                }
-                batch.push(obj);
-                total += 1;
-                if batch.len() >= chunk {
-                    on_batch(std::mem::take(&mut batch))?;
-                }
-            }
-            if !batch.is_empty() {
-                on_batch(batch)?;
-            }
-            Ok(total)
+            // Register an interrupt handle so `interrupt(conn_str)` can cancel this scan
+            // from another thread; always deregister when the stream ends.
+            self.active_queries
+                .lock()
+                .expect("duck query registry poisoned")
+                .insert(conn_str.to_owned(), conn.query_control());
+            let outcome = stream_batches(result, &names, chunk, on_batch);
+            self.active_queries.lock().expect("duck query registry poisoned").remove(conn_str);
+            outcome
         })
+    }
+
+    fn interrupt(
+        &self,
+        conn_str: &str,
+    ) -> bool {
+        self.active_queries
+            .lock()
+            .expect("duck query registry poisoned")
+            .get(conn_str)
+            .is_some_and(QueryControl::interrupt)
     }
 
     fn checkpoint(

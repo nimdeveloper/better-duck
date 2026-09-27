@@ -145,6 +145,13 @@ pub trait DuckBackend: Send + Sync + 'static {
         &self,
         force: bool,
     );
+
+    /// Cancel the in-flight streaming query on `conn_str`, if any. Returns whether an
+    /// interrupt was actually signalled.
+    fn interrupt(
+        &self,
+        conn_str: &str,
+    ) -> bool;
 }
 
 /// Normalize a connection string to a DuckDB path: strips a leading `duckdb:` and

@@ -391,6 +391,18 @@
           "markdownDescription": "Denies the import command without any pre-configured scope."
         },
         {
+          "description": "Enables the interrupt command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-interrupt",
+          "markdownDescription": "Enables the interrupt command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the interrupt command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-interrupt",
+          "markdownDescription": "Denies the interrupt command without any pre-configured scope."
+        },
+        {
           "description": "Enables the load command without any pre-configured scope.",
           "type": "string",
           "const": "allow-load",

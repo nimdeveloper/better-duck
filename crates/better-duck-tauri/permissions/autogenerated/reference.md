@@ -230,6 +230,32 @@ Denies the import command without any pre-configured scope.
 <tr>
 <td>
 
+`better-duck-tauri:allow-interrupt`
+
+</td>
+<td>
+
+Enables the interrupt command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:deny-interrupt`
+
+</td>
+<td>
+
+Denies the interrupt command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `better-duck-tauri:allow-load`
 
 </td>
