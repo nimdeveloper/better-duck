@@ -68,7 +68,7 @@ fn build_plugin<R: Runtime>(
     let on_exit = checkpoint.on_exit;
     let force = checkpoint.force;
     let exit_backend = backend.clone();
-    Builder::new("duck")
+    Builder::new("better-duck-tauri")
         .invoke_handler(tauri::generate_handler![
             commands::load,
             commands::close,

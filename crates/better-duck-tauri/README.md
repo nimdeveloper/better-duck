@@ -37,11 +37,11 @@ tauri::Builder::default()
     .run(tauri::generate_context!())?;
 ```
 
-Grant permissions in a capability file (`src-tauri/capabilities/*.json`). `duck:default` allows
-`load`/`close`/read-only `select`; writes and raw SQL are opt-in:
+Grant permissions in a capability file (`src-tauri/capabilities/*.json`). `better-duck-tauri:default`
+allows `load`/`close`/read-only `select`; writes and raw SQL are opt-in:
 
 ```json
-{ "permissions": ["duck:default", "duck:allow-execute", "duck:allow-raw-sql"] }
+{ "permissions": ["better-duck-tauri:default", "better-duck-tauri:allow-execute", "better-duck-tauri:allow-raw-sql"] }
 ```
 
 ## Frontend API
@@ -102,7 +102,7 @@ The webview is untrusted and DuckDB SQL can reach the filesystem/network, so loc
 - `allow_connection(...)` / `allow_path(...)` — allow-lists for `load` and import/export paths.
 - `deny_risky_statements(true)` — reject `ATTACH`/`INSTALL`/`LOAD`/`PRAGMA`/`COPY`/… in `select`/`execute`.
 - `allow_network(true)` — required to load network extensions (`httpfs`/`aws`/`azure`); off by default.
-- Raw `select`/`execute` are gated behind the `duck:allow-raw-sql` capability.
+- Raw `select`/`execute` are gated behind the `better-duck-tauri:allow-raw-sql` capability.
 
 ## Checkpoint strategies
 

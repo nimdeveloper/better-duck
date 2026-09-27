@@ -28,13 +28,13 @@ export default class Database {
 
   /** Open (and register) a database connection. */
   static async load(path: string): Promise<Database> {
-    await invoke('plugin:duck|load', { db: path })
+    await invoke('plugin:better-duck-tauri|load', { db: path })
     return new Database(path)
   }
 
   /** Close this connection. Resolves to whether one was open. */
   async close(): Promise<boolean> {
-    return await invoke('plugin:duck|close', { db: this.path })
+    return await invoke('plugin:better-duck-tauri|close', { db: this.path })
   }
 
   /** Run a read query, returning rows as objects. */
@@ -42,22 +42,22 @@ export default class Database {
     query: string,
     values: unknown[] = [],
   ): Promise<T[]> {
-    return await invoke('plugin:duck|select', { db: this.path, query, values })
+    return await invoke('plugin:better-duck-tauri|select', { db: this.path, query, values })
   }
 
   /** Run a write/DDL statement. */
   async execute(query: string, values: unknown[] = []): Promise<ExecuteResult> {
-    return await invoke('plugin:duck|execute', { db: this.path, query, values })
+    return await invoke('plugin:better-duck-tauri|execute', { db: this.path, query, values })
   }
 
   /** Load (installing if needed) a DuckDB extension, e.g. `spatial`, `json`, `vss`. */
   async loadExtension(name: string): Promise<void> {
-    return await invoke('plugin:duck|load_extension', { db: this.path, name })
+    return await invoke('plugin:better-duck-tauri|load_extension', { db: this.path, name })
   }
 
   /** Create `table` from a data file (path or glob). */
   async import(table: string, source: string, format: DataFormat): Promise<ExecuteResult> {
-    return await invoke('plugin:duck|import', { db: this.path, table, source, format })
+    return await invoke('plugin:better-duck-tauri|import', { db: this.path, table, source, format })
   }
 
   /** Create `table` from Parquet file(s). */
@@ -77,7 +77,7 @@ export default class Database {
 
   /** Export a query's result to a data file. */
   async export(query: string, path: string, format: DataFormat): Promise<ExecuteResult> {
-    return await invoke('plugin:duck|export', { db: this.path, query, path, format })
+    return await invoke('plugin:better-duck-tauri|export', { db: this.path, query, path, format })
   }
 
   /** Export a query's result to a Parquet file. */
@@ -92,22 +92,22 @@ export default class Database {
 
   /** Bulk-insert rows (objects keyed by column name) into a table. */
   async appendRows(table: string, rows: Record<string, unknown>[]): Promise<ExecuteResult> {
-    return await invoke('plugin:duck|append_rows', { db: this.path, table, rows })
+    return await invoke('plugin:better-duck-tauri|append_rows', { db: this.path, table, rows })
   }
 
   /** List the tables in the `main` schema. */
   async tables<T = Record<string, unknown>>(): Promise<T[]> {
-    return await invoke('plugin:duck|tables', { db: this.path })
+    return await invoke('plugin:better-duck-tauri|tables', { db: this.path })
   }
 
   /** List a table's columns (name, type, nullability). */
   async columns<T = Record<string, unknown>>(table: string): Promise<T[]> {
-    return await invoke('plugin:duck|columns', { db: this.path, table })
+    return await invoke('plugin:better-duck-tauri|columns', { db: this.path, table })
   }
 
   /** Return the query plan for a statement. */
   async explain<T = Record<string, unknown>>(query: string): Promise<T[]> {
-    return await invoke('plugin:duck|explain', { db: this.path, query })
+    return await invoke('plugin:better-duck-tauri|explain', { db: this.path, query })
   }
 
   /**
@@ -121,7 +121,7 @@ export default class Database {
   ): Promise<number> {
     const channel = new Channel<T[]>()
     channel.onmessage = onBatch
-    return await invoke('plugin:duck|stream', {
+    return await invoke('plugin:better-duck-tauri|stream', {
       db: this.path,
       query,
       values,
@@ -132,17 +132,17 @@ export default class Database {
 
   /** Flush the WAL into the main database file (FORCE CHECKPOINT when `force`). */
   async checkpoint(force = false): Promise<void> {
-    return await invoke('plugin:duck|checkpoint', { db: this.path, force })
+    return await invoke('plugin:better-duck-tauri|checkpoint', { db: this.path, force })
   }
 
   /** Cancel the in-flight streaming query on this connection; resolves to whether one was signalled. */
   async interrupt(): Promise<boolean> {
-    return await invoke('plugin:duck|interrupt', { db: this.path })
+    return await invoke('plugin:better-duck-tauri|interrupt', { db: this.path })
   }
 
   /** Revert the most recently applied migration; resolves to the reverted version, if any. */
   async revert(): Promise<number | null> {
-    return await invoke('plugin:duck|revert', { db: this.path })
+    return await invoke('plugin:better-duck-tauri|revert', { db: this.path })
   }
 
   /**
@@ -150,6 +150,6 @@ export default class Database {
    * plugin's `arrow` Cargo feature). Decode with `apache-arrow`'s `tableFromIPC`.
    */
   async queryArrow(query: string, values: unknown[] = []): Promise<ArrayBuffer> {
-    return await invoke('plugin:duck|query_arrow', { db: this.path, query, values })
+    return await invoke('plugin:better-duck-tauri|query_arrow', { db: this.path, query, values })
   }
 }
