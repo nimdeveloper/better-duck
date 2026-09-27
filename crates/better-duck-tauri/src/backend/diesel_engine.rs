@@ -83,7 +83,6 @@ fn diesel_run(
     Ok(())
 }
 
-
 // PLACEHOLDER_ENGINE
 
 /// A registry of Diesel r2d2 pools keyed by connection string.
@@ -205,8 +204,9 @@ impl DuckBackend for DieselEngine {
         let hooks = self.on_connect.clone();
         let manager = manager.on_connect(move |c: &mut DuckDbConnection| {
             for hook in &hooks {
-                hook(c.inner_mut())
-                    .map_err(|e| better_duck_core::error::Error::ToSqlConversionFailure(Box::new(e)))?;
+                hook(c.inner_mut()).map_err(|e| {
+                    better_duck_core::error::Error::ToSqlConversionFailure(Box::new(e))
+                })?;
             }
             Ok(())
         });
@@ -226,7 +226,10 @@ impl DuckBackend for DieselEngine {
         if let Some(threshold) = &self.checkpoint_config.threshold {
             let mut conn = pool.get().map_err(|e| Error::Backend(e.to_string()))?;
             conn.inner_mut()
-                .execute_batch(format!("SET checkpoint_threshold='{}'", threshold.replace('\'', "''")))
+                .execute_batch(format!(
+                    "SET checkpoint_threshold='{}'",
+                    threshold.replace('\'', "''")
+                ))
                 .map_err(|e| Error::Backend(e.to_string()))?;
         }
 
@@ -518,5 +521,3 @@ impl DuckBackend for DieselEngine {
         })
     }
 }
-
-

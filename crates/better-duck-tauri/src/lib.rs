@@ -31,12 +31,12 @@ mod backup;
 mod checkpoint;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod json;
-/// Capability-file scope entry schema (see [`scope::Entry`]).
-pub mod scope;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod migration;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod policy;
+/// Capability-file scope entry schema (see [`scope::Entry`]).
+pub mod scope;
 
 use std::sync::Arc;
 
@@ -475,8 +475,6 @@ pub mod diesel {
             });
             super::build_plugin(Arc::new(engine), checkpoint)
         }
-
-
     }
 
     /// Initialize the plugin on the `better-duck-diesel` backend with defaults.

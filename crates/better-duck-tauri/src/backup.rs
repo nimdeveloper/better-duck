@@ -33,11 +33,7 @@ pub(crate) fn migrate_with_backup(
     db_path: &Path,
     migrations: &[Migration],
 ) -> Result<()> {
-    with_backup(
-        db_path,
-        || compute_pending(db_path, migrations),
-        || run(db_path, migrations),
-    )
+    with_backup(db_path, || compute_pending(db_path, migrations), || run(db_path, migrations))
 }
 
 /// The crash-safe backup skeleton, generic over the migration runner.
