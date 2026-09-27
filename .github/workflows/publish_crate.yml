@@ -38,9 +38,57 @@ jobs:
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-  # Create .crate artifact and calculate its digest for SLSA
-  create_crate_artifact:
+  # Publish first. `better-duck-core`/`-diesel` depend on the internal
+  # `better-duck-sys` by the release version, so nothing downstream can even be
+  # *packaged* until sys is on the crates.io index. That rules out a pre-publish
+  # digest of core — so we publish in topological order here, then digest the
+  # (now resolvable) core crate for SLSA in create_crate_artifact below. The
+  # `verify` job runs the full CI suite before this, gating the release.
+  publish:
+    runs-on: ubuntu-latest
     needs: verify
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Confirm clean working tree
+        run: git diff --exit-code
+
+      - name: Publish crates to crates.io
+        env:
+          # cargo reads the registry token from CARGO_REGISTRY_TOKEN, so we avoid
+          # the deprecated `cargo login <token>` step and `cargo publish --token`.
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          # Explicit topological order: better-duck-core depends on both
+          # better-duck-sys and better-duck-macros, and better-duck-diesel
+          # depends on better-duck-core. `cargo metadata` returns packages
+          # alphabetically (core, diesel, macros, sys), which is the wrong
+          # order — publishing core first would fail because crates.io rejects a
+          # manifest whose dependency isn't in the index yet, and --no-verify
+          # does not skip that check (it only skips the local build).
+          CRATES_TO_PUBLISH: "better-duck-sys better-duck-macros better-duck-core better-duck-diesel"
+        run: |
+          for CRATE in $CRATES_TO_PUBLISH; do
+            echo "Publishing $CRATE..."
+            cargo publish -p "$CRATE" --no-verify
+            echo "$CRATE published."
+            # Index propagation routinely exceeds a few seconds; the next crate
+            # in the loop may depend on this one and needs it resolvable.
+            sleep 30
+          done
+        shell: bash
+
+  # Package the published core crate and calculate its digest for SLSA. Runs
+  # after publish so its better-duck-sys/-macros dependencies resolve from the
+  # index (see the note on the publish job).
+  create_crate_artifact:
+    needs: publish
     runs-on: ubuntu-latest
     # Pure build/inspection job: narrow back down from the broad top-level ceiling.
     permissions:
@@ -62,24 +110,25 @@ jobs:
       - name: Get crate name and version
         id: get_crate_info
         run: |
-          CRATES=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name')
-          # Use the first workspace member as the primary crate name for SLSA
-          CRATE_NAME=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].name')
-          CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          # SLSA subject is the primary published crate, better-duck-core.
+          CRATE_NAME=better-duck-core
+          CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name=="better-duck-core") | .version')
           echo "crate_name=$CRATE_NAME" >> $GITHUB_OUTPUT
           echo "crate_version=$CRATE_VERSION" >> $GITHUB_OUTPUT
         shell: bash
 
-      - name: Package crate (dry run for digest)
-        run: cargo package --no-verify
+      - name: Package crate (for digest)
+        # sys/macros are on the index now (published above), so core resolves.
+        run: cargo package -p better-duck-core --no-verify
         working-directory: .
 
       - name: Calculate crate digest
         id: calculate_digest
         run: |
-          CRATE_FILE=$(find target/package -name "*.crate" | head -n 1)
+          CRATE_FILE=$(find target/package -name "better-duck-core-*.crate" | head -n 1)
           if [ -z "$CRATE_FILE" ]; then
-            echo "Error: .crate file not found in target/package/."
+            echo "Error: better-duck-core .crate file not found in target/package/."
             exit 1
           fi
           DIGEST=$(sha256sum "$CRATE_FILE" | awk '{print $1}')
@@ -88,51 +137,91 @@ jobs:
           echo "Digest: sha256:$DIGEST"
         shell: bash
 
-  # Publish
-  publish:
+  # Create a GitHub Release for the tag, with the CHANGELOG section for this
+  # version as the body. An optional AI step polishes a short summary on top;
+  # it is best-effort (continue-on-error) and gated on ANTHROPIC_API_KEY, so the
+  # release always publishes with the raw changelog even if the AI call fails or
+  # no key is configured.
+  github_release:
+    needs: publish
     runs-on: ubuntu-latest
-    needs: create_crate_artifact
     permissions:
-      id-token: write
-      contents: read
+      contents: write
+    # Job-level so the AI step's `if:` can read it (a step's own env isn't in
+    # scope for its own `if` condition).
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Login to crates.io
-        run: cargo login ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Confirm clean working tree
-        run: git diff --exit-code
-
-      - name: Publish crates to crates.io
-        env:
-          # Explicit topological order: better-duck-core depends on both
-          # better-duck-sys and better-duck-macros, and better-duck-diesel
-          # depends on better-duck-core. `cargo metadata` returns packages
-          # alphabetically (core, diesel, macros, sys), which is the wrong
-          # order — publishing core first would fail because crates.io
-          # rejects a manifest whose dependency isn't in the index yet, and
-          # --no-verify does not skip that check (it only skips the local
-          # build).
-          CRATES_TO_PUBLISH: "better-duck-sys better-duck-macros better-duck-core better-duck-diesel"
+      - name: Extract changelog section
+        id: changelog
         run: |
-          for CRATE in $CRATES_TO_PUBLISH; do
-            echo "Publishing $CRATE..."
-            cargo publish -p "$CRATE" --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --no-verify
-            echo "$CRATE published."
-            # Index propagation routinely exceeds a few seconds; the next crate
-            # in the loop may depend on this one and needs it resolvable.
-            sleep 30
-          done
-        shell: bash
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Print the lines between "## [<version>]" and the next "## [" heading.
+          awk -v ver="$VERSION" '
+            index($0, "## [" ver "]") == 1 { flag = 1; next }
+            /^## \[/ { if (flag) exit }
+            flag { print }
+          ' CHANGELOG.md > release_notes.md
+          # Trim leading/trailing blank lines; fall back if the section is empty.
+          sed -i -e '/./,$!d' release_notes.md
+          if [ ! -s release_notes.md ]; then
+            printf 'Release %s.\n' "$VERSION" > release_notes.md
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Generate AI highlights (optional)
+        id: ai
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
+        continue-on-error: true
+        env:
+          RELEASE_NOTES_MODEL: claude-sonnet-5
+        run: |
+          set -euo pipefail
+          PROMPT=$(printf 'Write GitHub release notes intro for the Rust crate "better-duck" %s. From the changelog below, produce a concise, friendly 2-4 sentence highlights summary to prepend to the notes. Output only the prose, no headings.\n\n%s' \
+            "${{ steps.changelog.outputs.version }}" "$(cat release_notes.md)")
+          PAYLOAD=$(jq -n --arg model "$RELEASE_NOTES_MODEL" --arg prompt "$PROMPT" \
+            '{model: $model, max_tokens: 512, messages: [{role: "user", content: $prompt}]}')
+          TEXT=$(curl -sS --fail-with-body --max-time 60 https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "$PAYLOAD" | jq -r '.content[0].text // empty')
+          if [ -n "$TEXT" ]; then
+            printf '%s\n' "$TEXT" > ai_summary.md
+            echo "AI summary generated."
+          fi
+
+      - name: Assemble release notes
+        run: |
+          set -euo pipefail
+          if [ -f ai_summary.md ] && [ -s ai_summary.md ]; then
+            { cat ai_summary.md; printf '\n---\n\n'; cat release_notes.md; } > final_notes.md
+          else
+            cp release_notes.md final_notes.md
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PRERELEASE=""
+          case "$GITHUB_REF_NAME" in
+            *-alpha.*|*-beta.*|*-rc.*) PRERELEASE="--prerelease" ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file final_notes.md \
+            --verify-tag \
+            $PRERELEASE
 
   # SLSA provenance
   generate_slsa_provenance:
-    needs: [create_crate_artifact, publish]
+    needs: [create_crate_artifact, github_release]
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: "${{ needs.create_crate_artifact.outputs.crate_digest }}  ${{ needs.create_crate_artifact.outputs.crate_name }}-${{ needs.create_crate_artifact.outputs.crate_version }}.crate"

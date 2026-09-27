@@ -24,6 +24,11 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # CI runners are ephemeral, so incremental compilation only adds I/O and cache
+  # bloat with no reuse benefit — turning it off speeds every compile job.
+  CARGO_INCREMENTAL: "0"
+  # Fail fast on flaky registry/network instead of hanging.
+  CARGO_NET_RETRY: "10"
 
 jobs:
   preflight:
@@ -256,7 +261,14 @@ jobs:
           cache-workspace-crates: false
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --version 0.9.1 --locked
+        # Fetch the prebuilt binary instead of `cargo install` (which compiles it
+        # from source — several minutes) to keep the coverage job lean.
+        run: |
+          set -euo pipefail
+          VERSION=0.9.1
+          URL="https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${VERSION}/cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz"
+          curl -LsSf --retry 3 "$URL" | tar xzf - -C "$HOME/.cargo/bin"
+          cargo llvm-cov --version
       - name: Generate scoped coverage report
         run: |
           cargo llvm-cov --no-report -p better-duck-core --tests \
