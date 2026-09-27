@@ -10,6 +10,7 @@
 //! `QueryableByName` can't express the plugin's dynamic result shape.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -19,8 +20,10 @@ use better_duck_core::types::appendable::AppendAble;
 use better_duck_core::types::value::DuckValue;
 use better_duck_core::{AccessMode, Config, QueryControl};
 use better_duck_diesel::pool::SharedDuckDbConnectionManager;
+use better_duck_diesel::DuckDbConnection;
 use diesel::backend::Backend;
 use diesel::migration::{Migration, MigrationSource};
+use diesel::Connection as _;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness};
 use r2d2::Pool;
 use serde_json::{Map, Value};
@@ -56,6 +59,28 @@ impl<DB: Backend> MigrationSource<DB> for MigrationsRef<'_> {
     fn migrations(&self) -> diesel::migration::Result<Vec<Box<dyn Migration<DB>>>> {
         MigrationSource::<DB>::migrations(self.0)
     }
+}
+
+/// Reports whether `embedded` has pending migrations against the on-disk DB at `path`.
+/// Opens (and drops) its own short-lived connection so the file is quiesced for the
+/// surrounding backup protocol.
+fn diesel_has_pending(
+    path: &str,
+    embedded: &EmbeddedMigrations,
+) -> Result<bool> {
+    let mut conn = DuckDbConnection::establish(path).map_err(|e| Error::Backend(e.to_string()))?;
+    conn.has_pending_migration(MigrationsRef(embedded)).map_err(|e| Error::Backend(e.to_string()))
+}
+
+/// Applies `embedded`'s pending migrations to the on-disk DB at `path` (own connection).
+fn diesel_run(
+    path: &str,
+    embedded: &EmbeddedMigrations,
+) -> Result<()> {
+    let mut conn = DuckDbConnection::establish(path).map_err(|e| Error::Backend(e.to_string()))?;
+    conn.run_pending_migrations(MigrationsRef(embedded))
+        .map_err(|e| Error::Backend(e.to_string()))?;
+    Ok(())
 }
 
 
@@ -151,6 +176,19 @@ impl DuckBackend for DieselEngine {
         let path = resolve_path(conn_str);
         let in_memory = path == ":memory:";
 
+        // On-disk: run Diesel migrations through the crash-safe backup protocol BEFORE the
+        // pool opens a long-lived handle, so the file is quiesced for backup/restore. The
+        // per-migration transactions still apply; the backup guards a whole-batch failure.
+        if !in_memory && !self.policy.read_only {
+            if let Some(embedded) = self.migrations.get(conn_str) {
+                crate::backup::with_backup(
+                    Path::new(&path),
+                    || diesel_has_pending(&path, embedded),
+                    || diesel_run(&path, embedded),
+                )?;
+            }
+        }
+
         let manager = if in_memory {
             SharedDuckDbConnectionManager::memory().map_err(|e| Error::Backend(e.to_string()))?
         } else if self.policy.read_only {
@@ -165,10 +203,9 @@ impl DuckBackend for DieselEngine {
         };
         let pool = Pool::builder().build(manager).map_err(|e| Error::Backend(e.to_string()))?;
 
-        // Diesel embedded migrations via the harness (skipped read-only — migrations write).
-        // Note: unlike the core engine, the Diesel path does not (yet) wrap these in the
-        // crash-safe whole-batch backup protocol; each migration is its own transaction.
-        if !self.policy.read_only {
+        // In-memory: migrations run on the shared pool handle (a separate open would discard
+        // them, and there is no file to back up).
+        if in_memory && !self.policy.read_only {
             if let Some(embedded) = self.migrations.get(conn_str) {
                 let mut conn = pool.get().map_err(|e| Error::Backend(e.to_string()))?;
                 conn.run_pending_migrations(MigrationsRef(embedded))
