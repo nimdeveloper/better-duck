@@ -19,6 +19,7 @@ const COMMANDS: &[&str] = &[
     "stream",
     "checkpoint",
     "interrupt",
+    "revert",
 ];
 
 fn main() {

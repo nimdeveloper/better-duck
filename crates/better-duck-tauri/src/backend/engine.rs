@@ -476,6 +476,18 @@ impl DuckBackend for DuckEngine {
             }
         }
     }
+
+    fn revert(
+        &self,
+        conn_str: &str,
+    ) -> Result<Option<i64>> {
+        self.policy.check_writable()?;
+        let migrations = self.migrations.get(conn_str).map_or(&[][..], Vec::as_slice);
+        let reverted =
+            self.with_conn(conn_str, |conn| crate::migration::revert_last(conn, migrations))?;
+        self.note_write(conn_str);
+        Ok(reverted)
+    }
 }
 
 /// Quotes a value as a SQL single-quoted string literal (doubling embedded quotes).

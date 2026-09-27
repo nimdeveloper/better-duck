@@ -152,6 +152,13 @@ pub trait DuckBackend: Send + Sync + 'static {
         &self,
         conn_str: &str,
     ) -> bool;
+
+    /// Revert the most recently applied migration (runs its `Down` SQL). Returns the
+    /// reverted version, or `None` if nothing was applied.
+    fn revert(
+        &self,
+        conn_str: &str,
+    ) -> Result<Option<i64>>;
 }
 
 /// Normalize a connection string to a DuckDB path: strips a leading `duckdb:` and

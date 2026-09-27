@@ -6,6 +6,7 @@
 //! `backend-diesel` path in a later phase; this module is the core-backend equivalent.
 
 use better_duck_core::connection::Connection;
+use better_duck_core::types::appendable::AppendAble;
 use better_duck_core::types::value::DuckValue;
 
 use crate::error::{Error, Result};
@@ -98,6 +99,48 @@ fn migrations_table_exists(conn: &mut Connection) -> Result<bool> {
         .map_err(|e| Error::Backend(e.to_string()))?;
     let rows = result.materialize().map_err(|e| Error::Backend(e.to_string()))?;
     Ok(!rows.rows().is_empty())
+}
+
+/// Reverts the most recently applied migration by running its `Down` SQL and removing its
+/// bookkeeping row, all in one transaction. Returns the reverted version, or `None` if
+/// nothing was applied. Errors if the last-applied version has no `Down` migration.
+pub(crate) fn revert_last(
+    conn: &mut Connection,
+    migrations: &[Migration],
+) -> Result<Option<i64>> {
+    if !migrations_table_exists(conn)? {
+        return Ok(None);
+    }
+    let Some(version) = applied_versions(conn)?.into_iter().max() else {
+        return Ok(None);
+    };
+    let down = migrations
+        .iter()
+        .find(|m| m.version == version && m.kind == MigrationKind::Down)
+        .ok_or_else(|| Error::Backend(format!("no down migration for version {version}")))?;
+
+    conn.execute_batch("BEGIN TRANSACTION").map_err(|e| Error::Backend(e.to_string()))?;
+    let outcome = (|| -> Result<()> {
+        conn.execute_batch(&down.sql).map_err(|e| Error::Backend(e.to_string()))?;
+        let mut bind = DuckValue::BigInt(version);
+        conn.execute_with(
+            "DELETE FROM __better_duck_migrations WHERE version = $1",
+            &mut [&mut bind as &mut dyn AppendAble],
+        )
+        .map_err(|e| Error::Backend(e.to_string()))?;
+        Ok(())
+    })();
+
+    match outcome {
+        Ok(()) => {
+            conn.execute_batch("COMMIT").map_err(|e| Error::Backend(e.to_string()))?;
+            Ok(Some(version))
+        },
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        },
+    }
 }
 
 /// Runs one migration and records its version, all inside a single transaction.

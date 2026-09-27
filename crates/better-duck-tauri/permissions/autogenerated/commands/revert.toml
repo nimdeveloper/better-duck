@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-revert"
+description = "Enables the revert command without any pre-configured scope."
+commands.allow = ["revert"]
+
+[[permission]]
+identifier = "deny-revert"
+description = "Denies the revert command without any pre-configured scope."
+commands.deny = ["revert"]

@@ -139,4 +139,9 @@ export default class Database {
   async interrupt(): Promise<boolean> {
     return await invoke('plugin:duck|interrupt', { db: this.path })
   }
+
+  /** Revert the most recently applied migration; resolves to the reverted version, if any. */
+  async revert(): Promise<number | null> {
+    return await invoke('plugin:duck|revert', { db: this.path })
+  }
 }

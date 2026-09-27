@@ -202,3 +202,13 @@ pub(crate) async fn interrupt(
         .await
         .map_err(join_err)?
 }
+
+/// Revert the most recently applied migration. Resolves to the reverted version, if any.
+#[tauri::command]
+pub(crate) async fn revert(
+    state: State<'_, DuckState>,
+    db: String,
+) -> Result<Option<i64>> {
+    let backend = state.backend();
+    tauri::async_runtime::spawn_blocking(move || backend.revert(&db)).await.map_err(join_err)?
+}

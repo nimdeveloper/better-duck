@@ -264,6 +264,46 @@ fn up(version: i64, sql: &str) -> Migration {
     Migration { version, description: format!("m{version}"), sql: sql.to_owned(), kind: MigrationKind::Up }
 }
 
+fn down(version: i64, sql: &str) -> Migration {
+    Migration {
+        version,
+        description: format!("m{version}-down"),
+        sql: sql.to_owned(),
+        kind: MigrationKind::Down,
+    }
+}
+
+#[test]
+fn revert_undoes_migrations_in_reverse() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("rev.duckdb");
+    let conn = format!("duckdb:{}", db.to_str().unwrap());
+
+    let mut map = HashMap::new();
+    map.insert(
+        conn.clone(),
+        vec![
+            up(1, "CREATE TABLE t (id INTEGER)"),
+            down(1, "DROP TABLE t"),
+            up(2, "CREATE TABLE u (id INTEGER)"),
+            down(2, "DROP TABLE u"),
+        ],
+    );
+    let engine = DuckEngine::with_migrations(map);
+    engine.load(&conn).unwrap();
+    assert!(engine.select(&conn, "SELECT * FROM u", vec![]).is_ok());
+
+    // Revert v2, then v1, then nothing.
+    assert_eq!(engine.revert(&conn).unwrap(), Some(2));
+    assert!(engine.select(&conn, "SELECT * FROM u", vec![]).is_err());
+    assert!(engine.select(&conn, "SELECT * FROM t", vec![]).is_ok());
+
+    assert_eq!(engine.revert(&conn).unwrap(), Some(1));
+    assert!(engine.select(&conn, "SELECT * FROM t", vec![]).is_err());
+
+    assert_eq!(engine.revert(&conn).unwrap(), None);
+}
+
 #[test]
 fn checkpoint_flushes_and_all_is_best_effort() {
     let dir = tempfile::tempdir().unwrap();

@@ -79,7 +79,8 @@ fn build_plugin<R: Runtime>(
             commands::explain,
             commands::stream,
             commands::checkpoint,
-            commands::interrupt
+            commands::interrupt,
+            commands::revert
         ])
         .setup(move |app, _api| {
             app.manage(DuckState::new(backend.clone()));
