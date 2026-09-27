@@ -2,11 +2,12 @@
 //! blocks the async runtime. Keep the list in sync with `build.rs`'s `COMMANDS`.
 
 use serde_json::{Map, Value};
-use tauri::ipc::Channel;
+use tauri::ipc::{Channel, CommandScope, GlobalScope};
 use tauri::State;
 
 use crate::backend::{DataFormat, ExecuteResult, Row};
 use crate::error::{Error, Result};
+use crate::scope::Entry;
 use crate::state::DuckState;
 
 /// Maps a blocking-task join failure to a backend error.
@@ -14,12 +15,67 @@ fn join_err(e: tauri::Error) -> Error {
     Error::Backend(format!("task join failed: {e}"))
 }
 
+/// Decides a capability-scope check for one value against allow/deny pattern lists.
+///
+/// Deny-first: a matching deny pattern always rejects. Then, if any allow patterns are
+/// present, the value must match one. An **empty** allow list means *unconstrained* — the
+/// capability didn't narrow this field, and the init-time [`Policy`](crate::policy::Policy)
+/// remains the mandatory layer — so we don't lock out apps that declare no scope.
+fn scope_decision(
+    value: &str,
+    allow: &[&str],
+    deny: &[&str],
+    matches: impl Fn(&str, &str) -> bool,
+) -> Result<()> {
+    if deny.iter().any(|pat| matches(pat, value)) {
+        return Err(Error::Denied(format!("capability scope denies {value:?}")));
+    }
+    if !allow.is_empty() && !allow.iter().any(|pat| matches(pat, value)) {
+        return Err(Error::Denied(format!("capability scope does not allow {value:?}")));
+    }
+    Ok(())
+}
+
+/// Enforces the merged global + command capability scope for one [`Entry`] field.
+fn enforce_scope(
+    value: &str,
+    global: &GlobalScope<Entry>,
+    command: &CommandScope<Entry>,
+    field: impl Fn(&Entry) -> Option<&str>,
+    matches: impl Fn(&str, &str) -> bool,
+) -> Result<()> {
+    let allow: Vec<&str> =
+        global.allows().iter().chain(command.allows().iter()).filter_map(|e| field(e)).collect();
+    let deny: Vec<&str> =
+        global.denies().iter().chain(command.denies().iter()).filter_map(|e| field(e)).collect();
+    scope_decision(value, &allow, &deny, matches)
+}
+
+/// Exact-match comparator for connection-string scope entries.
+fn conn_matches(
+    pattern: &str,
+    value: &str,
+) -> bool {
+    pattern == value
+}
+
+/// Path-prefix comparator for filesystem scope entries (a directory prefix allows its files).
+fn path_matches(
+    prefix: &str,
+    value: &str,
+) -> bool {
+    value == prefix || value.starts_with(prefix)
+}
+
 /// Open (and register) a database connection.
 #[tauri::command]
 pub(crate) async fn load(
     state: State<'_, DuckState>,
+    global_scope: GlobalScope<Entry>,
+    command_scope: CommandScope<Entry>,
     db: String,
 ) -> Result<()> {
+    enforce_scope(&db, &global_scope, &command_scope, |e| e.connection.as_deref(), conn_matches)?;
     let backend = state.backend();
     tauri::async_runtime::spawn_blocking(move || backend.load(&db)).await.map_err(join_err)?
 }
@@ -79,11 +135,14 @@ pub(crate) async fn load_extension(
 #[tauri::command]
 pub(crate) async fn import(
     state: State<'_, DuckState>,
+    global_scope: GlobalScope<Entry>,
+    command_scope: CommandScope<Entry>,
     db: String,
     table: String,
     source: String,
     format: DataFormat,
 ) -> Result<ExecuteResult> {
+    enforce_scope(&source, &global_scope, &command_scope, |e| e.path.as_deref(), path_matches)?;
     let backend = state.backend();
     tauri::async_runtime::spawn_blocking(move || backend.import(&db, &table, &source, format))
         .await
@@ -94,11 +153,14 @@ pub(crate) async fn import(
 #[tauri::command]
 pub(crate) async fn export(
     state: State<'_, DuckState>,
+    global_scope: GlobalScope<Entry>,
+    command_scope: CommandScope<Entry>,
     db: String,
     query: String,
     path: String,
     format: DataFormat,
 ) -> Result<ExecuteResult> {
+    enforce_scope(&path, &global_scope, &command_scope, |e| e.path.as_deref(), path_matches)?;
     let backend = state.backend();
     tauri::async_runtime::spawn_blocking(move || backend.export(&db, &query, &path, format))
         .await
@@ -236,5 +298,38 @@ pub(crate) async fn query_arrow(
     {
         let _ = (&state, db, query, values);
         Err(Error::Backend("the `arrow` feature is not enabled".to_owned()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{conn_matches, path_matches, scope_decision};
+
+    #[test]
+    fn empty_allow_is_unconstrained() {
+        // No scope declared → the capability doesn't narrow this field.
+        assert!(scope_decision("duckdb:anything.db", &[], &[], conn_matches).is_ok());
+    }
+
+    #[test]
+    fn allow_list_requires_a_match() {
+        let allow = ["duckdb:app.db"];
+        assert!(scope_decision("duckdb:app.db", &allow, &[], conn_matches).is_ok());
+        assert!(scope_decision("duckdb:other.db", &allow, &[], conn_matches).is_err());
+    }
+
+    #[test]
+    fn deny_always_wins() {
+        let allow = ["duckdb:app.db"];
+        let deny = ["duckdb:app.db"];
+        // Even an allowed value is rejected when it also matches a deny entry.
+        assert!(scope_decision("duckdb:app.db", &allow, &deny, conn_matches).is_err());
+    }
+
+    #[test]
+    fn path_scope_matches_by_prefix() {
+        let allow = ["data/"];
+        assert!(scope_decision("data/exports/out.parquet", &allow, &[], path_matches).is_ok());
+        assert!(scope_decision("/etc/passwd", &allow, &[], path_matches).is_err());
     }
 }

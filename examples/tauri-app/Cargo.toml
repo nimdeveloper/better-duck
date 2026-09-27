@@ -1,0 +1,17 @@
+# Standalone workspace so this example's Tauri feature set never unifies with the
+# library workspace (which `exclude`s `examples/`).
+[workspace]
+
+[package]
+name = "better-duck-tauri-example"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Minimal Tauri v2 app demonstrating the better-duck-tauri plugin."
+
+[dependencies]
+tauri = { version = "2" }
+better-duck-tauri = { path = "../../crates/better-duck-tauri" }
+
+[build-dependencies]
+tauri-build = { version = "2" }

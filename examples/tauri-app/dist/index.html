@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>better-duck example</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; }
+      button { padding: 0.5rem 1rem; font-size: 1rem; }
+      pre { background: #f4f4f4; padding: 1rem; border-radius: 6px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>better-duck-tauri</h1>
+    <p>Runs an in-memory DuckDB round-trip through the plugin commands.</p>
+    <button id="run">Run round-trip</button>
+    <pre id="out">Click "Run round-trip".</pre>
+    <script>
+      const { invoke } = window.__TAURI__.core;
+      const out = document.getElementById("out");
+      const DB = "duckdb::memory:";
+      async function run() {
+        try {
+          await invoke("plugin:better-duck-tauri|load", { db: DB });
+          await invoke("plugin:better-duck-tauri|execute", {
+            db: DB, query: "CREATE TABLE t (id INTEGER, name VARCHAR)", values: [],
+          });
+          await invoke("plugin:better-duck-tauri|execute", {
+            db: DB, query: "INSERT INTO t VALUES ($1, $2)", values: [1, "duck"],
+          });
+          const rows = await invoke("plugin:better-duck-tauri|select", {
+            db: DB, query: "SELECT id, name FROM t ORDER BY id", values: [],
+          });
+          out.textContent = "rows = " + JSON.stringify(rows, null, 2);
+        } catch (e) {
+          out.textContent = "error: " + e;
+        }
+      }
+      document.getElementById("run").addEventListener("click", run);
+    </script>
+  </body>
+</html>
