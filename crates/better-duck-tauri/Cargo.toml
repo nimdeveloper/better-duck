@@ -37,9 +37,13 @@ default = ["backend-core"]
 backend-core = ["dep:better-duck-core"]
 # Build the plugin on better-duck-diesel (shared pool + Diesel migrations). App calls `diesel::init()`.
 # Also pulls better-duck-core directly so the shared DuckValue<->JSON bridge is in scope.
+# `better-duck-diesel/chrono` keeps diesel's date backend consistent with core, which
+# this crate pulls with its default features (chrono on) — otherwise diesel compiles its
+# no-chrono `date_native` path against a chrono-typed core and fails to build.
 backend-diesel = [
     "dep:better-duck-core",
     "dep:better-duck-diesel",
+    "better-duck-diesel/chrono",
     "dep:diesel",
     "dep:diesel_migrations",
 ]
