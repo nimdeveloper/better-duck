@@ -12,8 +12,11 @@
     "better-duck-tauri:allow-close",
     "better-duck-tauri:allow-select",
     "better-duck-tauri:allow-execute",
+    "better-duck-tauri:allow-append-rows",
     "better-duck-tauri:allow-tables",
     "better-duck-tauri:allow-columns",
+    "better-duck-tauri:allow-explain",
+    "better-duck-tauri:allow-checkpoint",
     {
       "identifier": "better-duck-tauri:allow-import",
       "allow": [{ "path": "data/" }]

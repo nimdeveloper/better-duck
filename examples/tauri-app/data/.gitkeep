@@ -1,0 +1,1 @@
+# Keeps the export/import target dir; the demo writes events.parquet here.

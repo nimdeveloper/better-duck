@@ -2,40 +2,150 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>better-duck example</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>better-duck-tauri example</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem; }
-      button { padding: 0.5rem 1rem; font-size: 1rem; }
-      pre { background: #f4f4f4; padding: 1rem; border-radius: 6px; white-space: pre-wrap; }
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem 2rem; line-height: 1.4; }
+      h1 { margin: 0 0 0.25rem; font-size: 1.4rem; }
+      p.lede { margin: 0 0 1rem; opacity: 0.75; }
+      .row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+      button {
+        padding: 0.5rem 0.9rem; font-size: 0.9rem; border-radius: 6px;
+        border: 1px solid #8884; background: #3b7dd8; color: white; cursor: pointer;
+      }
+      button.secondary { background: transparent; color: inherit; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      pre {
+        background: #8881; padding: 1rem; border-radius: 8px; white-space: pre-wrap;
+        max-height: 60vh; overflow: auto; font-size: 0.82rem; margin: 0;
+      }
+      .ok { color: #2e9e5b; } .err { color: #d64545; } .dim { opacity: 0.6; }
     </style>
   </head>
   <body>
     <h1>better-duck-tauri</h1>
-    <p>Runs an in-memory DuckDB round-trip through the plugin commands.</p>
-    <button id="run">Run round-trip</button>
-    <pre id="out">Click "Run round-trip".</pre>
+    <p class="lede">Embedded DuckDB in a Tauri v2 webview. Each button drives real plugin commands.</p>
+    <div class="row">
+      <button id="all">Run everything</button>
+      <button id="basic" class="secondary">Round-trip</button>
+      <button id="append" class="secondary">Bulk append</button>
+      <button id="introspect" class="secondary">Introspect</button>
+      <button id="files" class="secondary">Export + import (Parquet)</button>
+      <button id="checkpoint" class="secondary">Checkpoint</button>
+      <button id="denied" class="secondary">Scope: denied connection</button>
+      <button id="clear" class="secondary">Clear log</button>
+    </div>
+    <pre id="out"></pre>
     <script>
+      // PLACEHOLDER_SCRIPT
       const { invoke } = window.__TAURI__.core;
-      const out = document.getElementById("out");
+      const P = "plugin:better-duck-tauri|";
       const DB = "duckdb::memory:";
-      async function run() {
+      const out = document.getElementById("out");
+
+      function log(msg, cls) {
+        const line = document.createElement("span");
+        if (cls) line.className = cls;
+        line.textContent = msg + "\n";
+        out.appendChild(line);
+        out.scrollTop = out.scrollHeight;
+      }
+      const call = (cmd, args) => invoke(P + cmd, args);
+      async function step(label, fn) {
         try {
-          await invoke("plugin:better-duck-tauri|load", { db: DB });
-          await invoke("plugin:better-duck-tauri|execute", {
-            db: DB, query: "CREATE TABLE t (id INTEGER, name VARCHAR)", values: [],
-          });
-          await invoke("plugin:better-duck-tauri|execute", {
-            db: DB, query: "INSERT INTO t VALUES ($1, $2)", values: [1, "duck"],
-          });
-          const rows = await invoke("plugin:better-duck-tauri|select", {
-            db: DB, query: "SELECT id, name FROM t ORDER BY id", values: [],
-          });
-          out.textContent = "rows = " + JSON.stringify(rows, null, 2);
+          const r = await fn();
+          log("✓ " + label + (r === undefined ? "" : " → " + JSON.stringify(r)), "ok");
+          return r;
         } catch (e) {
-          out.textContent = "error: " + e;
+          log("✗ " + label + " → " + e, "err");
+          throw e;
         }
       }
-      document.getElementById("run").addEventListener("click", run);
+
+      let loaded = false;
+      async function ensureLoaded() {
+        if (loaded) return;
+        await step("load(duckdb::memory:)", () => call("load", { db: DB }));
+        await step("create table events", () =>
+          call("execute", { db: DB, query: "CREATE TABLE IF NOT EXISTS events (id INTEGER, label VARCHAR)", values: [] }));
+        loaded = true;
+      }
+
+      async function basic() {
+        await ensureLoaded();
+        await step("insert (params)", () =>
+          call("execute", { db: DB, query: "INSERT INTO events VALUES ($1, $2)", values: [1, "alpha"] }));
+        const rows = await step("select", () =>
+          call("select", { db: DB, query: "SELECT id, label FROM events ORDER BY id", values: [] }));
+        log("  rows = " + JSON.stringify(rows), "dim");
+      }
+
+      async function append() {
+        await ensureLoaded();
+        await step("appendRows (bulk)", () =>
+          call("append_rows", { db: DB, table: "events", rows: [
+            { id: 2, label: "beta" }, { id: 3, label: "gamma" }, { id: 4, label: "delta" },
+          ] }));
+        const rows = await call("select", { db: DB, query: "SELECT count(*) AS n FROM events", values: [] });
+        log("  count = " + JSON.stringify(rows), "dim");
+      }
+      // PLACEHOLDER_SCRIPT2
+      async function introspect() {
+        await ensureLoaded();
+        const tables = await step("tables()", () => call("tables", { db: DB }));
+        log("  tables = " + JSON.stringify(tables), "dim");
+        const cols = await step("columns(events)", () => call("columns", { db: DB, table: "events" }));
+        log("  columns = " + JSON.stringify(cols), "dim");
+        const plan = await step("explain(SELECT …)", () =>
+          call("explain", { db: DB, query: "SELECT * FROM events WHERE id > 1" }));
+        log("  plan rows = " + plan.length, "dim");
+      }
+
+      async function files() {
+        await ensureLoaded();
+        // The capability scopes import/export to the "data/" prefix.
+        const path = "data/events.parquet";
+        await step("export → " + path, () =>
+          call("export", { db: DB, query: "SELECT * FROM events", path, format: "parquet" }));
+        await step("import ← " + path, () =>
+          call("import", { db: DB, table: "events_copy", source: path, format: "parquet" }));
+        const rows = await call("select", { db: DB, query: "SELECT count(*) AS n FROM events_copy", values: [] });
+        log("  round-tripped rows = " + JSON.stringify(rows), "dim");
+      }
+
+      async function checkpoint() {
+        await ensureLoaded();
+        await step("checkpoint(force=false)", () => call("checkpoint", { db: DB, force: false }));
+      }
+
+      async function denied() {
+        // The capability only allows `duckdb::memory:`; any other connection must be rejected
+        // by the runtime scope enforcement (T2.5).
+        try {
+          await call("load", { db: "duckdb:secret.db" });
+          log("✗ scope FAILED to deny duckdb:secret.db", "err");
+        } catch (e) {
+          log("✓ scope correctly denied duckdb:secret.db → " + e, "ok");
+        }
+      }
+
+      async function runAll() {
+        await basic(); await append(); await introspect();
+        await files(); await checkpoint(); await denied();
+        log("— done —", "dim");
+      }
+
+      const wire = (id, fn) =>
+        document.getElementById(id).addEventListener("click", () => fn().catch(() => {}));
+      wire("all", runAll);
+      wire("basic", basic);
+      wire("append", append);
+      wire("introspect", introspect);
+      wire("files", files);
+      wire("checkpoint", checkpoint);
+      wire("denied", denied);
+      document.getElementById("clear").addEventListener("click", () => { out.textContent = ""; });
     </script>
   </body>
 </html>
