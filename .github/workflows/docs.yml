@@ -56,7 +56,9 @@ jobs:
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --locked --no-deps --all-features
+        # Exclude the Tauri plugin: it links GTK/glib/webkit on Linux (not installed on this
+        # runner), and its docs are published on docs.rs. The site redirects to better_duck_core.
+        run: cargo doc --locked --workspace --exclude better-duck-tauri --no-deps --all-features
 
       # `cargo doc` emits one directory per workspace member and no root
       # `index.html`, so the published Pages root would 404. Redirect it to the
