@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-query-arrow"
+description = "Enables the query_arrow command without any pre-configured scope."
+commands.allow = ["query_arrow"]
+
+[[permission]]
+identifier = "deny-query-arrow"
+description = "Denies the query_arrow command without any pre-configured scope."
+commands.deny = ["query_arrow"]

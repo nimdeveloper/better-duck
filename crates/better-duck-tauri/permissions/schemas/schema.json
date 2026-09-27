@@ -427,6 +427,18 @@
           "markdownDescription": "Denies the load_extension command without any pre-configured scope."
         },
         {
+          "description": "Enables the query_arrow command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-query-arrow",
+          "markdownDescription": "Enables the query_arrow command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the query_arrow command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-query-arrow",
+          "markdownDescription": "Denies the query_arrow command without any pre-configured scope."
+        },
+        {
           "description": "Enables the revert command without any pre-configured scope.",
           "type": "string",
           "const": "allow-revert",

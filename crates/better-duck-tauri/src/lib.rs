@@ -25,6 +25,8 @@ pub mod backend;
 
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod backup;
+#[cfg(feature = "arrow")]
+mod arrow_ipc;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod checkpoint;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
@@ -80,7 +82,8 @@ fn build_plugin<R: Runtime>(
             commands::stream,
             commands::checkpoint,
             commands::interrupt,
-            commands::revert
+            commands::revert,
+            commands::query_arrow
         ])
         .setup(move |app, _api| {
             app.manage(DuckState::new(backend.clone()));

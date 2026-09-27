@@ -308,6 +308,32 @@ Denies the load_extension command without any pre-configured scope.
 <tr>
 <td>
 
+`better-duck-tauri:allow-query-arrow`
+
+</td>
+<td>
+
+Enables the query_arrow command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`better-duck-tauri:deny-query-arrow`
+
+</td>
+<td>
+
+Denies the query_arrow command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `better-duck-tauri:allow-revert`
 
 </td>

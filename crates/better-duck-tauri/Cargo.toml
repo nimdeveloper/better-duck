@@ -26,6 +26,7 @@ better-duck-core   = { path = "../better-duck-core", version = "0.1.0-beta.4", o
 better-duck-diesel = { path = "../better-duck-diesel", version = "0.1.0-beta.4", optional = true }
 diesel             = { workspace = true, optional = true }
 diesel_migrations  = { version = "2.3", optional = true }
+arrow              = { version = "55", default-features = false, features = ["ffi", "ipc"], optional = true }
 
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }
@@ -42,6 +43,8 @@ backend-diesel = [
     "dep:diesel",
     "dep:diesel_migrations",
 ]
+# Add a `queryArrow` command that returns Arrow IPC bytes (pulls in arrow-rs).
+arrow = ["better-duck-core/arrow", "dep:arrow"]
 
 [dev-dependencies]
 tempfile = "3.27.0"

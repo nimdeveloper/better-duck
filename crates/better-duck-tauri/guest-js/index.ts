@@ -144,4 +144,12 @@ export default class Database {
   async revert(): Promise<number | null> {
     return await invoke('plugin:duck|revert', { db: this.path })
   }
+
+  /**
+   * Execute a read query and return the result as Arrow IPC stream bytes (requires the
+   * plugin's `arrow` Cargo feature). Decode with `apache-arrow`'s `tableFromIPC`.
+   */
+  async queryArrow(query: string, values: unknown[] = []): Promise<ArrayBuffer> {
+    return await invoke('plugin:duck|query_arrow', { db: this.path, query, values })
+  }
 }

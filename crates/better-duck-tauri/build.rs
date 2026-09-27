@@ -20,6 +20,7 @@ const COMMANDS: &[&str] = &[
     "checkpoint",
     "interrupt",
     "revert",
+    "query_arrow",
 ];
 
 fn main() {

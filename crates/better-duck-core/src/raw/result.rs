@@ -385,6 +385,14 @@ impl DuckResult {
         Ok(&self.column_names.get().unwrap()[col_index])
     }
 
+    /// Raw pointer to the underlying `duckdb_result`, for FFI that requires it by
+    /// pointer (the Arrow C Data Interface export path).
+    #[cfg(feature = "arrow")]
+    #[inline]
+    pub(crate) fn as_mut_ptr(&mut self) -> *mut ffi::duckdb_result {
+        &mut self.res
+    }
+
     /// Returns a slice of all column names in result order.
     #[allow(unused)]
     #[inline]

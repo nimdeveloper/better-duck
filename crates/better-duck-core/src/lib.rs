@@ -39,6 +39,10 @@ pub mod result_set;
 pub mod transaction;
 /// DuckDB type system and value conversion traits.
 pub mod types;
+
+/// Export query results via the Arrow C Data Interface, gated by the `arrow` feature.
+#[cfg(feature = "arrow")]
+pub mod arrow;
 /// User-defined DuckDB functions: scalar functions and table functions.
 #[cfg(feature = "udf")]
 pub mod udf;

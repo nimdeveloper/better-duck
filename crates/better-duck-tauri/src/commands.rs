@@ -212,3 +212,27 @@ pub(crate) async fn revert(
     let backend = state.backend();
     tauri::async_runtime::spawn_blocking(move || backend.revert(&db)).await.map_err(join_err)?
 }
+
+/// Execute a read query and return the result as Arrow IPC bytes (raw response body).
+#[tauri::command]
+pub(crate) async fn query_arrow(
+    state: State<'_, DuckState>,
+    db: String,
+    query: String,
+    values: Vec<Value>,
+) -> Result<tauri::ipc::Response> {
+    #[cfg(feature = "arrow")]
+    {
+        let backend = state.backend();
+        let bytes =
+            tauri::async_runtime::spawn_blocking(move || backend.query_arrow(&db, &query, values))
+                .await
+                .map_err(join_err)??;
+        Ok(tauri::ipc::Response::new(bytes))
+    }
+    #[cfg(not(feature = "arrow"))]
+    {
+        let _ = (&state, db, query, values);
+        Err(Error::Backend("the `arrow` feature is not enabled".to_owned()))
+    }
+}

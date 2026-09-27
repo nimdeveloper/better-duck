@@ -488,6 +488,25 @@ impl DuckBackend for DuckEngine {
         self.note_write(conn_str);
         Ok(reverted)
     }
+
+    #[cfg(feature = "arrow")]
+    fn query_arrow(
+        &self,
+        conn_str: &str,
+        sql: &str,
+        params: Vec<Value>,
+    ) -> Result<Vec<u8>> {
+        self.policy.check_statement(sql)?;
+        self.with_conn(conn_str, |conn| {
+            let mut duck: Vec<better_duck_core::types::value::DuckValue> =
+                params.iter().map(json_to_duck).collect();
+            let mut binds: Vec<&mut dyn AppendAble> =
+                duck.iter_mut().map(|v| v as &mut dyn AppendAble).collect();
+            let result =
+                conn.query_arrow(sql, &mut binds).map_err(|e| Error::Backend(e.to_string()))?;
+            crate::arrow_ipc::to_ipc(result)
+        })
+    }
 }
 
 /// Quotes a value as a SQL single-quoted string literal (doubling embedded quotes).

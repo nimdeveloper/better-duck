@@ -248,6 +248,26 @@ impl Connection {
         self.0.execute(sql, binds)
     }
 
+    /// Executes `sql` (binding `binds` as positional parameters) and exports the result
+    /// via the Arrow C Data Interface.
+    ///
+    /// Returns an [`ArrowResult`](crate::arrow::ArrowResult) holding the Arrow schema and
+    /// one array per data chunk. No Arrow library is pulled in; a consumer with `arrow-rs`
+    /// can reinterpret the handles as `FFI_ArrowSchema` / `FFI_ArrowArray`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if preparation, execution, or the Arrow conversion fails.
+    #[cfg(feature = "arrow")]
+    pub fn query_arrow(
+        &mut self,
+        sql: impl AsRef<str>,
+        binds: &mut [&mut dyn AppendAble],
+    ) -> Result<crate::arrow::ArrowResult> {
+        let result = self.0.execute(sql, binds)?;
+        crate::arrow::export(result)
+    }
+
     /// Returns the table names `query` reads from, as determined by DuckDB's own
     /// parser — no custom SQL parsing. Handles quoted/qualified identifiers, CTEs,
     /// joins, and subqueries.

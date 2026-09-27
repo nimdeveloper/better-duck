@@ -159,6 +159,15 @@ pub trait DuckBackend: Send + Sync + 'static {
         &self,
         conn_str: &str,
     ) -> Result<Option<i64>>;
+
+    /// Execute a read query and return the result as Arrow IPC stream bytes.
+    #[cfg(feature = "arrow")]
+    fn query_arrow(
+        &self,
+        conn_str: &str,
+        sql: &str,
+        params: Vec<Value>,
+    ) -> Result<Vec<u8>>;
 }
 
 /// Normalize a connection string to a DuckDB path: strips a leading `duckdb:` and
