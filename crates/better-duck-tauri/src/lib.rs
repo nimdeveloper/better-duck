@@ -262,6 +262,17 @@ pub mod core {
             self
         }
 
+        /// Applies the per-platform default checkpoint strategy set (TX.2): mobile
+        /// (Android/iOS) enables `OnAppLifecycle` + `FORCE CHECKPOINT`; desktop stays
+        /// passive. Merges under any strategy you set explicitly — it can enable a
+        /// strategy for the platform but never overrides one you configured — so it is
+        /// safe to call in any order relative to the other `checkpoint_*` setters.
+        #[must_use]
+        pub fn checkpoint_platform_defaults(mut self) -> Builder {
+            self.checkpoint.merge_defaults(CheckpointConfig::platform_default());
+            self
+        }
+
         /// Builds the plugin.
         pub fn build<R: Runtime>(self) -> TauriPlugin<R> {
             let checkpoint = self.checkpoint.clone();
