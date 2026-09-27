@@ -34,7 +34,9 @@ pub(crate) fn to_ipc(result: ArrowResult) -> Result<Vec<u8>> {
     let root = Field::try_from(&ffi_schema).map_err(backend_err)?;
     let schema = match root.data_type() {
         DataType::Struct(fields) => Arc::new(Schema::new(fields.clone())),
-        other => return Err(Error::Backend(format!("expected a struct arrow schema, got {other:?}"))),
+        other => {
+            return Err(Error::Backend(format!("expected a struct arrow schema, got {other:?}")))
+        },
     };
 
     let mut buffer = Vec::new();
@@ -81,4 +83,3 @@ mod tests {
         assert_eq!(batches[0].num_columns(), 2);
     }
 }
-

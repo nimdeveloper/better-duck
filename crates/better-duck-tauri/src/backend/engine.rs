@@ -109,7 +109,9 @@ impl DuckEngine {
         // `f`, so a long operation (e.g. a stream) doesn't block other connections.
         let db = {
             let dbs = self.dbs.lock().expect("duck registry poisoned");
-            dbs.get(conn_str).cloned().ok_or_else(|| Error::UnknownConnection(conn_str.to_owned()))?
+            dbs.get(conn_str)
+                .cloned()
+                .ok_or_else(|| Error::UnknownConnection(conn_str.to_owned()))?
         };
         let mut conn = db.connect().map_err(|e| Error::Backend(e.to_string()))?;
         for hook in &self.on_connect {
@@ -230,8 +232,11 @@ impl DuckBackend for DuckEngine {
         // `Automatic` checkpoint strategy: set DuckDB's WAL-size auto-checkpoint threshold.
         if let Some(threshold) = &self.checkpoint_config.threshold {
             let mut conn = db.connect().map_err(|e| Error::Backend(e.to_string()))?;
-            conn.execute_batch(format!("SET checkpoint_threshold='{}'", threshold.replace('\'', "''")))
-                .map_err(|e| Error::Backend(e.to_string()))?;
+            conn.execute_batch(format!(
+                "SET checkpoint_threshold='{}'",
+                threshold.replace('\'', "''")
+            ))
+            .map_err(|e| Error::Backend(e.to_string()))?;
         }
 
         self.dbs.lock().expect("duck registry poisoned").insert(conn_str.to_owned(), db);

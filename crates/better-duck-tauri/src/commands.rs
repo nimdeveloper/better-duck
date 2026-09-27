@@ -126,7 +126,9 @@ pub(crate) async fn tables(
     db: String,
 ) -> Result<Vec<Row>> {
     let backend = state.backend();
-    tauri::async_runtime::spawn_blocking(move || backend.list_tables(&db)).await.map_err(join_err)?
+    tauri::async_runtime::spawn_blocking(move || backend.list_tables(&db))
+        .await
+        .map_err(join_err)?
 }
 
 /// List a table's columns.

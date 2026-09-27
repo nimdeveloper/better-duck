@@ -154,9 +154,7 @@ fn path_allow_list_blocks_outside_import() {
     engine.load(MEM).unwrap();
 
     let outside_file = outside.path().join("data.csv");
-    assert!(engine
-        .import(MEM, "t", outside_file.to_str().unwrap(), DataFormat::Csv)
-        .is_err());
+    assert!(engine.import(MEM, "t", outside_file.to_str().unwrap(), DataFormat::Csv).is_err());
 }
 
 #[test]
@@ -223,7 +221,8 @@ fn on_connect_hook_runs_per_connection() {
         conn.execute_batch("CREATE OR REPLACE MACRO plus_one(x) AS x + 1")
             .map_err(|e| Error::Backend(e.to_string()))
     });
-    let engine = DuckEngine::with_config(EngineConfig { on_connect: vec![hook], ..Default::default() });
+    let engine =
+        DuckEngine::with_config(EngineConfig { on_connect: vec![hook], ..Default::default() });
     engine.load(MEM).unwrap();
 
     let rows = engine.select(MEM, "SELECT plus_one(41) AS v", vec![]).unwrap();
@@ -260,11 +259,22 @@ fn interrupt_tracks_active_stream_lifecycle() {
     assert!(!engine.interrupt(MEM));
 }
 
-fn up(version: i64, sql: &str) -> Migration {
-    Migration { version, description: format!("m{version}"), sql: sql.to_owned(), kind: MigrationKind::Up }
+fn up(
+    version: i64,
+    sql: &str,
+) -> Migration {
+    Migration {
+        version,
+        description: format!("m{version}"),
+        sql: sql.to_owned(),
+        kind: MigrationKind::Up,
+    }
 }
 
-fn down(version: i64, sql: &str) -> Migration {
+fn down(
+    version: i64,
+    sql: &str,
+) -> Migration {
     Migration {
         version,
         description: format!("m{version}-down"),
@@ -368,7 +378,10 @@ fn on_disk_migrations_apply_and_leave_no_artifacts() {
     let conn = format!("duckdb:{}", db.to_str().unwrap());
 
     let mut map = HashMap::new();
-    map.insert(conn.clone(), vec![up(1, "CREATE TABLE t (id INTEGER)"), up(2, "INSERT INTO t VALUES (7)")]);
+    map.insert(
+        conn.clone(),
+        vec![up(1, "CREATE TABLE t (id INTEGER)"), up(2, "INSERT INTO t VALUES (7)")],
+    );
     let engine = DuckEngine::with_migrations(map);
     engine.load(&conn).unwrap();
 
@@ -411,11 +424,10 @@ fn interrupted_migration_recovers_from_backup() {
 
     assert_eq!(engine.select(&conn, "SELECT id FROM base", vec![]).unwrap()[0]["id"], json!(1));
     assert!(engine.select(&conn, "SELECT * FROM migrated", vec![]).is_ok());
-    assert!(engine.select(&conn, "SELECT * FROM partial", vec![]).is_err(), "restore should drop the half-applied table");
+    assert!(
+        engine.select(&conn, "SELECT * FROM partial", vec![]).is_err(),
+        "restore should drop the half-applied table"
+    );
     assert!(!dir.path().join("app.duckdb.bak").exists());
     assert!(!dir.path().join("app.duckdb.migrate-journal").exists());
 }
-
-
-
-

@@ -321,7 +321,8 @@ mod tests {
     #[test]
     fn exports_schema_and_arrays() {
         let mut conn = Connection::open_in_memory().unwrap();
-        let arrow = conn.query_arrow("SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4", &mut []).unwrap();
+        let arrow =
+            conn.query_arrow("SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4", &mut []).unwrap();
         assert_eq!(arrow.schema().n_children(), 2, "two columns");
         assert_eq!(arrow.row_count(), 2, "two rows across chunks");
         assert!(!arrow.arrays().is_empty());
@@ -336,4 +337,3 @@ mod tests {
         assert_eq!(arrow.row_count(), 0);
     }
 }
-

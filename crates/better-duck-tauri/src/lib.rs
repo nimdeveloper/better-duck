@@ -23,10 +23,10 @@ mod state;
 
 pub mod backend;
 
-#[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
-mod backup;
 #[cfg(feature = "arrow")]
 mod arrow_ipc;
+#[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
+mod backup;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 mod checkpoint;
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
@@ -41,15 +41,15 @@ use std::sync::Arc;
 use tauri::plugin::{Builder, TauriPlugin};
 use tauri::{Manager, Runtime};
 
-pub use backend::{DataFormat, DuckBackend, ExecuteResult, Row};
-pub use error::{Error, Result};
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 pub use backend::{ConnectHook, EngineConfig};
-#[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
-pub use checkpoint::CheckpointConfig;
+pub use backend::{DataFormat, DuckBackend, ExecuteResult, Row};
 /// The core DuckDB connection type, re-exported for writing `on_connect` hooks.
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 pub use better_duck_core::connection::Connection;
+#[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
+pub use checkpoint::CheckpointConfig;
+pub use error::{Error, Result};
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
 pub use migration::{Migration, MigrationKind};
 #[cfg(any(feature = "backend-core", feature = "backend-diesel"))]
@@ -296,6 +296,9 @@ pub mod diesel {
 
     /// Initialize the plugin on the `better-duck-diesel` backend.
     pub fn init<R: Runtime>() -> TauriPlugin<R> {
-        super::build_plugin(Arc::new(crate::backend::DuckEngine::new()), CheckpointConfig::default())
+        super::build_plugin(
+            Arc::new(crate::backend::DuckEngine::new()),
+            CheckpointConfig::default(),
+        )
     }
 }

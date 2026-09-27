@@ -44,7 +44,9 @@ fn geometry_column_reads_as_wkb_blob() {
     match rx.recv_timeout(SPATIAL_TIMEOUT) {
         Ok(Outcome::Ran) => worker.join().expect("geometry worker panicked"),
         Ok(Outcome::Unavailable) => {
-            eprintln!("skipping geometry_column_reads_as_wkb_blob: `spatial` extension unavailable");
+            eprintln!(
+                "skipping geometry_column_reads_as_wkb_blob: `spatial` extension unavailable"
+            );
         },
         Err(mpsc::RecvTimeoutError::Timeout) => {
             // The worker is still blocked in the extension download; leave it
