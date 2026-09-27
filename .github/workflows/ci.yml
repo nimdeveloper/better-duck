@@ -79,8 +79,10 @@ jobs:
         with:
           key-suffix: lint
       - name: Run Clippy
+        # Exclude the Tauri plugin here: it pulls the `tauri` framework, which on Linux needs
+        # GTK/glib/webkit system libraries. It gets its own job (`plugin`) with those installed.
         run: >-
-          cargo clippy --locked --workspace --all-targets
+          cargo clippy --locked --workspace --exclude better-duck-tauri --all-targets
           --features "chrono,decimal,json,parquet,async,pool,udf,better-duck-diesel/r2d2"
           -- -D warnings
 
@@ -129,9 +131,9 @@ jobs:
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --locked --workspace --no-deps --features "chrono,decimal,async,pool,udf"
+        run: cargo doc --locked --workspace --exclude better-duck-tauri --no-deps --features "chrono,decimal,async,pool,udf"
       - name: Run doctests
-        run: cargo test --locked --workspace --doc --features "chrono,decimal,async,pool,udf"
+        run: cargo test --locked --workspace --exclude better-duck-tauri --doc --features "chrono,decimal,async,pool,udf"
 
   feature-shards:
     name: Features (${{ matrix.name }})
@@ -273,7 +275,45 @@ jobs:
         with:
           key-suffix: msrv
       - name: Check workspace compiles on MSRV
-        run: cargo check --locked --workspace --features "chrono,decimal,async,pool,udf"
+        run: cargo check --locked --workspace --exclude better-duck-tauri --features "chrono,decimal,async,pool,udf"
+
+  plugin:
+    name: Tauri plugin
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Soft/non-blocking until the Linux Tauri system deps are confirmed on a real run, and
+    # intentionally out of `required-checks`. Promote to gating once it's green.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Tauri Linux system dependencies
+        # The `tauri` framework links GTK/glib/webkit via pkg-config on Linux.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
+            libayatana-appindicator3-dev libxdo-dev libssl-dev
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: linux-plugin-v1
+          cache-workspace-crates: false
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+      - uses: ./.github/actions/duckdb-cc-cache
+        with:
+          key-suffix: plugin
+      - name: Clippy (default / arrow / backend-diesel)
+        run: |
+          cargo clippy --locked -p better-duck-tauri --all-targets -- -D warnings
+          cargo clippy --locked -p better-duck-tauri --all-targets --features arrow -- -D warnings
+          cargo clippy --locked -p better-duck-tauri --all-targets --features backend-diesel -- -D warnings
+      - name: Tests
+        run: |
+          cargo test --locked -p better-duck-tauri
+          cargo test --locked -p better-duck-tauri --features backend-diesel
 
   audit:
     name: Security audit
