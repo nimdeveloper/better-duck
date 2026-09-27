@@ -20,7 +20,7 @@ categories  = ["database", "database-implementations"]
 readme      = "README.md"
 
 [workspace.dependencies]
-better-duck-sys = { path = "crates/better-duck-sys" }
+better-duck-sys = { path = "crates/better-duck-sys", version = "0.1.0-beta.4" }
 chrono         = { version = "0.4.45", default-features = false }
 log            = "0.4"
 parking_lot    = "0.12"
