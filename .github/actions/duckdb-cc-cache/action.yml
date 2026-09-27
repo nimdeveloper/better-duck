@@ -1,0 +1,28 @@
+name: Cache DuckDB C build
+description: >-
+  Restore/save the compiled better-duck-sys DuckDB static library so the
+  expensive C++ compile is skipped when the vendored sources and toolchain are
+  unchanged. Invalidates when crates/better-duck-sys/vendor/duckdb.tar.gz or
+  build.rs changes, or the rustc version changes.
+inputs:
+  key-suffix:
+    description: >-
+      Namespace discriminator for the cache key (job name / feature set /
+      target), so jobs that build different -sys configurations don't collide.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Resolve rustc version for the cache key
+      id: rustc
+      shell: bash
+      run: echo "v=$(rustc -V | tr -c 'A-Za-z0-9.' '-')" >> "$GITHUB_OUTPUT"
+    - name: Cache better-duck-sys build output
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        # The compiled static lib lives in the build-script OUT_DIR; the
+        # .fingerprint entry must ride along or cargo re-runs build.rs anyway.
+        path: |
+          target/**/build/better-duck-sys-*
+          target/**/.fingerprint/better-duck-sys-*
+        key: duckdb-cc-${{ runner.os }}-${{ inputs.key-suffix }}-${{ steps.rustc.outputs.v }}-${{ hashFiles('crates/better-duck-sys/vendor/duckdb.tar.gz', 'crates/better-duck-sys/build.rs') }}

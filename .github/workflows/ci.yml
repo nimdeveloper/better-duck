@@ -75,6 +75,9 @@ jobs:
           cache-workspace-crates: false
           cache-on-failure: false
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+      - uses: ./.github/actions/duckdb-cc-cache
+        with:
+          key-suffix: lint
       - name: Run Clippy
         run: >-
           cargo clippy --locked --workspace --all-targets
@@ -94,6 +97,9 @@ jobs:
           shared-key: linux-stable-deps-v1
           cache-workspace-crates: false
           save-if: false
+      - uses: ./.github/actions/duckdb-cc-cache
+        with:
+          key-suffix: linux
       - name: Run package-scoped tests
         run: |
           cargo test --locked -p better-duck-core --verbose
@@ -117,6 +123,9 @@ jobs:
           shared-key: linux-stable-deps-v1
           cache-workspace-crates: false
           save-if: false
+      - uses: ./.github/actions/duckdb-cc-cache
+        with:
+          key-suffix: docs
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
@@ -163,6 +172,9 @@ jobs:
           shared-key: linux-stable-deps-v1
           cache-workspace-crates: false
           save-if: false
+      - uses: ./.github/actions/duckdb-cc-cache
+        with:
+          key-suffix: features-${{ matrix.name }}
       - name: Run ${{ matrix.name }} configurations
         env:
           SHARD_COMMANDS: ${{ matrix.commands }}
@@ -181,6 +193,9 @@ jobs:
           shared-key: windows-stable-tests-v1
           cache-workspace-crates: false
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+      - uses: ./.github/actions/duckdb-cc-cache
+        with:
+          key-suffix: windows
       - name: Run package-scoped tests
         run: |
           cargo test --locked -p better-duck-core --verbose
@@ -200,6 +215,9 @@ jobs:
           shared-key: macos-stable-ios-v1
           cache-workspace-crates: false
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+      - uses: ./.github/actions/duckdb-cc-cache
+        with:
+          key-suffix: macos
       - name: Run macOS package-scoped tests
         run: |
           cargo test --locked -p better-duck-core --verbose
@@ -224,6 +242,9 @@ jobs:
           shared-key: linux-msrv-1.96-v1
           cache-workspace-crates: false
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+      - uses: ./.github/actions/duckdb-cc-cache
+        with:
+          key-suffix: msrv
       - name: Check workspace compiles on MSRV
         run: cargo check --locked --workspace --features "chrono,decimal,async,pool,udf"
 
@@ -260,6 +281,9 @@ jobs:
           shared-key: linux-stable-llvm-cov-v1
           cache-workspace-crates: false
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+      - uses: ./.github/actions/duckdb-cc-cache
+        with:
+          key-suffix: coverage
       - name: Install cargo-llvm-cov
         # Fetch the prebuilt binary instead of `cargo install` (which compiles it
         # from source — several minutes) to keep the coverage job lean.
