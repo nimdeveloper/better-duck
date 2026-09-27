@@ -229,6 +229,33 @@ jobs:
           cargo build --locked -p better-duck-core --target aarch64-apple-ios --verbose
           cargo build --locked -p better-duck-core --target x86_64-apple-ios --verbose
 
+  android-build:
+    name: Cross-build (Android arm64)
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: android-stable-v1
+          cache-workspace-crates: false
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+      - uses: ./.github/actions/duckdb-cc-cache
+        with:
+          key-suffix: android-arm64
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+      - name: Cross-build for Android (arm64-v8a)
+        # The Android NDK preinstalled on the runner provides the clang toolchain for
+        # the bundled DuckDB C++ compile; cargo-ndk points the `cc` crate and the Rust
+        # linker at it. Proves the plugin's pure-Rust stack cross-compiles for
+        # aarch64-linux-android (the app-side 16 KB page linker flag lives in the app).
+        run: cargo ndk -t arm64-v8a build --locked -p better-duck-core --verbose
+
   msrv:
     name: MSRV (Rust 1.96)
     needs: preflight
@@ -331,6 +358,7 @@ jobs:
       - feature-shards
       - windows-tests
       - macos-tests-and-ios-builds
+      - android-build
       - msrv
       - audit
       - coverage
@@ -345,6 +373,7 @@ jobs:
           FEATURES_RESULT: ${{ needs.feature-shards.result }}
           WINDOWS_RESULT: ${{ needs.windows-tests.result }}
           MACOS_RESULT: ${{ needs.macos-tests-and-ios-builds.result }}
+          ANDROID_RESULT: ${{ needs.android-build.result }}
           MSRV_RESULT: ${{ needs.msrv.result }}
           AUDIT_RESULT: ${{ needs.audit.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
@@ -352,6 +381,6 @@ jobs:
           for result in \
             "$LINT_RESULT" "$LINUX_RESULT" "$DOCS_RESULT" \
             "$FEATURES_RESULT" "$WINDOWS_RESULT" "$MACOS_RESULT" \
-            "$MSRV_RESULT" "$AUDIT_RESULT" "$COVERAGE_RESULT"; do
+            "$ANDROID_RESULT" "$MSRV_RESULT" "$AUDIT_RESULT" "$COVERAGE_RESULT"; do
             test "$result" = success
           done
