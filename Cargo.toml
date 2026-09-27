@@ -7,7 +7,7 @@ members = ["crates/better-duck-core", "crates/better-duck-diesel", "crates/bette
 exclude = ["examples"]
 
 [workspace.package]
-version       = "0.1.0-beta.4"
+version       = "0.1.0-beta.5"
 edition       = "2021"
 rust-version  = "1.96"
 authors       = ["Hamid Reza Shakibi <shakibihamidreza@gmail.com>"]
@@ -20,7 +20,7 @@ categories  = ["database", "database-implementations"]
 readme      = "README.md"
 
 [workspace.dependencies]
-better-duck-sys = { path = "crates/better-duck-sys", version = "0.1.0-beta.4" }
+better-duck-sys = { path = "crates/better-duck-sys", version = "0.1.0-beta.5" }
 chrono         = { version = "0.4.45", default-features = false }
 log            = "0.4"
 parking_lot    = "0.12"

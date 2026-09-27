@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.1.0-beta.5] — 2026-09-27
+
+Adds a Tauri v2 plugin and an opt-in Arrow export path; the rest is release
+tooling. No breaking changes to the core / diesel APIs.
+
 ### `better-duck-core`
 
 - **Arrow export (`feature = "arrow"`).** Opt-in export of a query result through
@@ -16,6 +23,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   structs and their `release` callbacks are defined in-crate. A downstream
   consumer with `arrow-rs` can reinterpret the exported handles as
   `FFI_ArrowSchema` / `FFI_ArrowArray` and build `RecordBatch`es / Arrow IPC.
+
+### `better-duck-tauri` (new)
+
+- Tauri v2 plugin exposing better-duck to the webview as a local-analytics
+  engine: guarded `load` / `close` / `select` / `execute` commands plus raw SQL
+  behind an opt-in capability; bulk `appendRows`; Parquet/CSV/JSON import &
+  export; `loadExtension`; schema introspection (`tables` / `columns` /
+  `explain`); row-JSON results by default with an opt-in `queryArrow` (Arrow IPC)
+  via the `arrow` feature; result streaming over an `ipc::Channel` with
+  `interrupt`; a security policy (read-only, path / connection allow-lists,
+  statement-kind + network gating); transactional migrations with a crash-safe
+  backup protocol and `revert`; and composable checkpoint strategies. Two
+  interchangeable backends (`backend-core` default, `backend-diesel`) behind one
+  frontend API.
+
+### Infrastructure
+
+- Publish workflow: registry token via `CARGO_REGISTRY_TOKEN` (dropped the
+  deprecated `cargo login <token>` / `cargo publish --token`); publish-then-digest
+  ordering so the SLSA digest can package the core crate; a GitHub release job
+  that uses the changelog section for the tag, with an optional best-effort AI
+  summary intro.
+- CI speedups: cache the compiled DuckDB C library across jobs (invalidated on
+  the vendored sources / toolchain), `CARGO_INCREMENTAL=0`, and a prebuilt
+  `cargo-llvm-cov` binary instead of building it from source.
+- Fixed a Windows CI hang: the `spatial` extension download in the geometry test
+  now runs under a timeout and cleanly skips instead of blocking the job.
 
 ---
 
