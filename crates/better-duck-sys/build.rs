@@ -30,16 +30,41 @@ struct Manifest {
     json_sources: Vec<String>,
     /// Additional source files to compile only when the `parquet` feature is on.
     parquet_sources: Vec<String>,
+    /// Additional source files to compile only when the `icu` feature is on.
+    /// `#[serde(default)]` so archives vendored before icu support still parse
+    /// (they simply carry no icu sources) — a re-vendor populates this list.
+    #[serde(default)]
+    icu_sources: Vec<String>,
     /// `-I` include directories, relative to the archive root.
     include_dirs: Vec<String>,
 }
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("set by cargo"));
+    println!("cargo:rerun-if-changed=build.rs");
+
+    // Loadable-extension mode: a `.duckdb_extension` is loaded *into* a running
+    // DuckDB and must NOT bring its own copy — it calls the host through the
+    // `duckdb_ext_api_v1` pointer table instead. So compile and link nothing here.
+    // `DUCKDB_VENDORED_VERSION` still needs a value for `src/lib.rs` to re-export;
+    // read it from the archive's manifest without compiling any C++.
+    if cfg!(feature = "loadable-extension") {
+        let archive = manifest_dir.join("vendor").join("duckdb.tar.gz");
+        println!("cargo:rerun-if-changed={}", archive.display());
+        let out_dir = PathBuf::from(env::var("OUT_DIR").expect("set by cargo"));
+        let extracted = out_dir.join("duckdb-src");
+        extract_archive(&archive, &extracted);
+        let manifest: Manifest = serde_json::from_str(
+            &fs::read_to_string(extracted.join("manifest.json")).expect("manifest"),
+        )
+        .expect("manifest json");
+        println!("cargo:rustc-env=DUCKDB_VENDORED_VERSION={}", manifest.duckdb_version);
+        return;
+    }
+
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("set by cargo"));
     let archive = manifest_dir.join("vendor").join("duckdb.tar.gz");
     println!("cargo:rerun-if-changed={}", archive.display());
-    println!("cargo:rerun-if-changed=build.rs");
 
     let extracted = out_dir.join("duckdb-src");
     extract_archive(&archive, &extracted);
@@ -81,6 +106,21 @@ fn main() {
     if cfg!(feature = "parquet") {
         build.define("DUCKDB_EXTENSION_PARQUET_LINKED", None);
         for src in &manifest.parquet_sources {
+            build.file(extracted.join(src));
+        }
+    }
+    if cfg!(feature = "icu") {
+        // The generated loader references ICU's init symbols once we define this, so the
+        // sources MUST be present — otherwise the link fails with undefined symbols. An
+        // archive vendored before icu support has none; fail loudly with the fix instead.
+        assert!(
+            !manifest.icu_sources.is_empty(),
+            "the `icu` feature is enabled but the vendored DuckDB archive has no icu sources; \
+             re-vendor with `cargo run -p xtask -- upgrade-duckdb <tag>` (same tag is fine) to \
+             regenerate vendor/duckdb.tar.gz with the icu extension included",
+        );
+        build.define("DUCKDB_EXTENSION_ICU_LINKED", None);
+        for src in &manifest.icu_sources {
             build.file(extracted.join(src));
         }
     }

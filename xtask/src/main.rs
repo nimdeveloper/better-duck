@@ -42,6 +42,18 @@ enum Command_ {
         /// The `duckdb/duckdb` git tag to vendor, e.g. `v1.5.5`.
         #[arg(long)]
         tag: String,
+
+        /// Skip regenerating `src/bindings.rs` via bindgen (which needs libclang).
+        /// Use this for a same-version re-vendor — the C API is unchanged, so only the
+        /// source archive needs regenerating and the committed bindings stay valid.
+        #[arg(long)]
+        skip_bindings: bool,
+
+        /// Also generate the loadable-extension bindings (`src/bindings_loadable.rs`)
+        /// from DuckDB's `duckdb_extension.h` — the `duckdb_ext_api_v1` function-pointer
+        /// table used by the (experimental) `loadable-extension` FFI mode. Needs libclang.
+        #[arg(long)]
+        loadable_bindings: bool,
     },
     /// Validate the DuckDB C API capability ledger against documentation and
     /// compiled production Rust sources.
@@ -68,6 +80,10 @@ enum Command_ {
         #[arg(long, value_name = "PATH")]
         api_document: Option<PathBuf>,
     },
+    /// Generate the pointer-backed API wrappers + `duckdb_rs_extension_api_init` from the
+    /// `duckdb_ext_api_v1` struct in `crates/better-duck-sys/src/bindings_loadable.rs`
+    /// (produced by `upgrade-duckdb --loadable-bindings`). Idempotent; needs no checkout.
+    GenLoadableWrappers,
 }
 
 /// This crate's own manifest schema, written into the vendored archive for
@@ -80,13 +96,17 @@ struct Manifest {
     sources: Vec<String>,
     json_sources: Vec<String>,
     parquet_sources: Vec<String>,
+    #[serde(default)]
+    icu_sources: Vec<String>,
     include_dirs: Vec<String>,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command_::UpgradeDuckdb { tag } => upgrade_duckdb(&tag),
+        Command_::UpgradeDuckdb { tag, skip_bindings, loadable_bindings } => {
+            upgrade_duckdb(&tag, skip_bindings, loadable_bindings)
+        },
         Command_::AuditCapabilities { refresh_evidence, refresh_api, api_ref, api_document } => {
             audit_capabilities(
                 &workspace_root()?,
@@ -96,6 +116,7 @@ fn main() -> Result<()> {
                 api_document.as_deref(),
             )
         },
+        Command_::GenLoadableWrappers => gen_loadable_wrappers(),
     }
 }
 
@@ -838,7 +859,11 @@ fn binding_function_symbols(source: &str) -> Result<BTreeSet<String>> {
     Ok(symbols)
 }
 
-fn upgrade_duckdb(tag: &str) -> Result<()> {
+fn upgrade_duckdb(
+    tag: &str,
+    skip_bindings: bool,
+    loadable_bindings: bool,
+) -> Result<()> {
     let root = workspace_root()?;
     let sys_crate = root.join("crates").join("better-duck-sys");
     if !sys_crate.is_dir() {
@@ -864,6 +889,23 @@ fn upgrade_duckdb(tag: &str) -> Result<()> {
     let vendor_dir = sys_crate.join("vendor");
     fs::create_dir_all(&vendor_dir)?;
     package_archive(&staging, &vendor_dir.join("duckdb.tar.gz"))?;
+
+    if loadable_bindings {
+        println!("==> generating loadable-extension bindings (src/bindings_loadable.rs)");
+        let ext_header = work.join("src").join("include").join("duckdb_extension.h");
+        generate_loadable_bindings(
+            &ext_header,
+            &sys_crate.join("src").join("bindings_loadable.rs"),
+        )?;
+    }
+
+    if skip_bindings {
+        println!(
+            "==> skipping bindgen (--skip-bindings); src/bindings.rs left unchanged. Review the \
+             vendor/duckdb.tar.gz diff, then commit it."
+        );
+        return Ok(());
+    }
 
     println!("==> regenerating src/bindings.rs via bindgen");
     let header = work.join("src").join("include").join("duckdb.h");
@@ -946,6 +988,10 @@ fn collect_sources(
         .arg(duckdb_checkout)
         .arg(staging)
         .arg(&output_json)
+        // Run from the checkout so DuckDB's own relative source paths (e.g.
+        // `extension/<name>/...`) resolve against it, not against wherever xtask was
+        // launched.
+        .current_dir(duckdb_checkout)
         .status()
         .context("failed to run python3 — is Python 3 installed and on PATH?")?;
     if !status.success() {
@@ -958,6 +1004,8 @@ fn collect_sources(
         base_include_dirs: Vec<String>,
         json_cpp_files: Vec<String>,
         parquet_cpp_files: Vec<String>,
+        #[serde(default)]
+        icu_cpp_files: Vec<String>,
     }
     let raw: RawSources = serde_json::from_str(
         &fs::read_to_string(&output_json).context("reading intermediate sources JSON")?,
@@ -968,6 +1016,7 @@ fn collect_sources(
         sources: raw.base_cpp_files,
         json_sources: raw.json_cpp_files,
         parquet_sources: raw.parquet_cpp_files,
+        icu_sources: raw.icu_cpp_files,
         include_dirs: raw.base_include_dirs,
     })
 }
@@ -1017,6 +1066,198 @@ fn generate_bindings(
     Ok(())
 }
 
+/// Generates the **loadable-extension** bindings from DuckDB's `duckdb_extension.h`.
+///
+/// A `.duckdb_extension` is loaded into a running DuckDB and cannot link its own copy,
+/// so it calls the host through the `duckdb_ext_api_v1` function-pointer table it
+/// receives at init. This emits the raw types (including that struct) with **function
+/// declarations suppressed** — the pointer-backed wrappers + `duckdb_rs_extension_api_init`
+/// are generated from the struct in a separate step (see `gen-loadable-wrappers`), so the
+/// heavy code-generation can be developed and iterated against this real output without
+/// re-cloning DuckDB each time.
+///
+/// Mirrors upstream `libduckdb-sys`: header `duckdb_extension.h`,
+/// `-DDUCKDB_EXTENSION_API_VERSION_UNSTABLE`, `layout_tests(false)`, and no function
+/// declarations (blocklisted).
+fn generate_loadable_bindings(
+    header: &Path,
+    dest: &Path,
+) -> Result<()> {
+    if !header.is_file() {
+        bail!(
+            "expected DuckDB's C extension header at {} — is this a DuckDB version with the \
+             C extension API?",
+            header.display()
+        );
+    }
+    let bindings = bindgen::Builder::default()
+        .generate_comments(false)
+        .raw_line("//! Loadable-extension FFI surface — see xtask `generate_loadable_bindings`.")
+        .raw_line("#![allow(non_camel_case_types, non_snake_case, dead_code)]")
+        .raw_line("#![allow(rustdoc::broken_intra_doc_links, rustdoc::bare_urls)]")
+        .header(header.to_string_lossy().to_string())
+        .clang_arg("-DDUCKDB_EXTENSION_API_VERSION_UNSTABLE")
+        .allowlist_item(r"(\w*duckdb\w*)")
+        .blocklist_function(".*")
+        .layout_tests(false)
+        .generate()
+        .map_err(|e| anyhow::anyhow!("bindgen (loadable extension) failed: {e}"))?;
+    bindings.write_to_file(dest).context("writing loadable-extension bindings")?;
+    println!(
+        "==> wrote {} (types + duckdb_ext_api_v1 struct; functions suppressed). Next: generate \
+         the pointer-backed wrappers from the struct.",
+        dest.display()
+    );
+    Ok(())
+}
+
+/// Marks the start of the generated wrapper section in `bindings_loadable.rs` so
+/// `gen_loadable_wrappers` is idempotent (it discards everything from here down and
+/// regenerates it).
+const WRAPPERS_SENTINEL: &str = "// @@ better-duck generated loadable wrappers @@";
+
+/// Extracts the `unsafe extern "C" fn(...)` from a `::std::option::Option < fn >` field type.
+fn extract_bare_fn(ty: &syn::Type) -> Option<&syn::TypeBareFn> {
+    use syn::{GenericArgument, PathArguments, Type};
+    let Type::Path(tp) = ty else { return None };
+    let seg = tp.path.segments.last()?;
+    if seg.ident != "Option" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(ab) = &seg.arguments else { return None };
+    ab.args.iter().find_map(|arg| match arg {
+        GenericArgument::Type(Type::BareFn(bf)) => Some(bf),
+        _ => None,
+    })
+}
+
+/// Reads `crates/better-duck-sys/src/bindings_loadable.rs`, turns every
+/// `duckdb_ext_api_v1` function-pointer field into a pointer-backed `unsafe fn` wrapper
+/// (dispatching through a per-function `AtomicPtr`), and emits `duckdb_rs_extension_api_init`
+/// to populate them from the host's `get_api`. Idempotent; needs no DuckDB checkout.
+fn gen_loadable_wrappers() -> Result<()> {
+    use quote::{format_ident, quote};
+    use syn::{Fields, Item};
+
+    let root = workspace_root()?;
+    let path = root.join("crates").join("better-duck-sys").join("src").join("bindings_loadable.rs");
+    let contents = fs::read_to_string(&path).with_context(|| {
+        format!("reading {} — run `upgrade-duckdb --loadable-bindings` first", path.display())
+    })?;
+    // Keep only the raw bindgen prefix so re-runs regenerate cleanly.
+    let raw = contents.split(WRAPPERS_SENTINEL).next().unwrap_or(&contents).trim_end().to_string();
+
+    let file = syn::parse_file(&raw).context("parsing bindings_loadable.rs")?;
+    let api_struct = file
+        .items
+        .iter()
+        .find_map(|it| match it {
+            Item::Struct(s) if s.ident == "duckdb_ext_api_v1" => Some(s),
+            _ => None,
+        })
+        .context("duckdb_ext_api_v1 struct not found — regenerate with --loadable-bindings")?;
+    let Fields::Named(named) = &api_struct.fields else {
+        bail!("duckdb_ext_api_v1 is not a normal named-field struct");
+    };
+
+    // __WRAPPERS_TAIL__
+    let mut wrappers = Vec::new();
+    let mut stores = Vec::new();
+    let mut skipped = 0usize;
+    for field in &named.named {
+        let name = field.ident.clone().expect("named field");
+        let bare = match extract_bare_fn(&field.ty) {
+            Some(b) if b.variadic.is_none() => b,
+            _ => {
+                skipped += 1;
+                continue;
+            },
+        };
+        let static_name = format_ident!("{}", name.to_string().to_uppercase());
+        let ret = &bare.output;
+        let ptypes: Vec<_> = bare.inputs.iter().map(|a| &a.ty).collect();
+        let pnames: Vec<_> = (0..ptypes.len()).map(|i| format_ident!("a{i}")).collect();
+        let msg = format!("{name}: DuckDB extension API not initialized");
+        wrappers.push(quote! {
+            static #static_name: ::std::sync::atomic::AtomicPtr<()> =
+                ::std::sync::atomic::AtomicPtr::new(::std::ptr::null_mut());
+            /// Loadable-extension wrapper dispatching through the host's API table.
+            /// # Safety
+            /// The API must be initialized (`duckdb_rs_extension_api_init`) and the
+            /// arguments valid per the DuckDB C API.
+            pub unsafe fn #name(#(#pnames: #ptypes),*) #ret {
+                let p = #static_name.load(::std::sync::atomic::Ordering::Acquire);
+                assert!(!p.is_null(), #msg);
+                // SAFETY: `p` is a non-null pointer stored from the matching
+                // `duckdb_ext_api_v1` field, so its type matches this signature; the
+                // caller upholds the DuckDB C API contract for the arguments.
+                unsafe {
+                    let f: unsafe extern "C" fn(#(#ptypes),*) #ret = ::std::mem::transmute(p);
+                    f(#(#pnames),*)
+                }
+            }
+        });
+        stores.push(quote! {
+            #static_name.store(
+                api.#name.map_or(::std::ptr::null_mut(), |f| f as *mut ()),
+                ::std::sync::atomic::Ordering::Release,
+            );
+        });
+    }
+
+    let generated = quote! {
+        #(#wrappers)*
+
+        /// Populates the loadable-extension API table from the host `access` struct.
+        /// Returns `Ok(false)` on an API version mismatch (host returns a null table).
+        /// # Safety
+        /// `info`/`access` must be the handles DuckDB's loader passed to the entrypoint.
+        pub unsafe fn duckdb_rs_extension_api_init(
+            info: duckdb_extension_info,
+            access: *const duckdb_extension_access,
+            minimum_version: &str,
+        ) -> ::std::result::Result<bool, ::std::boxed::Box<dyn ::std::error::Error>> {
+            let cversion = ::std::ffi::CString::new(minimum_version)?;
+            // SAFETY: `access` is the loader-provided pointer; `get_api` is its own
+            // function pointer, and the returned table (if non-null) is a
+            // `duckdb_ext_api_v1` owned by the host for the extension's lifetime.
+            unsafe {
+                let get_api =
+                    (*access).get_api.ok_or("duckdb_extension_access.get_api is null")?;
+                let api_ptr = get_api(info, cversion.as_ptr()) as *const duckdb_ext_api_v1;
+                if api_ptr.is_null() {
+                    return ::std::result::Result::Ok(false);
+                }
+                let api = &*api_ptr;
+                #(#stores)*
+            }
+            ::std::result::Result::Ok(true)
+        }
+    };
+
+    let out = format!("{raw}\n\n{WRAPPERS_SENTINEL}\n{generated}\n");
+    // `quote!` emits everything on one line; format it so the checked-in file is
+    // reviewable (prettyplease is already a dependency, via bindgen's formatter).
+    let out = match syn::parse_file(&out) {
+        Ok(parsed) => prettyplease::unparse(&parsed),
+        Err(e) => {
+            eprintln!(
+                "warning: generated file did not re-parse for formatting ({e}); \
+                       writing unformatted"
+            );
+            out
+        },
+    };
+    fs::write(&path, out)?;
+    println!(
+        "==> wrote {} wrappers + duckdb_rs_extension_api_init to {} ({skipped} fields skipped: \
+         non-fn/variadic).",
+        named.named.len() - skipped,
+        path.display(),
+    );
+    Ok(())
+}
+
 /// Embedded helper — kept as an external-process Python script (not
 /// reimplemented in Rust) so it can call DuckDB's own
 /// `scripts/package_build.py` directly, exactly like `libduckdb-sys`'s own
@@ -1024,6 +1265,7 @@ fn generate_bindings(
 /// time; never runs on a consumer's machine.
 const COLLECT_SOURCES_PY: &str = r#"
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -1047,6 +1289,26 @@ staging_prefix = staging.as_posix() + "/"
 sys.path.append(str(duckdb_checkout / "scripts"))
 import package_build
 
+# `package_build.copy_file` builds destination directories one level at a time with a
+# **non-recursive** `os.mkdir`, and some of DuckDB's source paths contain forward slashes
+# (e.g. the generated `extension/loader/...` files pulled in once icu is linked). On
+# Windows `os.mkdir` is then handed a path whose parent doesn't exist yet and fails with
+# "cannot find the path specified". Make the process-wide `os.mkdir` create missing
+# parents itself, recursing manually via the ORIGINAL `os.mkdir` (NOT `os.makedirs`,
+# which internally calls `os.mkdir` again and would recurse forever). Windows treats '/'
+# and '\\' interchangeably, so only the missing-parent problem needs solving; we run from
+# the checkout (see xtask) so the relative source paths copy_file reads resolve.
+_real_mkdir = os.mkdir
+def _mkdir_recursive(path, *args, **kwargs):
+    p = str(path)
+    parent = os.path.dirname(p)
+    if parent and not os.path.isdir(parent):
+        _mkdir_recursive(parent)
+    if not os.path.isdir(p):
+        _real_mkdir(p)
+
+os.mkdir = _mkdir_recursive
+
 def normalize(path_str):
     p = path_str.replace("\\", "/")
     if p.startswith(staging_prefix):
@@ -1060,15 +1322,15 @@ def normalize(path_str):
 # file-format support. It's always in `default_linked_extensions` below so its
 # `DUCKDB_EXTENSION_CORE_FUNCTIONS_LINKED` fallback in the generated loader is
 # unconditionally 1 — no Cargo feature gates it.
-extensions = ["core_functions", "json", "parquet"]
+extensions = ["core_functions", "json", "parquet", "icu"]
 # `default_linked_extensions` matters: `build_package` bakes each extension's
 # "is it linked" flag into the *content* of the single shared
 # `generated_extension_loader_package_build.cpp` file as
 # `#ifndef DUCKDB_EXTENSION_X_LINKED / #define ... <default> / #endif`. For
-# `json`/`parquet` that fallback is 0 (off), and the `#ifndef` guard means our
+# `json`/`parquet`/`icu` that fallback is 0 (off), and the `#ifndef` guard means our
 # own `-D DUCKDB_EXTENSION_X_LINKED` (added by `better-duck-sys/build.rs` only
 # when the matching Cargo feature is on) wins whenever it's present. This file
-# is compiled unconditionally as a "base" source, so json/parquet's behavior
+# is compiled unconditionally as a "base" source, so json/parquet/icu's behavior
 # must be controlled entirely by our own `-D` flags, not by whatever extension
 # set happened to be passed to `build_package` here.
 (source_list, include_list, _) = package_build.build_package(
@@ -1090,13 +1352,15 @@ includes = {f"duckdb/{i}" for i in include_list}
 # extension's own source directory instead.
 json_sources = {s for s in sources if "duckdb/extension/json/" in s}
 parquet_sources = {s for s in sources if "duckdb/extension/parquet/" in s}
-base_sources = sources - json_sources - parquet_sources
+icu_sources = {s for s in sources if "duckdb/extension/icu/" in s}
+base_sources = sources - json_sources - parquet_sources - icu_sources
 
 result = {
     "base_cpp_files": sorted(base_sources),
     "base_include_dirs": sorted(includes),
     "json_cpp_files": sorted(json_sources),
     "parquet_cpp_files": sorted(parquet_sources),
+    "icu_cpp_files": sorted(icu_sources),
 }
 with output_json.open("w") as f:
     json.dump(result, f, indent=2, sort_keys=True)
