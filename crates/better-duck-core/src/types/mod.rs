@@ -42,6 +42,9 @@ pub mod date_chrono;
 /// No-chrono date/time component types and DuckDialect implementations.
 #[cfg(not(feature = "chrono"))]
 pub mod date_native;
+/// `time` crate temporal `AppendAble` implementations (write/bind path), feature `time`.
+#[cfg(feature = "time")]
+pub mod time_crate;
 /// STRUCT read/write helpers + [`DuckStruct`] newtype + its `AppendAble` impl.
 #[path = "duck_struct.rs"]
 pub mod duck_struct;

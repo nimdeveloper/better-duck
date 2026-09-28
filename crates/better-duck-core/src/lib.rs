@@ -43,6 +43,9 @@ pub mod types;
 /// Export query results via the Arrow C Data Interface, gated by the `arrow` feature.
 #[cfg(feature = "arrow")]
 pub mod arrow;
+/// Polars `DataFrame` interop (feature `polars`), bridged via the Arrow C Data Interface.
+#[cfg(feature = "polars")]
+pub mod polars;
 /// User-defined DuckDB functions: scalar functions and table functions.
 #[cfg(feature = "udf")]
 pub mod udf;

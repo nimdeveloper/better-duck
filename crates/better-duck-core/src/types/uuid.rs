@@ -73,6 +73,48 @@ impl From<DuckUuid> for value::DuckValue {
     }
 }
 
+/// Interop with the [`uuid`](https://docs.rs/uuid) crate (feature `uuid`).
+///
+/// `DuckUuid(u128)` holds the value in standard big-endian bit order, which is exactly
+/// what `uuid::Uuid::as_u128` / `from_u128` use, so the round-trip is a straight u128
+/// passthrough with no byte-order fixups.
+#[cfg(feature = "uuid")]
+impl From<::uuid::Uuid> for DuckUuid {
+    fn from(u: ::uuid::Uuid) -> Self {
+        DuckUuid(u.as_u128())
+    }
+}
+
+#[cfg(feature = "uuid")]
+impl From<DuckUuid> for ::uuid::Uuid {
+    fn from(u: DuckUuid) -> Self {
+        ::uuid::Uuid::from_u128(u.0)
+    }
+}
+
+#[cfg(all(test, feature = "uuid"))]
+mod uuid_crate_tests {
+    use super::DuckUuid;
+
+    #[test]
+    fn round_trips_through_the_uuid_crate() {
+        let original = ::uuid::Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8").unwrap();
+        let duck: DuckUuid = original.into();
+        assert_eq!(duck.0, original.as_u128());
+        let back: ::uuid::Uuid = duck.into();
+        assert_eq!(back, original);
+    }
+
+    #[test]
+    fn nil_and_max_preserve_bits() {
+        for u in [::uuid::Uuid::nil(), ::uuid::Uuid::max()] {
+            let duck: DuckUuid = u.into();
+            let back: ::uuid::Uuid = duck.into();
+            assert_eq!(back, u);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

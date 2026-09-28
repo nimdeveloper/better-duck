@@ -22,6 +22,10 @@ strum         = { workspace = true, features = ["derive"] }
 rust_decimal  = { workspace = true, features = ["macros"], optional = true }
 r2d2          = { workspace = true, optional = true }
 tokio         = { workspace = true, features = ["rt"], optional = true }
+polars        = { version = "0.55", default-features = false, optional = true }
+polars-arrow  = { version = "0.55", default-features = false, optional = true }
+time          = { version = "0.3", default-features = false, optional = true }
+uuid          = { version = "1", default-features = false, optional = true }
 better-duck-macros = { path = "../better-duck-macros", version = "0.1.0-beta.6", optional = true }
 
 [features]
@@ -36,6 +40,14 @@ udf             = ["dep:better-duck-macros"]
 # Export query results via the Arrow C Data Interface (no new dependency — uses the
 # ABI structs directly). Consumers can reinterpret the handles as arrow-rs FFI structs.
 arrow           = []
+# Polars DataFrame interop. Bridged through the Arrow C Data Interface, so it implies
+# `arrow`. Pulls in `polars` (DataFrame) + `polars-arrow` (C Data Interface FFI).
+polars          = ["arrow", "dep:polars", "dep:polars-arrow"]
+# Bind/append `time` crate values (Date/Time/PrimitiveDateTime/OffsetDateTime/Duration)
+# as DuckDB temporals. Coexists with `chrono`; independent of the DuckValue read type.
+time            = ["dep:time"]
+# Convert between the native `DuckUuid` and the `uuid` crate's `Uuid`.
+uuid            = ["dep:uuid"]
 derive          = ["dep:better-duck-macros"]
 # Make the data derives additionally emit `better_duck_diesel` impls. Turned on by
 # `better-duck-diesel/derive`; the emitted code resolves `::better_duck_diesel` in

@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   round-trips with the existing `query_arrow` export. Internally adds the non-deprecated
   `schema_from_arrow` / `chunk_from_arrow` chunk-conversion path (Arrow schema/array → DuckDB
   `DataChunk`), used by the forthcoming `polars` feature.
+- **Polars interop** (feature `polars`, which implies `arrow`): `Connection::query_polars` collects
+  a query result into a Polars `DataFrame`, and `Connection::register_polars` materializes a
+  `DataFrame` into a DuckDB table. Both bridge through the Arrow C Data Interface via `polars-arrow`
+  — no `arrow-rs`, no IPC, no JSON copy.
+- **`time` crate interop** (feature `time`): the `time` crate's `Date`, `Time`, `PrimitiveDateTime`,
+  `OffsetDateTime`, and `Duration` implement `AppendAble`, so they can be bound as query parameters
+  and appended to appenders. Coexists with `chrono`.
+- **`uuid` crate interop** (feature `uuid`): `From` conversions both ways between the native
+  `DuckUuid` and `uuid::Uuid`.
 
 ---
 
