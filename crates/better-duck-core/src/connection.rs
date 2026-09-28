@@ -268,6 +268,35 @@ impl Connection {
         crate::arrow::export(result)
     }
 
+    /// Registers an Arrow C Data Interface stream as a queryable DuckDB view named
+    /// `view_name`, returning a guard that drops the view when it falls out of scope.
+    ///
+    /// The bridge is the Arrow C Data Interface only — no Arrow library is linked. A
+    /// consumer with `arrow-rs` exports a `RecordBatchReader` to an `FFI_ArrowArrayStream`
+    /// and passes its address here; Polars can do likewise. DuckDB reads from the stream
+    /// lazily while the view is queried.
+    ///
+    /// # Safety
+    ///
+    /// `stream` must point to a valid, caller-owned Arrow C Data Interface
+    /// `ArrowArrayStream` that remains alive and untouched until the returned
+    /// [`ArrowView`](crate::arrow::ArrowView) is dropped. DuckDB takes over reading
+    /// (and eventually releasing) the stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `view_name` contains an interior NUL or DuckDB fails to
+    /// register the scan.
+    #[cfg(feature = "arrow")]
+    pub unsafe fn register_arrow<'c>(
+        &'c self,
+        view_name: &str,
+        stream: *mut std::ffi::c_void,
+    ) -> Result<crate::arrow::ArrowView<'c>> {
+        crate::arrow::arrow_scan(self.raw_con(), view_name, stream)?;
+        Ok(crate::arrow::ArrowView::new(self, view_name.to_owned()))
+    }
+
     /// Returns the table names `query` reads from, as determined by DuckDB's own
     /// parser — no custom SQL parsing. Handles quoted/qualified identifiers, CTEs,
     /// joins, and subqueries.
@@ -577,7 +606,7 @@ impl Connection {
 
     /// Returns the raw `duckdb_connection` handle for internal FFI use (e.g. the
     /// `udf` module's function registration, which needs the handle directly).
-    #[cfg(feature = "udf")]
+    #[cfg(any(feature = "udf", feature = "arrow"))]
     #[inline]
     pub(crate) fn raw_con(&self) -> crate::ffi::duckdb_connection {
         self.0.handle()

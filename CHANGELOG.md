@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### `better-duck-core`
+
+#### Added
+
+- **Arrow import** (feature `arrow`): `Connection::register_arrow` registers an Arrow C Data
+  Interface stream as a queryable DuckDB view, returning an `ArrowView` RAII guard that drops the
+  view on scope exit. The bridge is the C Data Interface only — no Arrow library is linked — so it
+  round-trips with the existing `query_arrow` export. Internally adds the non-deprecated
+  `schema_from_arrow` / `chunk_from_arrow` chunk-conversion path (Arrow schema/array → DuckDB
+  `DataChunk`), used by the forthcoming `polars` feature.
+
 ---
 
 ## [0.1.0-beta.6] — 2026-09-28

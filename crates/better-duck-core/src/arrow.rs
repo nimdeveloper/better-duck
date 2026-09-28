@@ -119,6 +119,13 @@ impl ArrowSchemaHandle {
         ptr::addr_of!(self.0).cast()
     }
 
+    /// Mutable pointer to the underlying `ArrowSchema`. Reinterpretable as
+    /// `FFI_ArrowSchema`; used by the import path (`schema_from_arrow`), which reads
+    /// the schema but leaves the `release` responsibility with this handle.
+    pub fn as_mut_ptr(&mut self) -> *mut c_void {
+        ptr::addr_of_mut!(self.0).cast()
+    }
+
     /// Moves the C Data Interface schema into `dest`, transferring the `release`
     /// responsibility to the caller (this handle no longer releases). `dest` is an
     /// `ArrowSchema`-layout allocation — e.g. an arrow-rs `FFI_ArrowSchema`.
@@ -157,6 +164,14 @@ impl ArrowArrayHandle {
     /// Pointer to the underlying `ArrowArray`, reinterpretable as `FFI_ArrowArray`.
     pub fn as_ptr(&self) -> *const c_void {
         ptr::addr_of!(self.0).cast()
+    }
+
+    /// Mutable pointer to the underlying `ArrowArray`, reinterpretable as
+    /// `FFI_ArrowArray`. The import path consumes the array (DuckDB takes ownership of
+    /// the data), so callers that pass this into `data_chunk_from_arrow` must let that
+    /// function neutralize this handle's `release` on success to avoid a double free.
+    pub fn as_mut_ptr(&mut self) -> *mut c_void {
+        ptr::addr_of_mut!(self.0).cast()
     }
 
     /// Moves the C Data Interface array into `dest`, transferring the `release`
@@ -314,8 +329,148 @@ fn build(
     Ok(ArrowResult { schema, arrays, _chunks: chunks })
 }
 
+// ---------------------------------------------------------------------------
+// Import: Arrow C Data Interface -> DuckDB
+// ---------------------------------------------------------------------------
+
+/// An owned DuckDB "Arrow converted schema" (`duckdb_arrow_converted_schema`) — the
+/// per-column type information DuckDB derives from an Arrow schema, needed to turn
+/// Arrow arrays into DuckDB data chunks. Destroyed on drop.
+///
+/// Building block for the chunk-level import path used by the `polars` feature.
+#[cfg(test)]
+pub struct ArrowConvertedSchema(ffi::duckdb_arrow_converted_schema);
+
+#[cfg(test)]
+impl Drop for ArrowConvertedSchema {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: `self.0` was produced by `duckdb_schema_from_arrow` and is
+            // destroyed exactly once (null guard prevents re-entry).
+            unsafe { ffi::duckdb_destroy_arrow_converted_schema(&mut self.0) };
+        }
+    }
+}
+
+/// Transforms an Arrow C Data Interface schema into DuckDB's converted schema.
+///
+/// `schema_ptr` must point to a valid Arrow C Data Interface `ArrowSchema`. DuckDB
+/// only reads it — the caller retains the `release` responsibility for that schema.
+#[cfg(test)]
+pub(crate) fn schema_from_arrow(
+    con: ffi::duckdb_connection,
+    schema_ptr: *mut ffi::ArrowSchema,
+) -> Result<ArrowConvertedSchema> {
+    let mut converted: ffi::duckdb_arrow_converted_schema = ptr::null_mut();
+    // SAFETY: `con` is a live connection; `schema_ptr` points to a valid ArrowSchema;
+    // `converted` receives an owned handle destroyed by `ArrowConvertedSchema`'s Drop.
+    let err = unsafe { ffi::duckdb_schema_from_arrow(con, schema_ptr, &mut converted) };
+    take_error(err)?;
+    if converted.is_null() {
+        return Err(Error::DuckDBFailure(
+            ffi::Error::new(ffi::DuckDBError),
+            Some("duckdb_schema_from_arrow returned a null converted schema".to_owned()),
+        ));
+    }
+    Ok(ArrowConvertedSchema(converted))
+}
+
+/// Transforms one Arrow C Data Interface array (a chunk) into a DuckDB [`DataChunk`],
+/// using the converted schema from [`schema_from_arrow`].
+///
+/// DuckDB takes ownership of the array's data, so on success this neutralizes the
+/// handle's `release` callback (preventing a double free when the handle drops).
+#[cfg(test)]
+pub(crate) fn chunk_from_arrow(
+    con: ffi::duckdb_connection,
+    array: &mut ArrowArrayHandle,
+    converted: &ArrowConvertedSchema,
+) -> Result<DataChunk> {
+    let mut out: ffi::duckdb_data_chunk = ptr::null_mut();
+    let array_ptr = ptr::addr_of_mut!(array.0).cast::<ffi::ArrowArray>();
+    // SAFETY: `con` is live; `array_ptr` is a valid ArrowArray; `converted.0` is a live
+    // converted schema; `out` receives an owned chunk destroyed by `DataChunk`'s Drop.
+    let err =
+        unsafe { ffi::duckdb_data_chunk_from_arrow(con, array_ptr, converted.0, &mut out) };
+    take_error(err)?;
+    // DuckDB now owns the array's data; make sure our handle's Drop does not release it.
+    array.0.release = None;
+    DataChunk::new(out)
+}
+
+/// Registers an Arrow C Data Interface stream as a DuckDB view named `name`, queryable
+/// for as long as the stream (and the returned guard) live.
+///
+/// `stream` must point to a valid Arrow C Data Interface `ArrowArrayStream` and must
+/// outlive the returned [`ArrowView`]. DuckDB reads from the stream while the view is
+/// queried.
+///
+/// Note: this uses DuckDB's `duckdb_arrow_scan`, which carries an upstream deprecation
+/// notice; the chunk-level [`schema_from_arrow`]/[`chunk_from_arrow`] path is the
+/// non-deprecated alternative.
+pub(crate) fn arrow_scan(
+    con: ffi::duckdb_connection,
+    name: &str,
+    stream: *mut c_void,
+) -> Result<()> {
+    let c_name = CString::new(name).map_err(|e| {
+        Error::DuckDBFailure(ffi::Error::new(ffi::DuckDBError), Some(e.to_string()))
+    })?;
+    // SAFETY: `con` is live; `c_name` is a valid NUL-terminated string; `stream` is a
+    // caller-owned Arrow C Data Interface stream reinterpreted as `duckdb_arrow_stream`
+    // (the deprecated scan API treats the handle as an `ArrowArrayStream*`).
+    let state = unsafe {
+        ffi::duckdb_arrow_scan(con, c_name.as_ptr(), stream as ffi::duckdb_arrow_stream)
+    };
+    if state != ffi::DuckDBSuccess {
+        return Err(Error::DuckDBFailure(
+            ffi::Error::new(ffi::DuckDBError),
+            Some(format!("duckdb_arrow_scan failed to register view '{name}'")),
+        ));
+    }
+    Ok(())
+}
+
+/// A DuckDB view backed by a registered Arrow stream (see
+/// [`Connection::register_arrow`](crate::connection::Connection::register_arrow)).
+///
+/// Dropping the guard runs `DROP VIEW IF EXISTS` for the view. The guard borrows the
+/// connection so it cannot outlive it; the caller is responsible for keeping the
+/// backing Arrow stream alive for at least as long as this guard.
+pub struct ArrowView<'c> {
+    conn: &'c crate::connection::Connection,
+    name: String,
+}
+
+impl<'c> ArrowView<'c> {
+    pub(crate) fn new(conn: &'c crate::connection::Connection, name: String) -> Self {
+        ArrowView { conn, name }
+    }
+
+    /// The registered view's name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl Drop for ArrowView<'_> {
+    fn drop(&mut self) {
+        // Escape embedded quotes so an odd view name can't break the identifier.
+        let sql = format!("DROP VIEW IF EXISTS \"{}\"", self.name.replace('"', "\"\""));
+        let Ok(c_sql) = CString::new(sql) else { return };
+        // SAFETY: the borrowed connection is alive for the guard's lifetime; `res` is a
+        // stack `duckdb_result` that DuckDB fills and we destroy unconditionally.
+        unsafe {
+            let mut res: ffi::duckdb_result = std::mem::zeroed();
+            ffi::duckdb_query(self.conn.raw_con(), c_sql.as_ptr(), &mut res);
+            ffi::duckdb_destroy_result(&mut res);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{chunk_from_arrow, schema_from_arrow};
     use crate::connection::Connection;
 
     #[test]
@@ -335,5 +490,42 @@ mod tests {
         let arrow = conn.query_arrow("SELECT 1 AS a WHERE 1 = 0", &mut []).unwrap();
         assert_eq!(arrow.schema().n_children(), 1);
         assert_eq!(arrow.row_count(), 0);
+    }
+
+    #[test]
+    fn import_round_trips_exported_schema_and_arrays() {
+        // Export a result to the Arrow C Data Interface, then feed the schema + arrays
+        // back through the import path (schema_from_arrow + chunk_from_arrow) to prove
+        // the conversion FFI works without pulling in an Arrow library.
+        let mut conn = Connection::open_in_memory().unwrap();
+        let arrow = conn
+            .query_arrow(
+                "SELECT i AS a, i * 2 AS b FROM range(5) t(i)",
+                &mut [],
+            )
+            .unwrap();
+        let exported_rows = arrow.row_count();
+        assert_eq!(exported_rows, 5);
+
+        let (mut schema, mut arrays, _chunks) = arrow.into_parts();
+        let con = conn.raw_con();
+
+        // `con` is live; `schema` is a valid exported Arrow schema.
+        let converted =
+            schema_from_arrow(con, schema.as_mut_ptr().cast::<crate::ffi::ArrowSchema>())
+                .unwrap();
+
+        let mut imported_rows: u64 = 0;
+        for array in &mut arrays {
+            // `con` is live; `array` is a valid exported Arrow array; `converted` matches
+            // the schema. `chunk_from_arrow` neutralizes the array's release on success.
+            let chunk = chunk_from_arrow(con, array, &converted).unwrap();
+            imported_rows += chunk.row_count();
+        }
+
+        assert_eq!(
+            imported_rows, exported_rows as u64,
+            "every exported row must survive the Arrow round-trip"
+        );
     }
 }
