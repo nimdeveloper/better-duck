@@ -59,9 +59,43 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  warmup:
+    name: Warm DuckDB cache (${{ matrix.cache }})
+    needs: preflight
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cache: default
+            features: ""
+          - cache: ext
+            features: "--features json,parquet"
+      # `icu` is deliberately not warmed: the icu shard is its only consumer, so it just
+      # builds (and cross-run caches) that config itself — warming it here would add a
+      # full DuckDB+ICU compile for no cross-job reuse.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: linux-stable-deps-v1
+          cache-workspace-crates: false
+          save-if: false
+      - uses: ./.github/actions/duckdb-cc-cache
+        with:
+          key-suffix: ${{ matrix.cache }}
+      # Compile ONLY better-duck-sys, up front, so the cache save captures the DuckDB
+      # `.a` that every downstream Linux job with this config restores — instead of N
+      # parallel jobs each cold-building it and thrashing the 10 GB cache.
+      - name: Compile the DuckDB C library
+        run: cargo build --locked -p better-duck-sys ${{ matrix.features }}
+
   lint:
     name: Clippy
-    needs: preflight
+    needs: warmup
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -77,7 +111,8 @@ jobs:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
       - uses: ./.github/actions/duckdb-cc-cache
         with:
-          key-suffix: lint
+          # Clippy builds with json+parquet, so it shares the `ext` C config.
+          key-suffix: ext
       - name: Run Clippy
         # Exclude the Tauri plugin here: it pulls the `tauri` framework, which on Linux needs
         # GTK/glib/webkit system libraries. It gets its own job (`plugin`) with those installed.
@@ -101,7 +136,7 @@ jobs:
           save-if: false
       - uses: ./.github/actions/duckdb-cc-cache
         with:
-          key-suffix: linux
+          key-suffix: default
       - name: Run package-scoped tests
         run: |
           cargo test --locked -p better-duck-core --verbose
@@ -127,7 +162,7 @@ jobs:
           save-if: false
       - uses: ./.github/actions/duckdb-cc-cache
         with:
-          key-suffix: docs
+          key-suffix: default
       - name: Build documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
@@ -145,45 +180,49 @@ jobs:
       max-parallel: 4
       matrix:
         include:
-          - name: core-minimal
+          # Shards are grouped by the better-duck-sys C-build config (`cache`) so each
+          # reuses the warmed DuckDB `.a` for that config and only re-compiles Rust.
+          # --- default config (no json/parquet/icu): shares the warmed default `.a`. ---
+          - name: core-default
+            cache: default
             commands: |
               cargo test --locked -p better-duck-core --no-default-features
               cargo test --locked -p better-duck-core --no-default-features --features chrono
               cargo test --locked -p better-duck-core --no-default-features --features decimal
-          - name: core-extensions
-            commands: |
-              cargo test --locked -p better-duck-core --features json
-              cargo test --locked -p better-duck-core --features parquet
+              cargo test --locked -p better-duck-core --no-default-features --features udf
               cargo test --locked -p better-duck-core --features async
               cargo test --locked -p better-duck-core --features pool
               cargo test --locked -p better-duck-core --features "async,pool"
               cargo check --locked -p better-duck-core --no-default-features --features "async,pool"
-          - name: core-udf
-            commands: |
-              cargo test --locked -p better-duck-core --no-default-features --features udf
-              cargo test --locked -p better-duck-core --features "udf,async,pool,json"
-          - name: diesel-features
-            commands: |
-              cargo test --locked -p better-duck-diesel --features r2d2
-              cargo test --locked -p better-duck-diesel --all-features
-          - name: core-arrow-polars
-            commands: |
               cargo test --locked -p better-duck-core --features arrow
-              cargo test --locked -p better-duck-core --features polars
-          - name: core-time-uuid
-            commands: |
               cargo test --locked -p better-duck-core --features time
               cargo test --locked -p better-duck-core --features uuid
               cargo test --locked -p better-duck-core --features "time,uuid"
-          - name: core-icu
-            # The vendored archive carries the icu sources, so this compiles ICU in and
-            # exercises tests/icu.rs (named timezone + collation, no runtime LOAD).
+              cargo test --locked -p better-duck-diesel --features r2d2
+          - name: core-polars
+            cache: default
+            # Polars is a heavy Rust dependency but doesn't touch the C build, so it
+            # still reuses the default `.a`; split out to keep core-default fast.
+            commands: |
+              cargo test --locked -p better-duck-core --features polars
+          # --- ext config: json / parquet compiled into the `.a`. ---
+          - name: ext
+            cache: ext
+            commands: |
+              cargo test --locked -p better-duck-core --features json
+              cargo test --locked -p better-duck-core --features parquet
+              cargo test --locked -p better-duck-core --features "udf,async,pool,json"
+              cargo test --locked -p better-duck-diesel --all-features
+          # --- icu config. ---
+          - name: icu
+            cache: icu
+            # Compiles ICU in; exercises tests/icu.rs (named timezone + collation, no LOAD).
             commands: |
               cargo test --locked -p better-duck-core --features icu
+          # --- loadable-extension: links no DuckDB, so build-check only (default cache;
+          #     a real DB only exists once the .duckdb_extension is LOAD-ed into a host). ---
           - name: loadable-extension
-            # EXPERIMENTAL. Links no DuckDB, so build-check only (a real DB is only
-            # present when the built .duckdb_extension is LOAD-ed into a host DuckDB).
-            # Also builds the example crate — the end-to-end `#[duckdb_entrypoint]` check.
+            cache: default
             commands: |
               cargo build --locked -p better-duck-sys --features loadable-extension
               cargo build --locked -p better-duck-core --features loadable-extension
@@ -198,7 +237,7 @@ jobs:
           save-if: false
       - uses: ./.github/actions/duckdb-cc-cache
         with:
-          key-suffix: features-${{ matrix.name }}
+          key-suffix: ${{ matrix.cache }}
       - name: Run ${{ matrix.name }} configurations
         env:
           SHARD_COMMANDS: ${{ matrix.commands }}
@@ -219,7 +258,7 @@ jobs:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
       - uses: ./.github/actions/duckdb-cc-cache
         with:
-          key-suffix: windows
+          key-suffix: default
       - name: Run package-scoped tests
         run: |
           cargo test --locked -p better-duck-core --verbose
@@ -241,7 +280,7 @@ jobs:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
       - uses: ./.github/actions/duckdb-cc-cache
         with:
-          key-suffix: macos
+          key-suffix: default
       - name: Run macOS package-scoped tests
         run: |
           cargo test --locked -p better-duck-core --verbose
@@ -270,7 +309,10 @@ jobs:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
       - uses: ./.github/actions/duckdb-cc-cache
         with:
-          key-suffix: android-arm64
+          # Default C config, but a distinct target so the aarch64-linux-android `.a`
+          # doesn't collide with the host Linux cache.
+          key-suffix: default
+          target: aarch64-linux-android
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --version 4.1.2 --locked
       - name: Cross-build for Android (arm64-v8a)
@@ -282,6 +324,8 @@ jobs:
 
   msrv:
     name: MSRV (Rust 1.96)
+    # Not gated on `warmup`: warmup builds with stable rustc, and the cache key includes
+    # the rustc version, so MSRV (1.96) has its own cache it warms across runs.
     needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 75
@@ -295,13 +339,13 @@ jobs:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
       - uses: ./.github/actions/duckdb-cc-cache
         with:
-          key-suffix: msrv
+          key-suffix: default
       - name: Check workspace compiles on MSRV
         run: cargo check --locked --workspace --exclude better-duck-tauri --features "chrono,decimal,async,pool,udf"
 
   plugin:
     name: Tauri plugin
-    needs: preflight
+    needs: warmup
     runs-on: ubuntu-latest
     timeout-minutes: 120
     # Soft/non-blocking until the Linux Tauri system deps are confirmed on a real run, and
@@ -326,7 +370,7 @@ jobs:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
       - uses: ./.github/actions/duckdb-cc-cache
         with:
-          key-suffix: plugin
+          key-suffix: default
       - name: Clippy (default / arrow / backend-diesel)
         run: |
           cargo clippy --locked -p better-duck-tauri --all-targets -- -D warnings
@@ -376,6 +420,8 @@ jobs:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
       - uses: ./.github/actions/duckdb-cc-cache
         with:
+          # Its own config: llvm-cov instruments the build (distinct rustflags →
+          # distinct fingerprint), so it can't share the normal `default` `.a`.
           key-suffix: coverage
       - name: Install cargo-llvm-cov
         # Fetch the prebuilt binary instead of `cargo install` (which compiles it

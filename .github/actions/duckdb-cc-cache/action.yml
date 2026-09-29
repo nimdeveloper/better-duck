@@ -7,9 +7,21 @@ description: >-
 inputs:
   key-suffix:
     description: >-
-      Namespace discriminator for the cache key (job name / feature set /
-      target), so jobs that build different -sys configurations don't collide.
+      The better-duck-sys **C-build config** — the ONLY thing (besides target /
+      rustc / vendored sources) that changes the compiled `.a`. Use `default`
+      (no C-affecting features), `ext` (json + parquet), or `icu`. Jobs that
+      build the same config share one cache, so keep this to that small set —
+      do NOT pass a per-job name, or caches fragment and thrash GitHub's 10 GB
+      limit. Core/diesel features (chrono/async/pool/udf/arrow/polars/…) do not
+      affect the C build and must not appear here.
     required: true
+  target:
+    description: >-
+      Rust target triple when cross-compiling (e.g. aarch64-linux-android), so
+      cross-build artifacts don't collide with the host `.a`. Leave empty for
+      native host builds.
+    required: false
+    default: host
 runs:
   using: composite
   steps:
@@ -25,4 +37,5 @@ runs:
         path: |
           target/**/build/better-duck-sys-*
           target/**/.fingerprint/better-duck-sys-*
-        key: duckdb-cc-${{ runner.os }}-${{ inputs.key-suffix }}-${{ steps.rustc.outputs.v }}-${{ hashFiles('crates/better-duck-sys/vendor/duckdb.tar.gz', 'crates/better-duck-sys/build.rs') }}
+        key: duckdb-cc-${{ runner.os }}-${{ inputs.target }}-${{ inputs.key-suffix }}-${{ steps.rustc.outputs.v }}-${{ hashFiles('crates/better-duck-sys/vendor/duckdb.tar.gz', 'crates/better-duck-sys/build.rs') }}
+
