@@ -180,47 +180,39 @@ jobs:
       max-parallel: 4
       matrix:
         include:
-          # Shards are grouped by the better-duck-sys C-build config (`cache`) so each
-          # reuses the warmed DuckDB `.a` for that config and only re-compiles Rust.
-          # --- default config (no json/parquet/icu): shares the warmed default `.a`. ---
+          # Orthogonal, additive features are exercised together in one compile rather
+          # than one recompile each. Two isolation builds are kept on purpose: the empty
+          # baseline, and chrono-without-decimal (the temporal backend swap is a
+          # historically fragile #[cfg] split). json/parquet/icu change the C build, so
+          # they live in their own cache configs and can't fold into the default combo.
           - name: core-default
             cache: default
             commands: |
               cargo test --locked -p better-duck-core --no-default-features
               cargo test --locked -p better-duck-core --no-default-features --features chrono
-              cargo test --locked -p better-duck-core --no-default-features --features decimal
-              cargo test --locked -p better-duck-core --no-default-features --features udf
-              cargo test --locked -p better-duck-core --features async
-              cargo test --locked -p better-duck-core --features pool
-              cargo test --locked -p better-duck-core --features "async,pool"
-              cargo check --locked -p better-duck-core --no-default-features --features "async,pool"
-              cargo test --locked -p better-duck-core --features arrow
-              cargo test --locked -p better-duck-core --features time
-              cargo test --locked -p better-duck-core --features uuid
-              cargo test --locked -p better-duck-core --features "time,uuid"
+              cargo test --locked -p better-duck-core --features "async,pool,udf,arrow,time,uuid"
               cargo test --locked -p better-duck-diesel --features r2d2
           - name: core-polars
             cache: default
-            # Polars is a heavy Rust dependency but doesn't touch the C build, so it
-            # still reuses the default `.a`; split out to keep core-default fast.
+            # Polars is a heavy Rust dependency but C-neutral, so it reuses the default
+            # `.a`; kept in its own shard so it doesn't lengthen core-default.
             commands: |
               cargo test --locked -p better-duck-core --features polars
-          # --- ext config: json / parquet compiled into the `.a`. ---
           - name: ext
             cache: ext
+            # json + parquet together — they don't overlap, and the combined set is the
+            # one that matches the warmed `ext` cache. Folds in the C-neutral features so
+            # they're exercised alongside the bundled extensions.
             commands: |
-              cargo test --locked -p better-duck-core --features json
-              cargo test --locked -p better-duck-core --features parquet
-              cargo test --locked -p better-duck-core --features "udf,async,pool,json"
+              cargo test --locked -p better-duck-core --features "async,pool,udf,json,parquet"
               cargo test --locked -p better-duck-diesel --all-features
-          # --- icu config. ---
           - name: icu
             cache: icu
             # Compiles ICU in; exercises tests/icu.rs (named timezone + collation, no LOAD).
             commands: |
               cargo test --locked -p better-duck-core --features icu
-          # --- loadable-extension: links no DuckDB, so build-check only (default cache;
-          #     a real DB only exists once the .duckdb_extension is LOAD-ed into a host). ---
+          # loadable-extension: links no DuckDB, so build-check only (default cache; a real
+          # DB only exists once the .duckdb_extension is LOAD-ed into a host).
           - name: loadable-extension
             cache: default
             commands: |
