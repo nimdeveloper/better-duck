@@ -390,8 +390,7 @@ pub(crate) fn chunk_from_arrow(
     let array_ptr = ptr::addr_of_mut!(array.0).cast::<ffi::ArrowArray>();
     // SAFETY: `con` is live; `array_ptr` is a valid ArrowArray; `converted.0` is a live
     // converted schema; `out` receives an owned chunk destroyed by `DataChunk`'s Drop.
-    let err =
-        unsafe { ffi::duckdb_data_chunk_from_arrow(con, array_ptr, converted.0, &mut out) };
+    let err = unsafe { ffi::duckdb_data_chunk_from_arrow(con, array_ptr, converted.0, &mut out) };
     take_error(err)?;
     // DuckDB now owns the array's data; make sure our handle's Drop does not release it.
     array.0.release = None;
@@ -419,9 +418,8 @@ pub(crate) fn arrow_scan(
     // SAFETY: `con` is live; `c_name` is a valid NUL-terminated string; `stream` is a
     // caller-owned Arrow C Data Interface stream reinterpreted as `duckdb_arrow_stream`
     // (the deprecated scan API treats the handle as an `ArrowArrayStream*`).
-    let state = unsafe {
-        ffi::duckdb_arrow_scan(con, c_name.as_ptr(), stream as ffi::duckdb_arrow_stream)
-    };
+    let state =
+        unsafe { ffi::duckdb_arrow_scan(con, c_name.as_ptr(), stream as ffi::duckdb_arrow_stream) };
     if state != ffi::DuckDBSuccess {
         return Err(Error::DuckDBFailure(
             ffi::Error::new(ffi::DuckDBError),
@@ -443,7 +441,10 @@ pub struct ArrowView<'c> {
 }
 
 impl<'c> ArrowView<'c> {
-    pub(crate) fn new(conn: &'c crate::connection::Connection, name: String) -> Self {
+    pub(crate) fn new(
+        conn: &'c crate::connection::Connection,
+        name: String,
+    ) -> Self {
         ArrowView { conn, name }
     }
 
@@ -498,12 +499,8 @@ mod tests {
         // back through the import path (schema_from_arrow + chunk_from_arrow) to prove
         // the conversion FFI works without pulling in an Arrow library.
         let mut conn = Connection::open_in_memory().unwrap();
-        let arrow = conn
-            .query_arrow(
-                "SELECT i AS a, i * 2 AS b FROM range(5) t(i)",
-                &mut [],
-            )
-            .unwrap();
+        let arrow =
+            conn.query_arrow("SELECT i AS a, i * 2 AS b FROM range(5) t(i)", &mut []).unwrap();
         let exported_rows = arrow.row_count();
         assert_eq!(exported_rows, 5);
 
@@ -512,8 +509,7 @@ mod tests {
 
         // `con` is live; `schema` is a valid exported Arrow schema.
         let converted =
-            schema_from_arrow(con, schema.as_mut_ptr().cast::<crate::ffi::ArrowSchema>())
-                .unwrap();
+            schema_from_arrow(con, schema.as_mut_ptr().cast::<crate::ffi::ArrowSchema>()).unwrap();
 
         let mut imported_rows: u64 = 0;
         for array in &mut arrays {

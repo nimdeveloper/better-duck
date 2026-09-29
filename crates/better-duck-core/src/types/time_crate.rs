@@ -46,11 +46,18 @@ fn offset_to_micros(dt: &OffsetDateTime) -> i64 {
 }
 
 impl AppendAble for Date {
-    fn stmt_append(&mut self, idx: u64, stmt: duckdb_prepared_statement) -> Result<()> {
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: duckdb_prepared_statement,
+    ) -> Result<()> {
         // SAFETY: `stmt`/`idx` are valid; `date_to_raw` yields a valid duckdb_date.
         check_state(unsafe { duckdb_bind_date(stmt, idx, date_to_raw(self)) })
     }
-    fn appender_append(&mut self, appender: duckdb_appender) -> Result<()> {
+    fn appender_append(
+        &mut self,
+        appender: duckdb_appender,
+    ) -> Result<()> {
         // SAFETY: `appender` is a valid appender; the raw date is valid.
         let rc = unsafe { duckdb_append_date(appender, date_to_raw(self)) };
         // SAFETY: `appender` is valid and non-null.
@@ -59,12 +66,19 @@ impl AppendAble for Date {
 }
 
 impl AppendAble for Time {
-    fn stmt_append(&mut self, idx: u64, stmt: duckdb_prepared_statement) -> Result<()> {
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: duckdb_prepared_statement,
+    ) -> Result<()> {
         let raw = duckdb_time { micros: time_to_micros(self) };
         // SAFETY: `stmt`/`idx` are valid; `raw` is a valid duckdb_time.
         check_state(unsafe { duckdb_bind_time(stmt, idx, raw) })
     }
-    fn appender_append(&mut self, appender: duckdb_appender) -> Result<()> {
+    fn appender_append(
+        &mut self,
+        appender: duckdb_appender,
+    ) -> Result<()> {
         let raw = duckdb_time { micros: time_to_micros(self) };
         // SAFETY: `appender` is valid; `raw` is a valid duckdb_time.
         let rc = unsafe { duckdb_append_time(appender, raw) };
@@ -74,12 +88,19 @@ impl AppendAble for Time {
 }
 
 impl AppendAble for PrimitiveDateTime {
-    fn stmt_append(&mut self, idx: u64, stmt: duckdb_prepared_statement) -> Result<()> {
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: duckdb_prepared_statement,
+    ) -> Result<()> {
         let raw = duckdb_timestamp { micros: primitive_to_micros(self) };
         // SAFETY: `stmt`/`idx` are valid; `raw` is a valid duckdb_timestamp.
         check_state(unsafe { duckdb_bind_timestamp(stmt, idx, raw) })
     }
-    fn appender_append(&mut self, appender: duckdb_appender) -> Result<()> {
+    fn appender_append(
+        &mut self,
+        appender: duckdb_appender,
+    ) -> Result<()> {
         let raw = duckdb_timestamp { micros: primitive_to_micros(self) };
         // SAFETY: `appender` is valid; `raw` is a valid duckdb_timestamp.
         let rc = unsafe { duckdb_append_timestamp(appender, raw) };
@@ -89,12 +110,19 @@ impl AppendAble for PrimitiveDateTime {
 }
 
 impl AppendAble for OffsetDateTime {
-    fn stmt_append(&mut self, idx: u64, stmt: duckdb_prepared_statement) -> Result<()> {
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: duckdb_prepared_statement,
+    ) -> Result<()> {
         let raw = duckdb_timestamp { micros: offset_to_micros(self) };
         // SAFETY: `stmt`/`idx` are valid; `raw` is a valid UTC-micros duckdb_timestamp.
         check_state(unsafe { duckdb_bind_timestamp_tz(stmt, idx, raw) })
     }
-    fn appender_append(&mut self, appender: duckdb_appender) -> Result<()> {
+    fn appender_append(
+        &mut self,
+        appender: duckdb_appender,
+    ) -> Result<()> {
         // No dedicated `duckdb_append_timestamp_tz`; TIMESTAMPTZ shares the UTC-micros
         // wire format with TIMESTAMP, so append via the timestamp path.
         let raw = duckdb_timestamp { micros: offset_to_micros(self) };
@@ -106,12 +134,19 @@ impl AppendAble for OffsetDateTime {
 }
 
 impl AppendAble for Duration {
-    fn stmt_append(&mut self, idx: u64, stmt: duckdb_prepared_statement) -> Result<()> {
+    fn stmt_append(
+        &mut self,
+        idx: u64,
+        stmt: duckdb_prepared_statement,
+    ) -> Result<()> {
         let raw = duckdb_interval { months: 0, days: 0, micros: self.whole_microseconds() as i64 };
         // SAFETY: `stmt`/`idx` are valid; `raw` is a valid duckdb_interval.
         check_state(unsafe { duckdb_bind_interval(stmt, idx, raw) })
     }
-    fn appender_append(&mut self, appender: duckdb_appender) -> Result<()> {
+    fn appender_append(
+        &mut self,
+        appender: duckdb_appender,
+    ) -> Result<()> {
         let raw = duckdb_interval { months: 0, days: 0, micros: self.whole_microseconds() as i64 };
         // SAFETY: `appender` is valid; `raw` is a valid duckdb_interval.
         let rc = unsafe { duckdb_append_interval(appender, raw) };
@@ -129,7 +164,10 @@ mod tests {
 
     /// Binds `value` and asserts `SELECT <value> <op>` compares equal to the DuckDB
     /// literal, so the check is independent of what type reads produce.
-    fn assert_binds_equal(sql: &str, value: &mut dyn AppendAble) {
+    fn assert_binds_equal(
+        sql: &str,
+        value: &mut dyn AppendAble,
+    ) {
         let mut conn = Connection::open_in_memory().unwrap();
         let mut rows = conn.execute_with(sql, &mut [value]).unwrap();
         let row = rows.next().unwrap().unwrap();
@@ -176,4 +214,3 @@ mod tests {
         assert_binds_equal("SELECT $1::INTERVAL = INTERVAL 90000007 MICROSECOND AS eq", &mut dur);
     }
 }
-

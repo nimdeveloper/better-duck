@@ -48,10 +48,8 @@ impl Connection {
         // it as a Field; DuckDB only lent us the schema, so `schema` still releases it.
         // SAFETY: `schema` is a valid Arrow C Data Interface schema for the duration of
         // this borrow (it is dropped at the end of the function).
-        let field = unsafe {
-            import_field_from_c(&*(schema.as_mut_ptr().cast::<ArrowSchema>()))
-        }
-        .map_err(polars_err)?;
+        let field = unsafe { import_field_from_c(&*(schema.as_mut_ptr().cast::<ArrowSchema>())) }
+            .map_err(polars_err)?;
         let dtype = field.dtype.clone();
 
         let mut out: Option<DataFrame> = None;
@@ -64,9 +62,8 @@ impl Connection {
             unsafe { handle.export_to(c_array.as_mut_ptr().cast()) };
             // SAFETY: `c_array` now holds a valid Arrow C Data Interface array matching
             // `dtype`; `import_array_from_c` takes ownership of it.
-            let array =
-                unsafe { import_array_from_c(c_array.assume_init(), dtype.clone()) }
-                    .map_err(polars_err)?;
+            let array = unsafe { import_array_from_c(c_array.assume_init(), dtype.clone()) }
+                .map_err(polars_err)?;
 
             let struct_array = array
                 .as_any()
@@ -80,7 +77,7 @@ impl Connection {
                 Some(mut acc) => {
                     acc.vstack_mut(&chunk).map_err(polars_err)?;
                     acc
-                }
+                },
             });
         }
 
@@ -99,7 +96,11 @@ impl Connection {
     ///
     /// Returns an error if `name` contains an interior NUL, or if the Arrow export or the
     /// DuckDB scan / table creation fails.
-    pub fn register_polars(&mut self, name: &str, df: &DataFrame) -> Result<()> {
+    pub fn register_polars(
+        &mut self,
+        name: &str,
+        df: &DataFrame,
+    ) -> Result<()> {
         // One Arrow array per column (each rechunked to a single chunk).
         let columns = df.rechunk_to_arrow(CompatLevel::newest());
         let col_names = df.get_column_names();
@@ -124,15 +125,10 @@ impl Connection {
         // across the scan and the materializing SELECT below; DuckDB reads it fully
         // during `CREATE TABLE … AS SELECT` and releases it (release is idempotent, so
         // the eventual drop of `stream` is a no-op).
-        crate::arrow::arrow_scan(
-            self.raw_con(),
-            &view,
-            std::ptr::addr_of_mut!(stream).cast(),
-        )?;
+        crate::arrow::arrow_scan(self.raw_con(), &view, std::ptr::addr_of_mut!(stream).cast())?;
 
         let esc_name = name.replace('"', "\"\"");
-        let create =
-            format!("CREATE OR REPLACE TABLE \"{esc_name}\" AS SELECT * FROM \"{view}\"");
+        let create = format!("CREATE OR REPLACE TABLE \"{esc_name}\" AS SELECT * FROM \"{view}\"");
         let outcome = self.execute_batch(create).map(|_| ());
         // Always drop the temporary view, whether or not the CREATE succeeded.
         let _ = self.execute_batch(format!("DROP VIEW IF EXISTS \"{view}\""));
@@ -187,9 +183,6 @@ mod tests {
         let back = conn.query_polars("SELECT id, name FROM dst ORDER BY id", &mut []).unwrap();
 
         assert_eq!(back.shape(), (2, 2));
-        assert_eq!(
-            back.column("id").unwrap().get(1).unwrap(),
-            polars::prelude::AnyValue::Int32(2)
-        );
+        assert_eq!(back.column("id").unwrap().get(1).unwrap(), polars::prelude::AnyValue::Int32(2));
     }
 }
