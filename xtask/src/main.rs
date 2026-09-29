@@ -686,7 +686,13 @@ fn production_symbols(root: &Path) -> Result<BTreeMap<String, BTreeSet<String>>>
             continue;
         }
         let relative = path.strip_prefix(root)?.to_string_lossy().replace('\\', "/");
+        // The generated FFI bindings (`bindings.rs`, and the loadable-extension
+        // `bindings_loadable.rs`) *define* the whole DuckDB API surface, so every
+        // symbol appears there as a `pub fn`/field. That is the binding layer, not
+        // hand-written production usage — counting it would flag every safe-alternative
+        // symbol (e.g. `duckdb_open`) as directly referenced. Skip both.
         if relative.ends_with("/better-duck-sys/src/bindings.rs")
+            || relative.ends_with("/better-duck-sys/src/bindings_loadable.rs")
             || relative.contains("/tests/")
             || relative.contains("/benches/")
             || relative.contains("/examples/")
