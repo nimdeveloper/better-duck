@@ -28,12 +28,13 @@
 
 ## Crates
 
-| Crate                | crates.io                                                                                                                               | Description                                                                                      |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `better-duck-core`   | [![crates.io](https://img.shields.io/crates/v/better-duck-core.svg?style=for-the-badge)](https://crates.io/crates/better-duck-core)     | DuckDB client — connections, prepared statements, bulk appender, full type coverage, UDFs        |
-| `better-duck-diesel` | [![crates.io](https://img.shields.io/crates/v/better-duck-diesel.svg?style=for-the-badge)](https://crates.io/crates/better-duck-diesel) | Diesel 2.3 backend — query DSL, migrations, r2d2 pool, DuckDB SQL functions/aggregates/operators |
-| `better-duck-macros` | [![crates.io](https://img.shields.io/crates/v/better-duck-macros.svg?style=for-the-badge)](https://crates.io/crates/better-duck-macros) | Procedural macros powering the UDFs and data derives (used via core/diesel feature flags)        |
-| `better-duck-sys`    | Internal                                                                                                                                | Vendored DuckDB C API bindings used by the workspace                                             |
+| Crate                | crates.io                                                                                                                               | Description                                                                                        |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `better-duck-core`   | [![crates.io](https://img.shields.io/crates/v/better-duck-core.svg?style=for-the-badge)](https://crates.io/crates/better-duck-core)     | DuckDB client — connections, prepared statements, bulk appender, full type coverage, UDFs          |
+| `better-duck-diesel` | [![crates.io](https://img.shields.io/crates/v/better-duck-diesel.svg?style=for-the-badge)](https://crates.io/crates/better-duck-diesel) | Diesel 2.3 backend — query DSL, migrations, r2d2 pool, DuckDB SQL functions/aggregates/operators   |
+| `better-duck-macros` | [![crates.io](https://img.shields.io/crates/v/better-duck-macros.svg?style=for-the-badge)](https://crates.io/crates/better-duck-macros) | Procedural macros powering the UDFs and data derives (used via core/diesel feature flags)          |
+| `better-duck-tauri`  | [![crates.io](https://img.shields.io/crates/v/better-duck-tauri.svg?style=for-the-badge)](https://crates.io/crates/better-duck-tauri)   | Tauri v2 plugin exposing embedded DuckDB to a webview as a local-analytics engine (JS/TS bindings) |
+| `better-duck-sys`    | [![crates.io](https://img.shields.io/crates/v/better-duck-sys.svg?style=for-the-badge)](https://crates.io/crates/better-duck-sys)       | Low-level vendored DuckDB C API bindings, compiled from source (no system lib); optional bundled extensions (JSON / Parquet / ICU) and an experimental loadable-extension mode. Most users depend on `better-duck-core`, not this directly. |
 
 ---
 

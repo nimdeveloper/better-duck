@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and appended to appenders. Coexists with `chrono`.
 - **`uuid` crate interop** (feature `uuid`): `From` conversions both ways between the native
   `DuckUuid` and `uuid::Uuid`.
+- **Bundled ICU extension** (feature `icu`): compiles DuckDB's ICU extension into the static
+  library, so named IANA timezones (`AT TIME ZONE 'America/New_York'`) and Unicode collations work
+  without a runtime `INSTALL`/`LOAD`. (`xtask upgrade-duckdb` gained a `--skip-bindings` flag and
+  Windows path-portability fixes for regenerating the vendored archive.)
+- **Loadable DuckDB extensions in Rust** (feature `loadable-extension`, **experimental**): build a
+  `.duckdb_extension` with no C++ glue. `#[duckdb_entrypoint]` generates the C entrypoint DuckDB's
+  loader calls; in this mode no DuckDB is linked and every FFI call is routed through the host's
+  `duckdb_ext_api_v1` function-pointer table (`Connection::open_from_raw` wraps the host database
+  without taking ownership). See `examples/extension/`. Relies on DuckDB's unstable C extension API.
 
 ---
 
