@@ -1117,7 +1117,7 @@ fn generate_loadable_bindings(
 const WRAPPERS_SENTINEL: &str = "// @@ better-duck generated loadable wrappers @@";
 
 /// Extracts the `unsafe extern "C" fn(...)` from a `::std::option::Option < fn >` field type.
-fn extract_bare_fn(ty: &syn::Type) -> Option<&syn::TypeBareFn> {
+fn extract_bare_fn(ty: &syn::Type) -> Option<&syn::TypeFnPtr> {
     use syn::{GenericArgument, PathArguments, Type};
     let Type::Path(tp) = ty else { return None };
     let seg = tp.path.segments.last()?;
@@ -1126,7 +1126,7 @@ fn extract_bare_fn(ty: &syn::Type) -> Option<&syn::TypeBareFn> {
     }
     let PathArguments::AngleBracketed(ab) = &seg.arguments else { return None };
     ab.args.iter().find_map(|arg| match arg {
-        GenericArgument::Type(Type::BareFn(bf)) => Some(bf),
+        GenericArgument::Type(Type::FnPtr(bf)) => Some(bf),
         _ => None,
     })
 }

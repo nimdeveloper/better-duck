@@ -28,7 +28,7 @@ better-duck-diesel = { path = "../better-duck-diesel", version = "0.1.0-beta.6",
 diesel             = { workspace = true, optional = true }
 diesel_migrations  = { version = "2.3", optional = true }
 r2d2               = { version = "0.8", optional = true }
-arrow              = { version = "55", default-features = false, features = ["ffi", "ipc"], optional = true }
+arrow              = { version = "60", default-features = false, features = ["ffi", "ipc"], optional = true }
 
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }
