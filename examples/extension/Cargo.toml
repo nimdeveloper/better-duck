@@ -1,0 +1,21 @@
+# Standalone workspace: this example builds `better-duck-core` in
+# `loadable-extension` mode (links no DuckDB), which must never unify with the
+# library workspace's normal linked build.
+[workspace]
+
+[package]
+name = "better-duck-extension-example"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Example DuckDB loadable extension (.duckdb_extension) written in Rust."
+
+[lib]
+# DuckDB loads a shared library; the built cdylib is renamed to
+# `<name>.duckdb_extension` (see README.md).
+crate-type = ["cdylib"]
+
+[dependencies]
+better-duck-core = { path = "../../crates/better-duck-core", default-features = false, features = [
+    "loadable-extension",
+] }
