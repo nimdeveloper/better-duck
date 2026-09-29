@@ -49,7 +49,7 @@ use crate::{
 /// let raw_db = unsafe { RawDatabase::new(db).unwrap() };
 /// let shared = Arc::new(raw_db);
 /// ```
-pub struct RawDatabase(pub(crate) duckdb_database);
+pub struct RawDatabase(pub(crate) duckdb_database, pub(crate) bool);
 impl RawDatabase {
     /// Creates a new [`RawDatabase`] from an existing raw database handle.
     ///
@@ -70,7 +70,29 @@ impl RawDatabase {
                 Some("database is null".to_owned()),
             ));
         }
-        Ok(RawDatabase(db))
+        Ok(RawDatabase(db, true))
+    }
+
+    /// Wraps a **borrowed** `duckdb_database` owned by someone else — the host DuckDB
+    /// process, in a loadable extension. Dropping this never calls `duckdb_close`.
+    ///
+    /// # Safety
+    ///
+    /// `db` must be a valid `duckdb_database` that outlives this `RawDatabase` and is
+    /// closed by its real owner.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `db` is null.
+    #[inline]
+    pub unsafe fn new_borrowed(db: duckdb_database) -> Result<RawDatabase> {
+        if db.is_null() {
+            return Err(Error::DuckDBFailure(
+                FFIError::new(DuckDBError),
+                Some("database is null".to_owned()),
+            ));
+        }
+        Ok(RawDatabase(db, false))
     }
 
     /// Opens a database at the given path with the specified config.
@@ -109,6 +131,11 @@ unsafe impl Sync for RawDatabase {}
 impl Drop for RawDatabase {
     #[inline]
     fn drop(&mut self) {
+        // A borrowed handle (loadable extension: the host owns the database) must never
+        // be closed here — only the real owner closes it.
+        if !self.1 {
+            return;
+        }
         // SAFETY: `self.0` is a valid duckdb_database (or null). `duckdb_close` accepts
         // null and is idempotent. After this call the handle is invalidated.
         unsafe {

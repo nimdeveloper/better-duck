@@ -25,6 +25,12 @@ pub mod database;
 pub mod error;
 /// DuckDB extension management (`INSTALL`/`LOAD`/check) on `Connection`.
 mod extension;
+/// Loadable-extension support: the API-table initializer the `duckdb_entrypoint`
+/// macro's generated entrypoint calls (feature `loadable-extension`).
+#[cfg(feature = "loadable-extension")]
+pub mod extension_api {
+    pub use crate::extension::c_api_init;
+}
 mod helpers;
 /// Small exported declarative helper macros (`transaction!`, `params!`).
 #[macro_use]
@@ -66,6 +72,9 @@ pub use better_duck_macros::duckdb_aggregate;
 /// Registers a Rust function as a DuckDB custom cast (`CAST`/`TRY_CAST`). See [`udf`].
 #[cfg(feature = "udf")]
 pub use better_duck_macros::duckdb_cast;
+/// Generates the C entrypoint for a loadable `.duckdb_extension`. See [`extension_api`].
+#[cfg(feature = "loadable-extension")]
+pub use better_duck_macros::duckdb_entrypoint;
 /// Registers a plain Rust function as a DuckDB scalar function. See [`udf`].
 #[cfg(feature = "udf")]
 pub use better_duck_macros::duckdb_scalar;

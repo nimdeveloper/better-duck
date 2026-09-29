@@ -13,6 +13,29 @@ use crate::connection::Connection;
 use crate::error::{DuckDBConversionError, Error, Result};
 use crate::types::value::DuckValue;
 
+/// Initializes the dynamically-loaded DuckDB API table for a loadable
+/// `.duckdb_extension` (feature `loadable-extension`).
+///
+/// Called by the [`duckdb_entrypoint`](crate::duckdb_entrypoint) macro's generated
+/// entrypoint before any other `duckdb_*` call: it asks the host for its
+/// `duckdb_ext_api_v1` table via `access.get_api` and stores every function pointer.
+/// Returns `false` when the host declines (API-version mismatch), in which case DuckDB
+/// itself reports the reason.
+///
+/// # Safety
+///
+/// `info` and `access` must be the handles DuckDB's loader passed to the entrypoint.
+#[cfg(feature = "loadable-extension")]
+pub unsafe fn c_api_init(
+    info: crate::ffi::duckdb_extension_info,
+    access: *const crate::ffi::duckdb_extension_access,
+    minimum_version: &str,
+) -> bool {
+    // SAFETY: handles forwarded from the loader per this function's contract.
+    unsafe { crate::ffi::duckdb_rs_extension_api_init(info, access, minimum_version) }
+        .unwrap_or(false)
+}
+
 /// Whether `name` is a bare identifier safe to embed in an `INSTALL`/`LOAD`.
 fn is_valid_extension_name(name: &str) -> bool {
     !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')

@@ -32,6 +32,9 @@ better-duck-macros = { path = "../better-duck-macros", version = "0.1.0-beta.6",
 default         = ["chrono", "decimal"]
 json            = ["better-duck-sys/json"]
 parquet         = ["better-duck-sys/parquet"]
+# Bundle DuckDB's ICU extension (timezones/collations) into the static lib. Requires a
+# DuckDB archive re-vendored with icu sources (see better-duck-sys/build.rs).
+icu             = ["better-duck-sys/icu"]
 chrono          = ["dep:chrono"]
 decimal         = ["dep:rust_decimal"]
 pool            = ["dep:r2d2"]
@@ -48,6 +51,10 @@ polars          = ["arrow", "dep:polars", "dep:polars-arrow"]
 time            = ["dep:time"]
 # Convert between the native `DuckUuid` and the `uuid` crate's `Uuid`.
 uuid            = ["dep:uuid"]
+# EXPERIMENTAL. Build for a loadable `.duckdb_extension`: links no DuckDB and routes
+# every FFI call through the host's API table (see better-duck-sys). Pairs with the
+# `#[duckdb_entrypoint]` macro (needs `udf` to register functions from the entrypoint).
+loadable-extension = ["better-duck-sys/loadable-extension", "udf"]
 derive          = ["dep:better-duck-macros"]
 # Make the data derives additionally emit `better_duck_diesel` impls. Turned on by
 # `better-duck-diesel/derive`; the emitted code resolves `::better_duck_diesel` in

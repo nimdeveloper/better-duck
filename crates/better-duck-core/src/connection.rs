@@ -604,6 +604,25 @@ impl Connection {
         Database::from_raw(std::sync::Arc::clone(self.0.database()))
     }
 
+    /// Opens a connection on a **borrowed** `duckdb_database` owned by someone else —
+    /// the host DuckDB process, when this code runs inside a loadable
+    /// `.duckdb_extension`. The database is never closed by the returned connection.
+    ///
+    /// # Safety
+    ///
+    /// `db` must be a valid `duckdb_database` that outlives the returned [`Connection`]
+    /// (DuckDB's extension loader guarantees this for the handle it hands the
+    /// entrypoint).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `db` is null or a connection cannot be established.
+    pub unsafe fn open_from_raw(db: crate::ffi::duckdb_database) -> Result<Connection> {
+        // SAFETY: `db` is a valid borrowed handle per this function's contract.
+        let raw_db = unsafe { crate::raw::connection::RawDatabase::new_borrowed(db)? };
+        RawConnection::new(std::sync::Arc::new(raw_db)).map(Connection::from_raw)
+    }
+
     /// Returns the raw `duckdb_connection` handle for internal FFI use (e.g. the
     /// `udf` module's function registration, which needs the handle directly).
     #[cfg(any(feature = "udf", feature = "arrow"))]
