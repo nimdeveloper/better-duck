@@ -6,11 +6,44 @@
 
 mod attrs;
 mod derive;
+mod extension;
 mod sig;
 mod udf;
 
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput, ItemFn, ItemMod};
+
+/// Generates the C-ABI entrypoint for a DuckDB **loadable extension**
+/// (`.duckdb_extension`), wrapping a `fn(&Connection) -> Result<...>`.
+///
+/// ```ignore
+/// #[duckdb_entrypoint(name = "my_ext", min_duckdb_version = "v1.5.5")]
+/// fn init(conn: &Connection) -> better_duck_core::Result<()> {
+///     conn.register_scalar_function::<MyFn>()?;
+///     Ok(())
+/// }
+/// ```
+///
+/// Requires `better-duck-core`'s `loadable-extension` FFI mode (dynamically-loaded
+/// API table). See `better_duck_core::extension`.
+#[proc_macro_attribute]
+pub fn duckdb_entrypoint(
+    attr: TokenStream,
+    item: TokenStream,
+) -> TokenStream {
+    let input = parse_macro_input!(item as ItemFn);
+    let original = input.clone();
+    match syn::parse::<extension::EntrypointArgs>(attr)
+        .and_then(|args| extension::expand(args, input))
+    {
+        Ok(expanded) => expanded.into(),
+        Err(err) => {
+            let mut out: TokenStream = quote::quote!(#original).into();
+            out.extend(TokenStream::from(err.to_compile_error()));
+            out
+        },
+    }
+}
 
 /// Registers a plain Rust function as a DuckDB scalar function.
 ///
