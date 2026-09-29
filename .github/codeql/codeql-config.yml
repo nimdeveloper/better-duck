@@ -1,0 +1,7 @@
+name: "better-duck CodeQL config"
+
+# Scope analysis to the library workspace. `examples/` holds standalone demo crates
+# that are excluded from the root workspace and are not part of the published surface,
+# so they're excluded from code scanning too.
+paths-ignore:
+  - "examples"

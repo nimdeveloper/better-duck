@@ -1,5 +1,10 @@
 version: 2
 
+# Dependabot scans only the directories listed below. The `cargo` updater points at
+# the workspace root (`/`), whose `[workspace] exclude = ["examples"]` keeps the
+# standalone example crates out of the dependency graph — so `examples/` is
+# intentionally NOT scanned. Do not add an `examples/**` directory here: those are
+# demo crates, not published, and shouldn't generate dependency PRs.
 updates:
   - package-ecosystem: cargo
     directory: "/"

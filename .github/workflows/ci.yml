@@ -166,6 +166,28 @@ jobs:
             commands: |
               cargo test --locked -p better-duck-diesel --features r2d2
               cargo test --locked -p better-duck-diesel --all-features
+          - name: core-arrow-polars
+            commands: |
+              cargo test --locked -p better-duck-core --features arrow
+              cargo test --locked -p better-duck-core --features polars
+          - name: core-time-uuid
+            commands: |
+              cargo test --locked -p better-duck-core --features time
+              cargo test --locked -p better-duck-core --features uuid
+              cargo test --locked -p better-duck-core --features "time,uuid"
+          - name: core-icu
+            # The vendored archive carries the icu sources, so this compiles ICU in and
+            # exercises tests/icu.rs (named timezone + collation, no runtime LOAD).
+            commands: |
+              cargo test --locked -p better-duck-core --features icu
+          - name: loadable-extension
+            # EXPERIMENTAL. Links no DuckDB, so build-check only (a real DB is only
+            # present when the built .duckdb_extension is LOAD-ed into a host DuckDB).
+            # Also builds the example crate — the end-to-end `#[duckdb_entrypoint]` check.
+            commands: |
+              cargo build --locked -p better-duck-sys --features loadable-extension
+              cargo build --locked -p better-duck-core --features loadable-extension
+              cargo build --manifest-path examples/extension/Cargo.toml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
@@ -334,6 +356,10 @@ jobs:
   coverage:
     name: Coverage
     needs: linux-tests
+    # Coverage runs ONLY on direct pushes to the long-lived branches — never on pull
+    # requests, and never on tag/release runs (the publish workflow `workflow_call`s
+    # this file on a tag push, where `github.ref` is `refs/tags/…`, so it's excluded).
+    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -387,6 +413,8 @@ jobs:
           files: lcov.info
           fail_ci_if_error: false
           token: ${{ env.CODECOV_TOKEN }}
+          # The job only runs on main/develop pushes, so this is always the branch name.
+          override_branch: ${{ github.ref_name }}
 
   required-checks:
     name: Required checks
@@ -421,6 +449,9 @@ jobs:
           for result in \
             "$LINT_RESULT" "$LINUX_RESULT" "$DOCS_RESULT" \
             "$FEATURES_RESULT" "$WINDOWS_RESULT" "$MACOS_RESULT" \
-            "$ANDROID_RESULT" "$MSRV_RESULT" "$AUDIT_RESULT" "$COVERAGE_RESULT"; do
+            "$ANDROID_RESULT" "$MSRV_RESULT" "$AUDIT_RESULT"; do
             test "$result" = success
           done
+          # Coverage runs only on main/develop pushes (never on PRs or tag releases),
+          # so it is allowed to be skipped — but must not have failed when it did run.
+          test "$COVERAGE_RESULT" = success -o "$COVERAGE_RESULT" = skipped
