@@ -84,9 +84,9 @@ jobs:
           done
         shell: bash
 
-  # Package the published core crate and calculate its digest for SLSA. Runs
-  # after publish so its better-duck-sys/-macros dependencies resolve from the
-  # index (see the note on the publish job).
+  # Package the published core crate and compute its SLSA subjects (base64 of
+  # sha256sum output). Runs after publish so its better-duck-sys/-macros
+  # dependencies resolve from the index (see the note on the publish job).
   create_crate_artifact:
     needs: publish
     runs-on: ubuntu-latest
@@ -94,9 +94,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      crate_digest: ${{ steps.calculate_digest.outputs.digest }}
-      crate_name: ${{ steps.get_crate_info.outputs.crate_name }}
-      crate_version: ${{ steps.get_crate_info.outputs.crate_version }}
+      base64_subjects: ${{ steps.subjects.outputs.base64_subjects }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -104,37 +102,28 @@ jobs:
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install jq
-        run: sudo apt-get install -y jq
-
-      - name: Get crate name and version
-        id: get_crate_info
-        run: |
-          # SLSA subject is the primary published crate, better-duck-core.
-          CRATE_NAME=better-duck-core
-          CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name=="better-duck-core") | .version')
-          echo "crate_name=$CRATE_NAME" >> $GITHUB_OUTPUT
-          echo "crate_version=$CRATE_VERSION" >> $GITHUB_OUTPUT
-        shell: bash
-
       - name: Package crate (for digest)
         # sys/macros are on the index now (published above), so core resolves.
         run: cargo package -p better-duck-core --no-verify
         working-directory: .
 
-      - name: Calculate crate digest
-        id: calculate_digest
+      - name: Compute base64 subjects for SLSA
+        id: subjects
         run: |
+          set -euo pipefail
           CRATE_FILE=$(find target/package -name "better-duck-core-*.crate" | head -n 1)
           if [ -z "$CRATE_FILE" ]; then
-            echo "Error: better-duck-core .crate file not found in target/package/."
+            echo "Error: better-duck-core .crate file not found in target/package/." >&2
             exit 1
           fi
-          DIGEST=$(sha256sum "$CRATE_FILE" | awk '{print $1}')
-          echo "digest=sha256:$DIGEST" >> $GITHUB_OUTPUT
-          echo "Crate file: $CRATE_FILE"
-          echo "Digest: sha256:$DIGEST"
+          # The SLSA generator's `base64-subjects` input is base64(sha256sum output),
+          # i.e. base64 of one or more "<64-hex>  <name>" lines. A raw digest string
+          # (or one carrying a `sha256:` prefix) is not valid and makes the generator's
+          # final step fail. Emit the canonical form, using the bare filename as the
+          # subject name so it matches the uploaded `.crate` asset.
+          SUBJECTS=$(cd "$(dirname "$CRATE_FILE")" && sha256sum "$(basename "$CRATE_FILE")")
+          echo "Subjects: $SUBJECTS"
+          echo "base64_subjects=$(printf '%s' "$SUBJECTS" | base64 -w0)" >> "$GITHUB_OUTPUT"
         shell: bash
 
   # Create a GitHub Release for the tag, with the CHANGELOG section for this
@@ -224,7 +213,7 @@ jobs:
     needs: [create_crate_artifact, github_release]
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
-      base64-subjects: "${{ needs.create_crate_artifact.outputs.crate_digest }}  ${{ needs.create_crate_artifact.outputs.crate_name }}-${{ needs.create_crate_artifact.outputs.crate_version }}.crate"
+      base64-subjects: "${{ needs.create_crate_artifact.outputs.base64_subjects }}"
       upload-assets: true
     permissions:
       contents: write
