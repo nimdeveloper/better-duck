@@ -5,12 +5,10 @@
 //! safe, owning API **without pulling in an Arrow library** — it defines the stable
 //! C Data Interface ABI structs directly and manages their `release` callbacks.
 //!
-//! A downstream consumer that has `arrow-rs` can reinterpret
-//! [`ArrowSchemaHandle`](crate::arrow::ArrowSchemaHandle) /
-//! [`ArrowArrayHandle`](crate::arrow::ArrowArrayHandle) (via
-//! [`as_ptr`](crate::arrow::ArrowSchemaHandle::as_ptr)) as
-//! `arrow::ffi::FFI_ArrowSchema` / `FFI_ArrowArray` — the layout is identical — and build
-//! `RecordBatch`es / Arrow IPC from there.
+//! A downstream consumer that has `arrow-rs` can reinterpret `ArrowSchemaHandle` /
+//! `ArrowArrayHandle` (via their `as_ptr`) as `arrow::ffi::FFI_ArrowSchema` /
+//! `FFI_ArrowArray` — the layout is identical — and build `RecordBatch`es / Arrow IPC
+//! from there.
 //!
 //! [Arrow C Data Interface]: https://arrow.apache.org/docs/format/CDataInterface.html
 #![allow(clippy::not_unsafe_ptr_arg_deref)]

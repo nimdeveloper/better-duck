@@ -3,8 +3,7 @@
 //!
 //! GEOMETRY values travel as WKB, so geometry arguments/results are typed as
 //! [`Binary`](diesel::sql_types::Binary) here; the spatial functions themselves
-//! only exist once the extension is loaded, so call
-//! [`ensure_loaded`](crate::spatial::ensure_loaded) first.
+//! only exist once the extension is loaded, so call `ensure_loaded` first.
 //!
 //! Docs: <https://duckdb.org/docs/current/core_extensions/spatial/functions>
 

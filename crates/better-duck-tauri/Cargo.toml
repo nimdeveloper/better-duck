@@ -23,8 +23,8 @@ serde_json  = "1.0"
 schemars    = "0.8"
 thiserror   = "2.0"
 log         = { workspace = true }
-better-duck-core   = { path = "../better-duck-core", version = "0.1.0-beta.6", optional = true }
-better-duck-diesel = { path = "../better-duck-diesel", version = "0.1.0-beta.6", optional = true }
+better-duck-core   = { path = "../better-duck-core", version = "0.1.0-beta.7", optional = true }
+better-duck-diesel = { path = "../better-duck-diesel", version = "0.1.0-beta.7", optional = true }
 diesel             = { workspace = true, optional = true }
 diesel_migrations  = { version = "2.3", optional = true }
 r2d2               = { version = "0.8", optional = true }
