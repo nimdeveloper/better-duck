@@ -4,7 +4,8 @@
 //! keeps using its own dependency-free Arrow export ([`crate::arrow`]).
 //!
 //! Direction supported here:
-//! - [`Connection::query_polars`] — run SQL and collect the result into a `DataFrame`.
+//! - [`Connection::query_polars`](crate::connection::Connection::query_polars) — run SQL
+//!   and collect the result into a `DataFrame`.
 //!
 //! (`register_polars`, the `DataFrame` → DuckDB direction, follows.)
 
