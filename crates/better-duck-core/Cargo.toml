@@ -26,7 +26,7 @@ polars        = { version = "0.55", default-features = false, optional = true }
 polars-arrow  = { version = "0.55", default-features = false, optional = true }
 time          = { version = "0.3", default-features = false, optional = true }
 uuid          = { version = "1", default-features = false, optional = true }
-better-duck-macros = { path = "../better-duck-macros", version = "0.1.0-beta.6", optional = true }
+better-duck-macros = { path = "../better-duck-macros", version = "0.1.0-beta.7", optional = true }
 
 [features]
 default         = ["chrono", "decimal"]

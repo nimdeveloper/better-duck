@@ -43,15 +43,15 @@
 ```toml
 [dependencies]
 # DuckDB client
-better-duck-core = "0.1.0-beta.6"
+better-duck-core = "0.1.0-beta.7"
 
 # Optional: Diesel ORM backend
-better-duck-diesel = "0.1.0-beta.6"
+better-duck-diesel = "0.1.0-beta.7"
 ```
 
 > [!NOTE]
 > Cargo's default version requirement (e.g. `"0.1"`) excludes pre-releases like `-beta.4`. Pin the
-> exact version as shown, or run `cargo add better-duck-core --version 0.1.0-beta.6`.
+> exact version as shown, or run `cargo add better-duck-core --version 0.1.0-beta.7`.
 > `better-duck-macros` is pulled in automatically by the `udf` / `derive` feature flags — you don't
 > depend on it directly.
 
