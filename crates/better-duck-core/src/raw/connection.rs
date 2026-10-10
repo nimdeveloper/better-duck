@@ -662,6 +662,27 @@ impl RawConnection {
         }
         stmt.execute()
     }
+
+    /// Prepares `sql`, binds `binds` by name (SQL `$name`-style parameters), and
+    /// executes the statement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidParameterName`] if any name in `binds` is not a
+    /// parameter of `sql`, or [`Error::DuckDBFailure`] if preparation, binding, or
+    /// execution otherwise fails.
+    #[must_use = "the DuckResult carries both affected-row count (.changes()) and row iterator"]
+    pub fn execute_with_named(
+        &mut self,
+        sql: impl AsRef<str>,
+        binds: &mut [(&str, &mut dyn AppendAble)],
+    ) -> Result<DuckResult> {
+        let mut stmt = CachedStatement::prepare(self, sql)?;
+        for (name, bind) in binds.iter_mut() {
+            stmt.bind_named(name, *bind)?;
+        }
+        stmt.execute()
+    }
 }
 
 // `RawConnection` deliberately does not implement `Clone`. Cloning used to mean

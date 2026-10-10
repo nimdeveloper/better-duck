@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Schema type introspection**: `TableDescription` gained `column_count()` and
   `column_type(index) -> Option<TypeInfo>`, so a table's column *types* can be read by index —
   alongside the existing column names and `DEFAULT` flags — without issuing a query.
+- **Named-parameter execution**: `Connection::execute_with_named` (and the underlying
+  `RawConnection::execute_with_named`) prepares a statement and binds `$name`-style parameters by
+  name in a single call, over the existing `CachedStatement::bind_named` primitive. An unknown name
+  returns `Error::InvalidParameterName`.
 
 ## [0.1.0-beta.7] — 2026-10-01
 

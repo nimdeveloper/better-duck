@@ -248,6 +248,23 @@ impl Connection {
         self.0.execute(sql, binds)
     }
 
+    /// Prepares and executes a SQL statement whose parameters are bound by name
+    /// (`$name`-style), returning the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidParameterName`](crate::error::Error::InvalidParameterName)
+    /// if any name in `binds` is not a parameter of `sql`, or an error if
+    /// preparation, binding, or execution otherwise fails.
+    #[must_use = "the DuckResult carries both affected-row count (.changes()) and a row iterator — consume it"]
+    pub fn execute_with_named(
+        &mut self,
+        sql: impl AsRef<str>,
+        binds: &mut [(&str, &mut dyn AppendAble)],
+    ) -> Result<DuckResult> {
+        self.0.execute_with_named(sql, binds)
+    }
+
     /// Executes `sql` (binding `binds` as positional parameters) and exports the result
     /// via the Arrow C Data Interface.
     ///
@@ -813,6 +830,43 @@ mod connection_tests {
             row.get("name").unwrap(),
             &crate::types::value::DuckValue::Text("bound".to_owned())
         );
+    }
+
+    #[test]
+    fn execute_with_named_binds_by_name_and_reports_errors() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE test (id INTEGER, name VARCHAR)").unwrap();
+        let mut id = 7_i32;
+        let mut name = String::from("bound");
+        // Names given out of positional order; binding is by `$name`, not index.
+        let mut result = conn
+            .execute_with_named(
+                "INSERT INTO test VALUES ($id, $name)",
+                &mut [
+                    ("name", &mut name as &mut dyn AppendAble),
+                    ("id", &mut id as &mut dyn AppendAble),
+                ],
+            )
+            .unwrap();
+        assert_eq!(result.changes(), 1);
+
+        let mut rows = conn.execute("SELECT id, name FROM test").unwrap();
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!(row.get("id").unwrap(), &crate::types::value::DuckValue::Int(7));
+        assert_eq!(
+            row.get("name").unwrap(),
+            &crate::types::value::DuckValue::Text("bound".to_owned())
+        );
+
+        // An unknown parameter name is reported, not silently ignored.
+        let mut v = 1_i32;
+        assert!(matches!(
+            conn.execute_with_named(
+                "SELECT $id",
+                &mut [("missing", &mut v as &mut dyn AppendAble)]
+            ),
+            Err(crate::error::Error::InvalidParameterName(_))
+        ));
     }
 
     #[test]
