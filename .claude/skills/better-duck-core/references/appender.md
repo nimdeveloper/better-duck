@@ -1,0 +1,134 @@
+# Appender — bulk insert
+
+The `Appender` (`better_duck_core::Appender`) is DuckDB's fast bulk-ingest path — far faster than
+row-by-row `INSERT`. Create it from a `Connection`.
+
+## Contents
+
+- [Lifecycle](#lifecycle)
+- [Appending rows](#appending-rows)
+- [Catalog & query appenders](#catalog--query-appenders)
+- [Projected columns & default rows](#projected-columns--default-rows)
+- [Raw chunk ingestion](#raw-chunk-ingestion)
+- [Poisoning & error handling](#poisoning--error-handling)
+
+## Lifecycle
+
+```rust
+use better_duck_core::types::value::DuckValue;
+
+conn.execute_batch("CREATE TABLE items (id INTEGER, name VARCHAR)")?;
+
+let mut app = conn.appender("items", "main")?;   // (table, schema)
+// append one AppendAble per column, per row:
+app.append(&mut DuckValue::Int(1))?;
+app.append(&mut DuckValue::text("a"))?;          // ...then the next row's columns...
+app.save()?;                                      // flush buffered rows to the database
+```
+
+- `Connection::appender(table, schema) -> Result<Appender>` — the common case. `#[must_use]`.
+- Buffered rows become visible after `save()` (flush, appender stays usable) or `finish()` (flush +
+  close, consumes the appender and surfaces any error). Dropping the appender flushes best-effort
+  and only **logs** a failure.
+- An `Appender` keeps its originating connection alive and appends inside any transaction open on
+  that connection. A second connection (`try_clone`) can read the rows after `save()`.
+
+Rows map to columns in order; one `append` call per column value. For a struct-per-row ergonomic
+path, derive `#[derive(ToRow)]` and `append(&mut my_struct)` — see **`better-duck-macros`**.
+
+## Appending rows
+
+`append<T: AppendAble>(&mut self, row: &mut T) -> Result<()>` is `#[must_use]`. Every `DuckValue`
+and the primitive Rust types implement `AppendAble`. The call opens a row, appends the value, and
+closes the row with a guard that ends the row even on an early return or panic.
+
+`save(&mut self) -> Result<()>` flushes; `finish(self) -> Result<()>` flushes, closes, and reports
+errors (unlike drop). Both are `#[must_use]`.
+
+## Catalog & query appenders
+
+```rust
+// Target a table in a specific attached catalog (None = default catalog).
+let mut app = conn.appender_ext(Some("memory"), "main", "t")?;
+
+// Query appender: appended rows feed an INSERT/UPDATE/DELETE/MERGE, referred to by
+// `table_name` (default "appended_data"). `types` gives the appended columns' types.
+use better_duck_core::types::LogicalType;
+let types = [LogicalType::of::<i32>()?];
+let mut app = conn.appender_query(
+    "INSERT INTO dest SELECT * FROM appended_data",
+    &types,
+    None,          // table_name -> "appended_data"
+    None,          // column_names -> col1, col2, ...
+)?;
+app.append(&mut DuckValue::Int(42))?;
+app.save()?;
+```
+
+`LogicalType::of::<T>()` builds a logical type from a Rust type; `LogicalType` lives at
+`better_duck_core::types::LogicalType`.
+
+## Projected columns & default rows
+
+Introspection: `column_count() -> u64` and `column_type(col_idx: u64) -> Option<LogicalType>`
+reflect the appender's **active column list** (the table's columns, unless projected).
+
+Projection — supply only some columns, letting the rest take their `DEFAULT`. Must be configured
+**before** the first row (otherwise an error):
+
+```rust
+conn.execute_batch("CREATE TABLE t (a INTEGER, b INTEGER DEFAULT 99)")?;
+let mut app = conn.appender("t", "main")?;
+app.add_column("a")?;                 // active list is just `a`
+assert_eq!(app.column_count(), 1);
+app.append(&mut DuckValue::Int(7))?;  // b takes its DEFAULT (99)
+app.save()?;
+// app.clear_columns()? would restore the full column set (also pre-first-row only).
+```
+
+`append_default_row()` appends one row where **every** column takes its `DEFAULT` (a column with no
+`DEFAULT` becomes `NULL`).
+
+## Raw chunk ingestion
+
+- `append_chunk(&DataChunk) -> Result<()>` — appends every row of a raw `DataChunk` (e.g. one fetched
+  from a query result) in one call. The chunk is only read; column count must match (validated
+  Rust-side).
+- `append_default_to_chunk(&mut DataChunk, col: u64, row: u64)` — write column `col`'s `DEFAULT`
+  into a raw chunk cell.
+
+With feature `udf`/`columnar` (see [columnar](columnar.md)), the `DataChunkHandle` counterparts:
+
+- `append_chunk_handle(&DataChunkHandle) -> Result<()>` — append a chunk you built column-by-column
+  via `DataChunkHandle::new` + `vector_mut`. The shape check is **strict**: column count **and** each
+  column's type id must match the appender, and it runs entirely before the chunk reaches DuckDB, so
+  a rejected chunk leaves the appender usable.
+- `set_chunk_default(&mut DataChunkHandle, col: usize, row: usize)` — write a column's `DEFAULT` into
+  a built chunk cell.
+
+```rust
+use better_duck_core::{types::LogicalType, DataChunkHandle};
+let mut chunk = DataChunkHandle::new(&[LogicalType::of::<i32>()?])?;
+chunk.vector_mut(0)?.set(0, 123_i32)?;
+chunk.set_len(1)?;
+let mut app = conn.appender("one_int", "main")?;
+app.append_chunk_handle(&chunk)?;
+app.save()?;
+```
+
+## Poisoning & error handling
+
+DuckDB **invalidates** an appender the moment a flush, row-end, or close fails — the buffered data is
+gone and no further append/flush/close is legal. `Appender` models this with an internal state
+machine: a failed `append`/`save` **poisons** it, after which every operation fails fast
+(`Error::Engine` carrying the poison message) without re-entering DuckDB, and drop skips the flush
+entirely (re-flushing an invalidated appender can deadlock DuckDB on indexed/`PRIMARY KEY` tables).
+
+- Engine-side failures (e.g. a deferred `CHECK` constraint caught at flush) surface as
+  `Error::Engine(EngineError { kind, message })` with DuckDB's own classification.
+- A Rust-side value conversion failure mid-row also poisons the appender but returns the original
+  error unchanged.
+- The originating **connection** stays usable after an appender poisons.
+
+Use `finish()` (not drop) when you need the flush/close error reported. See
+[errors-and-extensions](errors-and-extensions.md) for `EngineError`.

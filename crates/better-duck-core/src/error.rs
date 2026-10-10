@@ -437,6 +437,12 @@ pub enum Error {
     /// An error occurred while appending a value via the DuckDB appender API.
     AppendError,
 
+    /// `DuckResult::fetch_chunk` was called on a result that had already begun
+    /// row-by-row iteration (or a row-by-row method was called after
+    /// `fetch_chunk`). The two iteration modes consume the same underlying
+    /// result and cannot be mixed on one `DuckResult`.
+    MixedIterationMode,
+
     /// A value conversion error.
     ConversionError(DuckDBConversionError),
 
@@ -480,6 +486,7 @@ impl PartialEq for Error {
             (Error::InvalidParameterCount(i1, n1), Error::InvalidParameterCount(i2, n2)) => {
                 i1 == i2 && n1 == n2
             },
+            (Error::MixedIterationMode, Error::MixedIterationMode) => true,
             (..) => false,
         }
     }
@@ -571,6 +578,9 @@ impl fmt::Display for Error {
             Error::InvalidQuery => write!(f, "Query is not read-only"),
             Error::MultipleStatement => write!(f, "Multiple statements provided"),
             Error::AppendError => write!(f, "Append error"),
+            Error::MixedIterationMode => {
+                write!(f, "cannot mix row-by-row and chunk-based iteration on the same DuckResult")
+            },
             Error::ConversionError(ref err) => match err {
                 DuckDBConversionError::TypeMismatch { expected, found } => {
                     write!(f, "Type mismatch: expected {expected}, found {found}")
@@ -610,6 +620,7 @@ impl error::Error for Error {
             | Error::AppendError
             // | Error::ArrowTypeToDuckdbType(..)
             | Error::MultipleStatement
+            | Error::MixedIterationMode
             | Error::ConversionError(_) => None,
             // Error::FromSqlConversionFailure(_, _, ref err)
             Error::ToSqlConversionFailure(ref err) => Some(&**err),

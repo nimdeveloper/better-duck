@@ -19,6 +19,14 @@ use crate::raw::error_data::ErrorData;
 use crate::types::appendable::AppendAble;
 use crate::types::LogicalType;
 
+/// Columnar bulk insert of a built `DataChunkHandle` (features `udf`/`columnar`).
+#[cfg(any(feature = "udf", feature = "columnar"))]
+use crate::error::DuckDBConversionError;
+#[cfg(any(feature = "udf", feature = "columnar"))]
+use crate::ffi::{duckdb_destroy_logical_type, duckdb_get_type_id};
+#[cfg(any(feature = "udf", feature = "columnar"))]
+use crate::udf::DataChunkHandle;
+
 /// Lifecycle state of an [`Appender`].
 ///
 /// DuckDB invalidates an appender the moment a flush, `end_row`, or close fails:
@@ -354,6 +362,87 @@ impl Appender {
         // in range. DuckDB writes the default into the chunk cell.
         let rc = unsafe {
             duckdb_append_default_to_chunk(self.inn, chunk.0, col as idx_t, row as idx_t)
+        };
+        self.check(rc)
+    }
+
+    /// Appends every row of a built [`DataChunkHandle`] to the appender in one
+    /// call, after validating the chunk's shape against the appender's columns.
+    ///
+    /// Unlike [`append_chunk`](Appender::append_chunk) (which copies a raw chunk
+    /// fetched from a query result), this takes a chunk built column-by-column via
+    /// [`DataChunkHandle::new`] + [`vector_mut`](DataChunkHandle::vector_mut). The
+    /// chunk is only read; the caller keeps ownership.
+    ///
+    /// The shape check is strict — both column *count* and per-column *type id*
+    /// must match — and runs entirely before the chunk is handed to DuckDB, so a
+    /// rejected chunk leaves the appender fully usable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the appender is poisoned/closed, the chunk's column
+    /// count or any column's type disagrees with the appender, or DuckDB rejects
+    /// the chunk.
+    #[cfg(any(feature = "udf", feature = "columnar"))]
+    pub fn append_chunk_handle(
+        &mut self,
+        chunk: &DataChunkHandle,
+    ) -> Result<()> {
+        self.ensure_ready()?;
+        let appender_cols = self.column_count() as usize;
+        let chunk_cols = chunk.num_columns();
+        if chunk_cols != appender_cols {
+            return Err(Error::Engine(EngineError::unavailable(Some(format!(
+                "data chunk has {chunk_cols} columns but the appender expects {appender_cols}"
+            )))));
+        }
+        for i in 0..appender_cols {
+            // SAFETY: `self.inn` is a valid appender; `i` is in range. The returned
+            // logical type is owned here and destroyed before the next iteration.
+            let mut lt = unsafe { duckdb_appender_column_type(self.inn, i as idx_t) };
+            let expected = unsafe { duckdb_get_type_id(lt) };
+            unsafe { duckdb_destroy_logical_type(&mut lt) };
+            let found = chunk.column_type_id(i)?;
+            if expected != found {
+                return Err(Error::ConversionError(DuckDBConversionError::TypeMismatch {
+                    expected,
+                    found,
+                }));
+            }
+        }
+        // SAFETY: `self.inn` is a valid appender; `chunk.as_raw()` is a valid data
+        // chunk whose shape was just verified. DuckDB reads it without taking ownership.
+        let rc = unsafe { duckdb_append_data_chunk(self.inn, chunk.as_raw()) };
+        self.check(rc)?;
+        if chunk.len() > 0 {
+            self.rows_appended = true;
+        }
+        Ok(())
+    }
+
+    /// Writes the `DEFAULT` of appender column `col` into a built
+    /// [`DataChunkHandle`] at `(col, row)` — the [`DataChunkHandle`] counterpart
+    /// to [`append_default_to_chunk`](Appender::append_default_to_chunk).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the appender is poisoned/closed, `col` is out of range
+    /// for the chunk, or DuckDB reports a failure.
+    #[cfg(any(feature = "udf", feature = "columnar"))]
+    pub fn set_chunk_default(
+        &mut self,
+        chunk: &mut DataChunkHandle,
+        col: usize,
+        row: usize,
+    ) -> Result<()> {
+        self.ensure_ready()?;
+        if col >= chunk.num_columns() {
+            return Err(Error::InvalidColumnIndex(col));
+        }
+        // SAFETY: `self.inn` is a valid appender; `chunk.as_raw()` is a valid chunk;
+        // `col` is in range. DuckDB writes the default into the chunk cell.
+        let rc = unsafe {
+            duckdb_append_default_to_chunk(self.inn, chunk.as_raw(), col as idx_t, row as idx_t)
         };
         self.check(rc)
     }

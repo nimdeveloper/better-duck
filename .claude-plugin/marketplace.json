@@ -1,0 +1,17 @@
+{
+  "name": "better-duck",
+  "description": "Agent skills for the better-duck DuckDB driver for Rust (core, macros, diesel, tauri) and DuckDB itself.",
+  "owner": {
+    "name": "Hamid Reza Shakibi",
+    "url": "https://github.com/nimdeveloper/better-duck"
+  },
+  "plugins": [
+    {
+      "name": "better-duck-skills",
+      "source": ".",
+      "description": "DuckDB + better-duck (core/macros/diesel/tauri) usage skills.",
+      "version": "0.1.0",
+      "tags": ["duckdb", "rust", "database", "orm", "tauri", "ffi"]
+    }
+  ]
+}

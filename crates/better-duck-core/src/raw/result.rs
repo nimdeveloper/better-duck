@@ -21,6 +21,11 @@ use crate::{
 
 use super::data_chunk::DataChunk;
 
+/// Columnar `fetch_chunk` support: pulls results as owned data chunks for the
+/// `udf`/`columnar` features.
+#[cfg(any(feature = "udf", feature = "columnar"))]
+use crate::{ffi::duckdb_fetch_chunk, udf::DataChunkHandle};
+
 /// What kind of output a query produced.
 ///
 /// Mirrors DuckDB's `duckdb_result_type`. `#[non_exhaustive]` with
@@ -54,6 +59,20 @@ impl ResultType {
             other => ResultType::Unknown(other),
         }
     }
+}
+
+/// Which iteration mode a [`DuckResult`] has committed to. Row-by-row iteration
+/// and chunk-based [`fetch_chunk`](DuckResult::fetch_chunk) both consume the same
+/// underlying result, so once one is used the other is refused.
+#[derive(Debug, Default, PartialEq, Eq)]
+enum IterMode {
+    /// Nothing consumed yet; the next call picks the mode.
+    #[default]
+    Unset,
+    /// Committed to row-by-row iteration (`next`/`exists`/`count`/`materialize`).
+    Row,
+    /// Committed to chunk-based iteration (`fetch_chunk`).
+    Chunk,
 }
 
 /// Represents the result of a DuckDB query, providing row-by-row iteration over
@@ -101,6 +120,9 @@ pub struct DuckResult {
     /// A single-row lookahead buffer for [`exists`](DuckResult::exists), independent
     /// of `cache` — peeking a row must work whether or not rewind support is enabled.
     peeked: Option<DuckRow>,
+    /// Which iteration mode this result has committed to; guards against mixing
+    /// row-by-row and chunk-based consumption of the same underlying result.
+    mode: IterMode,
 }
 
 impl DuckResult {
@@ -131,6 +153,7 @@ impl DuckResult {
             exhausted: false,
             rewind_enabled: false,
             peeked: None,
+            mode: IterMode::Unset,
         };
         res.resolve_columns_name().expect("failed to resolve column names");
         res.resolve_columns_types().expect("failed to resolve column types");
@@ -423,13 +446,62 @@ impl DuckResult {
         self.column_names.get().unwrap().iter().position(|name| name.as_ref() == col_name)
     }
 
+    /// Commits this result to row-by-row iteration, or fails if it has already
+    /// been consumed chunk-by-chunk via [`fetch_chunk`](DuckResult::fetch_chunk).
+    fn enter_row_mode(&mut self) -> Result<()> {
+        match self.mode {
+            IterMode::Unset => {
+                self.mode = IterMode::Row;
+                Ok(())
+            },
+            IterMode::Row => Ok(()),
+            IterMode::Chunk => Err(Error::MixedIterationMode),
+        }
+    }
+
+    /// Pulls the next chunk of rows directly, bypassing per-row [`DuckRow`]
+    /// materialization — the columnar counterpart to [`Iterator::next`].
+    ///
+    /// Combine with [`VectorRef::as_slice`](crate::VectorRef::as_slice) for a
+    /// zero-conversion read of a fixed-width column. Returns `None` once the
+    /// result is exhausted.
+    ///
+    /// A `DuckResult` may be consumed either row-by-row *or* chunk-by-chunk, not
+    /// both: calling this after any row-by-row method (`next`/`exists`/`count`/
+    /// `materialize`) yields [`Error::MixedIterationMode`], and a row-by-row call
+    /// after `fetch_chunk` does the same.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MixedIterationMode`] if row-by-row iteration already
+    /// began, or a conversion error if a fetched chunk cannot be wrapped.
+    #[cfg(any(feature = "udf", feature = "columnar"))]
+    pub fn fetch_chunk(&mut self) -> Option<Result<DataChunkHandle>> {
+        match self.mode {
+            IterMode::Unset => self.mode = IterMode::Chunk,
+            IterMode::Chunk => {},
+            IterMode::Row => return Some(Err(Error::MixedIterationMode)),
+        }
+        // SAFETY: `self.res` is a small `Copy` value type; passing a copy is the
+        // documented calling convention. A non-null return is a newly allocated,
+        // caller-owned chunk wrapped as an owned `DataChunkHandle`.
+        let ptr = unsafe { duckdb_fetch_chunk(self.res) };
+        if ptr.is_null() {
+            return None;
+        }
+        Some(DataChunkHandle::from_owned(ptr))
+    }
+
     /// Returns whether this result contains at least one more row, without
     /// consuming it — a subsequent call to `next()` still yields that row.
     ///
     /// # Errors
     ///
-    /// Returns an error if pulling the first row fails.
+    /// Returns an error if pulling the first row fails, or
+    /// [`Error::MixedIterationMode`] if the result was already consumed via
+    /// [`fetch_chunk`](DuckResult::fetch_chunk).
     pub fn exists(&mut self) -> Result<bool> {
+        self.enter_row_mode()?;
         if self.rewind_enabled && self.cursor < self.cache.len() {
             return Ok(true);
         }
@@ -491,6 +563,9 @@ impl Iterator for DuckResult {
     type Item = Result<DuckRow>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if let Err(e) = self.enter_row_mode() {
+            return Some(Err(e));
+        }
         if self.rewind_enabled && self.cursor < self.cache.len() {
             let row = self.cache[self.cursor].clone();
             self.cursor += 1;
@@ -538,6 +613,9 @@ impl Iterator for DuckResult {
         Self: Sized,
     {
         let mut n = 0usize;
+        self.enter_row_mode().expect(
+            "cannot mix row-by-row and chunk-based iteration on the same DuckResult (count)",
+        );
         if self.rewind_enabled && self.cursor < self.cache.len() {
             n += self.cache.len() - self.cursor;
             self.cursor = self.cache.len();

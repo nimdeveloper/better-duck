@@ -1,0 +1,13 @@
+{
+  "name": "better-duck-skills",
+  "version": "0.1.0",
+  "description": "DuckDB + better-duck usage skills: the DuckDB engine and the better-duck-core, -macros, -diesel, and -tauri crates.",
+  "author": {
+    "name": "Hamid Reza Shakibi",
+    "url": "https://github.com/nimdeveloper/better-duck"
+  },
+  "repository": "https://github.com/nimdeveloper/better-duck",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["duckdb", "rust", "database", "orm", "tauri", "ffi", "analytics"],
+  "skills": ["./.claude/skills"]
+}

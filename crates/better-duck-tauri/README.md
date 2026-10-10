@@ -11,7 +11,7 @@ A [Tauri v2](https://tauri.app) plugin that exposes [better-duck](https://crates
 
 ```toml
 [dependencies]
-better-duck-tauri = { version = "0.1.0-beta.7", features = ["backend-core"] }
+better-duck-tauri = { version = "0.1.0-beta.8", features = ["backend-core"] }
 ```
 
 Pick one backend feature: `backend-core` (default) or `backend-diesel`.
@@ -122,7 +122,7 @@ Background sweeps use `FORCE CHECKPOINT` when `checkpoint_force(true)` is set.
 | Feature | Built on | Notes |
 | --- | --- | --- |
 | `backend-core` *(default)* | `better-duck-core` | Lightweight; inline migration engine. |
-| `backend-diesel` | `better-duck-diesel` | Shares the core engine today; a Diesel-native pool + `embed_migrations!` is planned. |
+| `backend-diesel` | `better-duck-diesel` | Diesel-native engine: an r2d2 connection pool (`SharedDuckDbConnectionManager`) and Diesel `MigrationHarness`-driven migrations. |
 
 ## License
 

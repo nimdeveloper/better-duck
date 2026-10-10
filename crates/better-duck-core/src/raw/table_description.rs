@@ -176,8 +176,9 @@ impl TableDescription {
     ) -> Option<TypeInfo> {
         // SAFETY: `self.inner` is a valid table description; the returned handle (or
         // null) is wrapped by `LogicalType`, described, and dropped (destroyed) here.
-        let raw =
-            unsafe { ffi::duckdb_table_description_get_column_type(self.inner, index as ffi::idx_t) };
+        let raw = unsafe {
+            ffi::duckdb_table_description_get_column_type(self.inner, index as ffi::idx_t)
+        };
         LogicalType::from_raw(raw).ok().map(|lt| lt.describe())
     }
 

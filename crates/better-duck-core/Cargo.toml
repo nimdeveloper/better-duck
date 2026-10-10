@@ -26,7 +26,7 @@ polars        = { version = "0.55", default-features = false, optional = true }
 polars-arrow  = { version = "0.55", default-features = false, optional = true }
 time          = { version = "0.3", default-features = false, optional = true }
 uuid          = { version = "1", default-features = false, optional = true }
-better-duck-macros = { path = "../better-duck-macros", version = "0.1.0-beta.7", optional = true }
+better-duck-macros = { path = "../better-duck-macros", version = "0.1.0-beta.8", optional = true }
 
 [features]
 default         = ["chrono", "decimal"]
@@ -40,6 +40,10 @@ decimal         = ["dep:rust_decimal"]
 pool            = ["dep:r2d2"]
 async           = ["dep:tokio"]
 udf             = ["dep:better-duck-macros"]
+# Columnar data-chunk read/write (fetch results as chunks, zero-copy column slices, build-and-bulk-
+# insert). Reuses the vector/data-chunk machinery that `udf` also uses, but without the proc-macro
+# dependency `udf` pulls in. Enabling `udf` turns these APIs on too.
+columnar        = []
 # Export query results via the Arrow C Data Interface (no new dependency — uses the
 # ABI structs directly). Consumers can reinterpret the handles as arrow-rs FFI structs.
 arrow           = []

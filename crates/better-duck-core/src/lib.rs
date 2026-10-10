@@ -52,8 +52,10 @@ pub mod arrow;
 /// Polars `DataFrame` interop (feature `polars`), bridged via the Arrow C Data Interface.
 #[cfg(feature = "polars")]
 pub mod polars;
-/// User-defined DuckDB functions: scalar functions and table functions.
-#[cfg(feature = "udf")]
+/// User-defined DuckDB functions, and the columnar data-chunk read/write APIs
+/// they share. Compiled whenever either `udf` or `columnar` is enabled; the
+/// user-defined-function surface itself still requires `udf`.
+#[cfg(any(feature = "udf", feature = "columnar"))]
 pub mod udf;
 
 /// Async facade over [`connection::Connection`].
@@ -154,3 +156,8 @@ pub use types::date_native::DuckTime;
 pub use types::from_row::FromRow;
 /// Trait for the fallible read-direction conversion from a `DuckValue` into a Rust type.
 pub use types::from_value::FromDuckValue;
+/// Columnar data-chunk read/write: a writable [`DataChunkHandle`], per-column
+/// [`VectorRef`]/[`VectorMut`] views, and the [`FixedWidth`] marker for
+/// zero-copy column slices. Feature `columnar` (also enabled by `udf`).
+#[cfg(any(feature = "udf", feature = "columnar"))]
+pub use udf::{DataChunkHandle, FixedWidth, VectorMut, VectorRef};

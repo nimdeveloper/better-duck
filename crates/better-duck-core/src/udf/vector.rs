@@ -10,13 +10,14 @@
 use std::{ffi::c_char, marker::PhantomData, ptr, slice, str};
 
 use crate::{
-    error::{Error, Result},
+    error::{DuckDBConversionError, Error, Result},
     ffi::{
         duckdb_destroy_logical_type, duckdb_get_type_id, duckdb_string_t, duckdb_string_t_data,
         duckdb_string_t_length, duckdb_validity_row_is_valid, duckdb_validity_set_row_invalid,
-        duckdb_vector, duckdb_vector_assign_string_element_len,
-        duckdb_vector_ensure_validity_writable, duckdb_vector_get_column_type,
-        duckdb_vector_get_data, duckdb_vector_get_validity,
+        duckdb_validity_set_row_valid, duckdb_validity_set_row_validity, duckdb_vector,
+        duckdb_vector_assign_string_element_len, duckdb_vector_ensure_validity_writable,
+        duckdb_vector_get_column_type, duckdb_vector_get_data, duckdb_vector_get_validity,
+        DUCKDB_TYPE,
     },
     types::{
         numeric::{hugeint_from_i128, i128_from_hugeint, u128_from_uhugeint, uhugeint_from_u128},
@@ -70,6 +71,53 @@ impl<'a> VectorRef<'a> {
         row: usize,
     ) -> UdfResult<T> {
         T::read(self, row)
+    }
+
+    /// Returns `len` rows of this column as a zero-copy `&[T]` slice.
+    ///
+    /// `T` must be a [`FixedWidth`] scalar whose DuckDB type id matches this
+    /// column's. NULL rows are **not** masked — they read back as whatever raw
+    /// bytes back them, so pair this with [`validity`](VectorRef::validity) (or
+    /// [`is_null`](VectorRef::is_null)) when the column may contain NULLs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ConversionError`] if the column's type id does not match `T`.
+    pub fn as_slice<T: FixedWidth>(
+        &self,
+        len: usize,
+    ) -> Result<&'a [T]> {
+        // SAFETY: `self.ptr` is a valid vector; the logical type is owned and destroyed here.
+        let mut lt = unsafe { duckdb_vector_get_column_type(self.ptr) };
+        let found = unsafe { duckdb_get_type_id(lt) };
+        unsafe { duckdb_destroy_logical_type(&mut lt) };
+        if found != T::DUCKDB_TYPE_ID {
+            return Err(Error::ConversionError(DuckDBConversionError::TypeMismatch {
+                expected: T::DUCKDB_TYPE_ID,
+                found,
+            }));
+        }
+        // SAFETY: the type id matches `T`, so the vector's data array is `len`
+        // contiguous `T` values. The slice borrows the chunk's lifetime `'a`.
+        let data = unsafe { duckdb_vector_get_data(self.ptr) } as *const T;
+        Ok(unsafe { slice::from_raw_parts(data, len) })
+    }
+
+    /// Returns this column's validity mask over `len` rows as packed `u64` words
+    /// (bit `r % 64` of word `r / 64` set = row `r` is valid), or `None` when the
+    /// column has no NULLs (DuckDB elides the mask in that case).
+    pub fn validity(
+        &self,
+        len: usize,
+    ) -> Option<&'a [u64]> {
+        // SAFETY: `self.ptr` is a valid vector; a null result means "no NULLs".
+        let v = unsafe { duckdb_vector_get_validity(self.ptr) };
+        if v.is_null() {
+            return None;
+        }
+        // SAFETY: `v` is a validity mask of at least `len.div_ceil(64)` `u64`
+        // words, valid for the chunk's lifetime `'a`.
+        Some(unsafe { slice::from_raw_parts(v as *const u64, len.div_ceil(64)) })
     }
 
     /// Reads the value at `row` as a dynamically-typed [`DuckValue`], reusing
@@ -134,6 +182,36 @@ impl<'a> VectorMut<'a> {
         unsafe { duckdb_validity_set_row_invalid(validity, row as u64) };
     }
 
+    /// Marks the value at `row` as **valid** (non-`NULL`) — the inverse of
+    /// [`set_null`](VectorMut::set_null). Useful to un-mask a row in a chunk that
+    /// is being reused across batches.
+    pub fn set_row_valid(
+        &mut self,
+        row: usize,
+    ) {
+        // SAFETY: `self.ptr` is a valid, exclusively-held vector.
+        unsafe { duckdb_vector_ensure_validity_writable(self.ptr) };
+        // SAFETY: the call above guarantees a writable, non-null validity mask.
+        let validity = unsafe { duckdb_vector_get_validity(self.ptr) };
+        // SAFETY: `validity` is non-null; `row` is caller-guaranteed in range.
+        unsafe { duckdb_validity_set_row_valid(validity, row as u64) };
+    }
+
+    /// Sets the `NULL`/valid state of the value at `row` in one call
+    /// (`valid == true` → non-`NULL`).
+    pub fn set_row_validity(
+        &mut self,
+        row: usize,
+        valid: bool,
+    ) {
+        // SAFETY: `self.ptr` is a valid, exclusively-held vector.
+        unsafe { duckdb_vector_ensure_validity_writable(self.ptr) };
+        // SAFETY: the call above guarantees a writable, non-null validity mask.
+        let validity = unsafe { duckdb_vector_get_validity(self.ptr) };
+        // SAFETY: `validity` is non-null; `row` is caller-guaranteed in range.
+        unsafe { duckdb_validity_set_row_validity(validity, row as u64, valid) };
+    }
+
     /// Writes `value` at `row`.
     ///
     /// # Errors
@@ -179,6 +257,48 @@ pub trait ScalarRet {
         row: usize,
     ) -> UdfResult<()>;
 }
+
+mod private {
+    /// Sealed marker: only this crate's fixed-width scalar types implement
+    /// [`FixedWidth`](super::FixedWidth).
+    pub trait Sealed {}
+}
+
+/// A scalar whose DuckDB physical representation is a packed array of its native
+/// Rust value, enabling a zero-copy [`VectorRef::as_slice`] read.
+///
+/// Sealed: implemented only for `bool`, the non-128-bit integer widths, and the
+/// floats. 128-bit integers (`i128`/`u128`) use DuckDB's hugeint struct storage,
+/// and `String`/`&str` are variable-width, so none of them are `FixedWidth`.
+pub trait FixedWidth: private::Sealed + Copy {
+    /// The DuckDB type id whose column data is a packed `[Self]`.
+    const DUCKDB_TYPE_ID: DUCKDB_TYPE;
+}
+
+macro_rules! impl_fixed_width {
+    ($($rust_type:ty => $tag:ident),+ $(,)?) => {
+        $(
+            impl private::Sealed for $rust_type {}
+            impl FixedWidth for $rust_type {
+                const DUCKDB_TYPE_ID: DUCKDB_TYPE = crate::ffi::$tag;
+            }
+        )+
+    };
+}
+
+impl_fixed_width!(
+    bool => DUCKDB_TYPE_DUCKDB_TYPE_BOOLEAN,
+    i8   => DUCKDB_TYPE_DUCKDB_TYPE_TINYINT,
+    i16  => DUCKDB_TYPE_DUCKDB_TYPE_SMALLINT,
+    i32  => DUCKDB_TYPE_DUCKDB_TYPE_INTEGER,
+    i64  => DUCKDB_TYPE_DUCKDB_TYPE_BIGINT,
+    u8   => DUCKDB_TYPE_DUCKDB_TYPE_UTINYINT,
+    u16  => DUCKDB_TYPE_DUCKDB_TYPE_USMALLINT,
+    u32  => DUCKDB_TYPE_DUCKDB_TYPE_UINTEGER,
+    u64  => DUCKDB_TYPE_DUCKDB_TYPE_UBIGINT,
+    f32  => DUCKDB_TYPE_DUCKDB_TYPE_FLOAT,
+    f64  => DUCKDB_TYPE_DUCKDB_TYPE_DOUBLE,
+);
 
 // Fixed-width scalars: bool + all non-128-bit integers + floats.
 //

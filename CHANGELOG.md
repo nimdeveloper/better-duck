@@ -9,10 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-beta.8] — 2026-10-11
+
 ### `better-duck-core`
 
 #### Added
 
+- **Columnar read/write** (new feature `columnar`, also enabled by `udf`): read a query result in
+  DuckDB's native columnar batches with `DuckResult::fetch_chunk`; do zero-copy fixed-width column
+  reads via `VectorRef::as_slice::<T: FixedWidth>` (plus `validity`); and build a chunk from scratch
+  (`DataChunkHandle::new` / `vector_mut` / `set_len` / `reset`,
+  `VectorMut::set_row_valid` / `set_row_validity`) to bulk-insert it with
+  `Appender::append_chunk_handle` / `set_chunk_default`. The `columnar` feature exposes these without
+  pulling in the `udf` proc-macro dependency, and `Error::MixedIterationMode` guards against mixing
+  row-by-row and chunk iteration on the same result.
 - **Schema type introspection**: `TableDescription` gained `column_count()` and
   `column_type(index) -> Option<TypeInfo>`, so a table's column *types* can be read by index —
   alongside the existing column names and `DEFAULT` flags — without issuing a query.
@@ -616,7 +626,8 @@ upgrading.
 
 ---
 
-[Unreleased]: https://github.com/nimdeveloper/better-duck/compare/v0.1.0-beta.7...HEAD
+[Unreleased]: https://github.com/nimdeveloper/better-duck/compare/v0.1.0-beta.8...HEAD
+[0.1.0-beta.8]: https://github.com/nimdeveloper/better-duck/compare/v0.1.0-beta.7...v0.1.0-beta.8
 [0.1.0-beta.7]: https://github.com/nimdeveloper/better-duck/compare/v0.1.0-beta.6...v0.1.0-beta.7
 [0.1.0-beta.6]: https://github.com/nimdeveloper/better-duck/compare/v0.1.0-beta.5...v0.1.0-beta.6
 [0.1.0-beta.5]: https://github.com/nimdeveloper/better-duck/compare/v0.1.0-beta.4...v0.1.0-beta.5

@@ -43,15 +43,15 @@
 ```toml
 [dependencies]
 # DuckDB client
-better-duck-core = "0.1.0-beta.7"
+better-duck-core = "0.1.0-beta.8"
 
 # Optional: Diesel ORM backend
-better-duck-diesel = "0.1.0-beta.7"
+better-duck-diesel = "0.1.0-beta.8"
 ```
 
 > [!NOTE]
 > Cargo's default version requirement (e.g. `"0.1"`) excludes pre-releases like `-beta.4`. Pin the
-> exact version as shown, or run `cargo add better-duck-core --version 0.1.0-beta.7`.
+> exact version as shown, or run `cargo add better-duck-core --version 0.1.0-beta.8`.
 > `better-duck-macros` is pulled in automatically by the `udf` / `derive` feature flags — you don't
 > depend on it directly.
 
@@ -302,12 +302,12 @@ Register plain Rust functions with attribute macros — parameter/return types i
 
 | Feature             | Default | Description                                                                                |
 | ------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| `bundled`           | ✓       | Compile and embed the DuckDB C library (no system install needed)                          |
 | `chrono`            | ✓       | `chrono` date/time conversions for DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL            |
 | `decimal`           | ✓       | `rust_decimal::Decimal` support for DECIMAL columns                                        |
-| `json`              | —       | Bundle DuckDB's JSON extension (requires `bundled`)                                        |
-| `parquet`           | —       | Bundle DuckDB's Parquet extension (requires `bundled`)                                     |
+| `json`              | —       | Statically bundle DuckDB's JSON extension (compiled into the embedded library)             |
+| `parquet`           | —       | Statically bundle DuckDB's Parquet extension (compiled into the embedded library)          |
 | `arrow`             | —       | Export query results via the Arrow C Data Interface (no added dependencies)                |
+| `columnar`          | —       | Columnar data-chunk read/write: `fetch_chunk`, zero-copy `as_slice` reads, build-and-bulk-insert (also enabled by `udf`) |
 | `async`             | —       | Tokio async facade (`AsyncConnection`, `AsyncDatabase`, `AsyncPool`)                       |
 | `pool`              | —       | `r2d2` connection pool backed by a shared `Database` handle                                |
 | `udf`               | —       | `#[duckdb_scalar]` / `#[duckdb_table_function]` / `#[duckdb_aggregate]` / `#[duckdb_cast]` |
@@ -463,7 +463,6 @@ emit Diesel `FromSql`/`ToSql`, so a derived Rust enum/struct binds and loads at 
 
 | Feature   | Default | Description                                                                               |
 | --------- | ------- | ----------------------------------------------------------------------------------------- |
-| `bundled` | ✓       | Forwards to `better-duck-core/bundled`                                                    |
 | `decimal` | ✓       | Diesel `Numeric` ↔ `rust_decimal::Decimal`                                                |
 | `chrono`  | —       | Diesel date/time impls for DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL, TIME_TZ, TIME_NS |
 | `r2d2`    | —       | r2d2 connection pool support (`SharedDuckDbConnectionManager` + `diesel::r2d2`)           |
@@ -588,6 +587,26 @@ contributions are very welcome.
 **Exploratory**
 
 - A `better-duck-tauri` plugin crate, and a `wasm32` build target.
+
+---
+
+## Agent Skills
+
+This repo ships **Claude Agent Skills** that teach an AI agent to use DuckDB and this driver well —
+one skill per surface: `duckdb`, `better-duck`, `better-duck-core`, `better-duck-macros`,
+`better-duck-diesel`, and `better-duck-tauri`.
+
+- **Auto-discovered** when you work in this repo: the skills live in `.claude/skills/`, so a
+  Claude Code session opened here loads them with no install step.
+- **Installable anywhere** via the plugin marketplace this repo also defines:
+
+  ```bash
+  claude plugin marketplace add nimdeveloper/better-duck
+  claude plugin install better-duck-skills@better-duck
+  ```
+
+Both paths serve the same files (the plugin's `skills` path points at `.claude/skills/`), so there's
+a single source of truth.
 
 ---
 
