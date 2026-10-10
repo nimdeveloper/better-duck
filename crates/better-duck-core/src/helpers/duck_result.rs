@@ -181,7 +181,15 @@ pub fn result_from_duckdb_prepare(
             Some("prepare is null".to_string())
         } else {
             let c_err = duckdb_prepare_error(prepare);
-            let message = Some(CStr::from_ptr(c_err).to_string_lossy().to_string());
+            // `duckdb_prepare_error`'s docs say it "returns `nullptr` instead" when
+            // there is no message. Passing a null `*const c_char` to `CStr::from_ptr`
+            // is undefined behavior, so this null check is load-bearing — the same
+            // guard already protects `result_from_duckdb_result`.
+            let message = if c_err.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(c_err).to_string_lossy().to_string())
+            };
             duckdb_destroy_prepare(&mut prepare);
             message
         };

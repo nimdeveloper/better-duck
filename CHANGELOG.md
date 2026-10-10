@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name in a single call, over the existing `CachedStatement::bind_named` primitive. An unknown name
   returns `Error::InvalidParameterName`.
 
+#### Fixed
+
+- **Potential UB on failed `prepare`**: `result_from_duckdb_prepare` now null-checks the pointer
+  returned by `duckdb_prepare_error` before passing it to `CStr::from_ptr`. DuckDB returns null when
+  a failed prepare has no message, which would otherwise be dereferenced — the same guard already
+  protects `result_from_duckdb_result`.
+
 ## [0.1.0-beta.7] — 2026-10-01
 
 ### `better-duck-core`
