@@ -9,12 +9,12 @@
 //! - **Table functions** produce rows and columns, for use in a `FROM` clause:
 //!   `SELECT * FROM my_func(1, 2)`.
 //!
-//! The [`duckdb_scalar`](crate::duckdb_scalar) and
-//! [`duckdb_table_function`](crate::duckdb_table_function) attribute macros turn
+//! The [`duckdb_scalar`] and
+//! [`duckdb_table_function`] attribute macros turn
 //! an ordinary Rust function into either kind without requiring any `unsafe` code
 //! or manual vector handling. Parameter and return types are inferred from the
-//! Rust signature via [`types::DuckLogicalType`](crate::types::DuckLogicalType) —
-//! any type that already round-trips through [`AppendAble`](crate::AppendAble)
+//! Rust signature via [`types::DuckLogicalType`] —
+//! any type that already round-trips through [`AppendAble`]
 //! (all the integer widths, floats, `String`/`&str`, `bool`, …) works here too,
 //! with no extra type table for the macros to maintain.
 //!
