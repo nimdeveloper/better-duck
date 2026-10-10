@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### `better-duck-core`
+
+#### Added
+
+- **Schema type introspection**: `TableDescription` gained `column_count()` and
+  `column_type(index) -> Option<TypeInfo>`, so a table's column *types* can be read by index —
+  alongside the existing column names and `DEFAULT` flags — without issuing a query.
+
 ## [0.1.0-beta.7] — 2026-10-01
 
 ### `better-duck-core`

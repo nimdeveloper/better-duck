@@ -1,12 +1,9 @@
 //! RAII wrapper for `duckdb_table_description` — indexed column metadata for a
 //! catalog table.
 //!
-//! DuckDB's table-description API exposes a table's column *names* and whether each
-//! column has a `DEFAULT` expression, addressed by index. The retained C-API set has
-//! **no** column-count or per-column-type accessor, so this wrapper deliberately does
-//! not invent one: a caller obtains the number of columns from a finite bounds source
-//! it already trusts (an appender's column count, or a catalog query such as
-//! `SELECT * FROM t LIMIT 0`) and then reads names/defaults for `0..count`.
+//! DuckDB's table-description API exposes a table's column count, and per-column
+//! *name*, *type*, and whether the column has a `DEFAULT` expression — all addressed
+//! by index, without issuing a query.
 //!
 //! The handle is owned: [`TableDescription`] destroys it exactly once on drop, and a
 //! creation failure still yields a handle whose [`error`](TableDescription::error)
@@ -22,9 +19,10 @@ use crate::{
     error::{Error, Result},
     ffi,
     helpers::duck_result::check_state,
+    types::{LogicalType, TypeInfo},
 };
 
-/// An owned `duckdb_table_description` with indexed column-name/default access.
+/// An owned `duckdb_table_description` with indexed column-name/type/default access.
 pub struct TableDescription {
     inner: ffi::duckdb_table_description,
 }
@@ -132,6 +130,16 @@ impl TableDescription {
         Some(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
     }
 
+    /// The number of columns in the described table.
+    ///
+    /// (`duckdb_table_description_get_column_count`.) Use this as the trusted upper
+    /// bound for the indexed `column_name`/`column_type`/`column_has_default` accessors.
+    #[must_use]
+    pub fn column_count(&self) -> u64 {
+        // SAFETY: `self.inner` is a valid table description for the lifetime of `self`.
+        unsafe { ffi::duckdb_table_description_get_column_count(self.inner) }
+    }
+
     /// The name of the column at `index`, or `None` if DuckDB returns no name.
     ///
     /// `index` must be within the table's column count (obtained from a trusted
@@ -154,6 +162,23 @@ impl TableDescription {
         // SAFETY: `ptr` was allocated by DuckDB and ownership transferred to us.
         unsafe { ffi::duckdb_free(ptr as *mut c_void) };
         Some(name)
+    }
+
+    /// The lossless [`TypeInfo`] of the column at `index`, or `None` if DuckDB
+    /// returns no type (e.g. `index` is out of range).
+    ///
+    /// (`duckdb_table_description_get_column_type`.) The returned logical-type handle
+    /// is owned here, described into a `TypeInfo`, and destroyed before returning.
+    #[must_use]
+    pub fn column_type(
+        &self,
+        index: u64,
+    ) -> Option<TypeInfo> {
+        // SAFETY: `self.inner` is a valid table description; the returned handle (or
+        // null) is wrapped by `LogicalType`, described, and dropped (destroyed) here.
+        let raw =
+            unsafe { ffi::duckdb_table_description_get_column_type(self.inner, index as ffi::idx_t) };
+        LogicalType::from_raw(raw).ok().map(|lt| lt.describe())
     }
 
     /// Whether the column at `index` has a `DEFAULT` expression.
@@ -198,9 +223,22 @@ mod tests {
         let desc = conn.table_description("main", "t").unwrap();
         assert!(desc.error().is_none());
 
+        // Column count comes straight from the description.
+        assert_eq!(desc.column_count(), 2);
+
         // Indexed name access (bounds known from the DDL: 2 columns).
         assert_eq!(desc.column_name(0).as_deref(), Some("id"));
         assert_eq!(desc.column_name(1).as_deref(), Some("name"));
+
+        // Indexed type access (scalar columns describe as `TypeInfo::Scalar`).
+        assert_eq!(
+            desc.column_type(0),
+            Some(TypeInfo::Scalar(ffi::DUCKDB_TYPE_DUCKDB_TYPE_INTEGER))
+        );
+        assert_eq!(
+            desc.column_type(1),
+            Some(TypeInfo::Scalar(ffi::DUCKDB_TYPE_DUCKDB_TYPE_VARCHAR))
+        );
 
         // `id` has no DEFAULT; `name` does.
         assert!(!desc.column_has_default(0).unwrap());
