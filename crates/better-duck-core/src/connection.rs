@@ -253,7 +253,7 @@ impl Connection {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidParameterName`](crate::error::Error::InvalidParameterName)
+    /// Returns [`Error::InvalidParameterName`]
     /// if any name in `binds` is not a parameter of `sql`, or an error if
     /// preparation, binding, or execution otherwise fails.
     #[must_use = "the DuckResult carries both affected-row count (.changes()) and a row iterator — consume it"]
