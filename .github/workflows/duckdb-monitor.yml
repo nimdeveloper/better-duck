@@ -78,6 +78,27 @@ jobs:
           command -v sha256sum
           command -v diff
 
+      - name: Set up Python for C API surface tooling
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          command -v python3
+          command -v git
+
+          # PyYAML is usually preinstalled on ubuntu-latest; install defensively so
+          # the api_spec extractor always has it. Non-fatal if the index is briefly
+          # unavailable and it is already importable.
+          python3 -m pip install --quiet --disable-pip-version-check pyyaml \
+            || pip install --quiet pyyaml \
+            || true
+
+          python3 -c "import yaml; print('pyyaml', yaml.__version__)"
+
+          chmod +x .github/scripts/duckdb-monitor/fetch_surface.sh
+
+          echo "SURFACE_SCRIPTS=$GITHUB_WORKSPACE/.github/scripts/duckdb-monitor" >> "$GITHUB_ENV"
+
       # -----------------------------------------------------------------------
       # Persistent state: download latest surviving artifact
       # -----------------------------------------------------------------------
@@ -687,12 +708,109 @@ jobs:
           jq '.' "$RUNNER_TEMP/new-releases.json"
 
       # -----------------------------------------------------------------------
-      # Prepare API AI context
+      # Code-level C API surface tracking (api_spec YAML, header fallback)
       # -----------------------------------------------------------------------
+
+      - name: Fetch and diff C API surfaces
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          SCRIPTS="$SURFACE_SCRIPTS"
+          mkdir -p "$RUNNER_TEMP/surfaces" "$RUNNER_TEMP/code-changes" "$STATE_ROOT/surfaces"
+
+          current_tag="$(jq -r '.current.tag' "$RELEASE_CONTEXT")"
+          lts_tag="$(jq -r '.lts.tag' "$RELEASE_CONTEXT")"
+
+          # Resolve the preview line's dev branch (e.g. 2.0 -> v2.0-cyanoptera) by
+          # listing duckdb/duckdb branches named `v<line>-*`. This is the "docs lag
+          # behind code" source: we read the C API straight from the dev branch.
+          preview_ref=""
+          if [ "$(jq -r '.hasUpcoming' "$PREVIEW_CONTEXT")" = "true" ]; then
+            preview_line="$(jq -r '.previewLine' "$PREVIEW_CONTEXT")"
+            branches="$(gh api --paginate "repos/${DUCKDB_REPO}/branches?per_page=100" --jq '.[].name' 2>/dev/null || true)"
+            preview_ref="$(printf '%s\n' "$branches" | grep -E "^v${preview_line}-" | head -n1 || true)"
+          fi
+
+          code_changed=false
+
+          fetch() { bash "$SCRIPTS/fetch_surface.sh" "$1" "$2"; }
+
+          # Diff a rolling key (current/lts/preview) against the surface stored in state.
+          diff_tracked() {
+            local key="$1" ref="$2"
+            local new="$RUNNER_TEMP/surfaces/${key}.json"
+            if ! fetch "$ref" "$new"; then
+              echo "::notice::no C API surface for ${key} (ref ${ref}); skipping code diff."
+              return 0
+            fi
+            local old="$STATE_ROOT/surfaces/${key}.json"
+            if [ ! -f "$old" ]; then
+              echo "::notice::no baseline surface for ${key}; establishing baseline this run."
+              return 0
+            fi
+            python3 "$SCRIPTS/diff_surface.py" "$old" "$new" "$RUNNER_TEMP/code-changes/${key}.json"
+            if [ "$(jq -r '.hasChanges' "$RUNNER_TEMP/code-changes/${key}.json")" = "true" ]; then
+              [ "$key" = "preview" ] || code_changed=true
+            fi
+          }
+
+          diff_tracked current "$current_tag"
+          diff_tracked lts "$lts_tag"
+          [ -n "$preview_ref" ] && diff_tracked preview "$preview_ref" || true
+
+          # RUN_CODE_DIFF_CONT
+
+          # Per new release: diff its tag's surface against the previous stable
+          # release's tag (covers both major and minor bumps). `stable-releases.json`
+          # is sorted newest-first, so the previous tag is the next entry.
+          while IFS= read -r rel; do
+            tag="$(jq -r '.tag' <<<"$rel")"
+            prev="$(jq -r --arg t "$tag" '
+              [ .[].tag_name ] as $tags
+              | ($tags | index($t)) as $i
+              | if $i == null then empty else ($tags[$i + 1] // empty) end
+            ' "$RUNNER_TEMP/stable-releases.json")"
+            newf="$RUNNER_TEMP/surfaces/release-${tag}.json"
+            fetch "$tag" "$newf" || continue
+            if [ -z "$prev" ]; then
+              echo "::notice::no release before ${tag}; skipping version-over-version diff."
+              continue
+            fi
+            oldf="$RUNNER_TEMP/surfaces/release-${prev}.json"
+            fetch "$prev" "$oldf" || continue
+            python3 "$SCRIPTS/diff_surface.py" "$oldf" "$newf" "$RUNNER_TEMP/code-changes/release-${tag}.json"
+            jq -n --arg old "$prev" --arg new "$tag" '{old: $old, new: $new}' \
+              > "$RUNNER_TEMP/code-changes/release-${tag}.labels.json"
+          done < <(jq -c '.[]' "$RUNNER_TEMP/new-releases.json")
+
+          # Render the deterministic structured section for the generic C API issue
+          # (current + LTS rolling channels), used verbatim in the issue body.
+          {
+            for key in current lts; do
+              cf="$RUNNER_TEMP/code-changes/${key}.json"
+              [ -f "$cf" ] || continue
+              [ "$(jq -r '.hasChanges' "$cf")" = "true" ] || continue
+              oldv="$(jq -r '.oldDuckdbVersions | join(", ")' "$cf")"
+              newv="$(jq -r '.newDuckdbVersions | join(", ")' "$cf")"
+              echo "#### Channel \`${key}\`"
+              echo
+              python3 "$SCRIPTS/render_changes.py" "$cf" "${oldv:-previous}" "${newv:-current}"
+              echo
+            done
+          } > "$RUNNER_TEMP/code-changes.md"
+
+          echo "API_CODE_CHANGED=$code_changed" >> "$GITHUB_ENV"
+          echo "CODE_CHANGES_MD=$RUNNER_TEMP/code-changes.md" >> "$GITHUB_ENV"
+
+          echo "Code-level C API change detection: API_CODE_CHANGED=$code_changed"
+          ls -1 "$RUNNER_TEMP/code-changes" 2>/dev/null || true
 
       - name: Prepare API analysis context
         if: >-
-          env.API_CHANGED == 'true' &&
+          (env.API_CHANGED == 'true' || env.API_CODE_CHANGED == 'true') &&
           env.BOOTSTRAP_EFFECTIVE != 'true' &&
           env.STATE_BOOTSTRAP != 'true'
         shell: bash
@@ -736,6 +854,15 @@ jobs:
             done < <(
               jq -r '.[]' "$RUNNER_TEMP/changed-channels.json"
             )
+
+            # Higher-signal, code-level section from the api_spec surface diff (may
+            # be present even when the Markdown docs did not change this run).
+            if [ -s "$RUNNER_TEMP/code-changes.md" ]; then
+              echo "## Code-level C API surface changes (from api_spec)"
+              echo
+              cat "$RUNNER_TEMP/code-changes.md"
+              echo
+            fi
           } > "$RUNNER_TEMP/api-ai-context.md"
 
           # Safety limit against unexpectedly huge prompts.
@@ -875,8 +1002,11 @@ jobs:
       - name: Analyze C API changes with Gemini
         # `BOOTSTRAP_EFFECTIVE` is excluded because a bootstrap run discards the
         # analysis without opening an issue; calling Gemini would waste quota.
+        # Soft-fail: the deterministic api_spec change section is published from the
+        # issue step regardless, so a Gemini outage must not block the issue.
+        continue-on-error: true
         if: >-
-          env.API_CHANGED == 'true' &&
+          (env.API_CHANGED == 'true' || env.API_CODE_CHANGED == 'true') &&
           env.BOOTSTRAP_EFFECTIVE != 'true' &&
           env.STATE_BOOTSTRAP != 'true'
         env:
@@ -968,17 +1098,21 @@ jobs:
       # -----------------------------------------------------------------------
 
       - name: Create issue for C API changes
-        if: env.API_CHANGED == 'true'
+        if: env.API_CHANGED == 'true' || env.API_CODE_CHANGED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}" = "true" ]; then
-            echo "Dry run enabled; not creating an issue."
-            exit 0
-          fi
+          DRY_RUN="${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}"
+          gh_write() {
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "[dry-run] would run: gh $*"
+              return 0
+            fi
+            gh "$@"
+          }
 
           # A bootstrap run establishes the baseline and intentionally does not
           # generate a historical API issue. Both flags are defaulted so this
@@ -987,6 +1121,12 @@ jobs:
           if [ "${STATE_BOOTSTRAP:-false}" = "true" ] || [ "${BOOTSTRAP_EFFECTIVE:-false}" = "true" ]; then
             echo "Bootstrap mode; API baseline will be recorded without creating an issue."
             exit 0
+          fi
+
+          # A model response is optional/untrusted; if Gemini was skipped or failed,
+          # fall back to deterministic content rather than erroring on a missing file.
+          if [ ! -f "$RUNNER_TEMP/api-analysis.json" ]; then
+            echo '{}' > "$RUNNER_TEMP/api-analysis.json"
           fi
 
           # The generic C API issue keys off the stable/LTS channels only; the
@@ -999,19 +1139,23 @@ jobs:
 
           marker="duckdb-api-monitor:${api_fingerprint}"
 
-          existing="$(
+          # An already-OPEN generic C API issue is updated in place (body refreshed +
+          # a dated comment) rather than skipped, so maintainers see the latest state.
+          open_issue="$(
+            gh issue list --state open --label duckdb-api --limit 20 \
+              --json number --jq '.[0].number // empty' || true
+          )"
+
+          # A CLOSED issue for this exact API fingerprint means this state was already
+          # handled and dismissed — respect that and do not recreate.
+          closed_same="$(
             gh issue list \
-              --state all \
+              --state closed \
               --limit 100 \
               --search "\"${marker}\" in:body" \
               --json number \
               --jq '.[0].number // empty' || true
           )"
-
-          if [ -n "$existing" ]; then
-            echo "An issue already exists for this API state: #$existing"
-            exit 0
-          fi
 
           # Gemini is instructed to return these fields, but a model response is
           # untrusted input: fall back rather than publishing a literal "null".
@@ -1092,6 +1236,16 @@ jobs:
               end
             ' "$RUNNER_TEMP/api-analysis.json"
 
+            if [ -s "$RUNNER_TEMP/code-changes.md" ]; then
+              echo "## C API surface changes (from \`api_spec\`)"
+              echo
+              echo "Precise, code-level diff of the DuckDB C API source of truth"
+              echo "(independent of the documentation Markdown):"
+              echo
+              cat "$RUNNER_TEMP/code-changes.md"
+              echo
+            fi
+
             echo "## Documentation channels"
             echo
             jq -r --arg repo "$DUCKDB_WEB_REPO" \
@@ -1114,19 +1268,44 @@ jobs:
             echo "Generated automatically by \`DuckDB Upstream Monitor\`."
           } > "$RUNNER_TEMP/api-issue.md"
 
-          gh label create \
+          # Update an already-open issue in place (+ a dated comment), rather than
+          # opening a duplicate, so prior open issues reflect the latest API state.
+          if [ -n "$open_issue" ]; then
+            gh_write issue edit "$open_issue" --body-file "$RUNNER_TEMP/api-issue.md" || true
+            {
+              echo "### C API re-checked — \`$(date -u +"%Y-%m-%dT%H:%M:%SZ")\`"
+              echo
+              echo "This issue's body was refreshed with the latest upstream C API state."
+              if [ -s "$RUNNER_TEMP/code-changes.md" ]; then
+                echo
+                cat "$RUNNER_TEMP/code-changes.md"
+              fi
+            } > "$RUNNER_TEMP/api-issue-comment.md"
+            gh_write issue comment "$open_issue" --body-file "$RUNNER_TEMP/api-issue-comment.md" || true
+            echo "Updated open C API issue #${open_issue}."
+            exit 0
+          fi
+
+          # No open issue. If this exact API state was already handled and closed,
+          # respect the human close and do not recreate.
+          if [ -n "$closed_same" ]; then
+            echo "A closed issue (#${closed_same}) already covers this API state; not recreating."
+            exit 0
+          fi
+
+          gh_write label create \
             "duckdb-api" \
             --description "Upstream DuckDB C API changes" \
             --color "5319E7" \
             >/dev/null 2>&1 || true
 
-          gh label create \
+          gh_write label create \
             "upstream" \
             --description "Upstream dependency changes" \
             --color "0366D6" \
             >/dev/null 2>&1 || true
 
-          gh issue create \
+          gh_write issue create \
             --title "$title" \
             --body-file "$RUNNER_TEMP/api-issue.md" \
             --label "duckdb-api" \
@@ -1231,10 +1410,30 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}" = "true" ]; then
-            echo "Dry run enabled; release issues will not be created."
-            exit 0
-          fi
+          DRY_RUN="${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}"
+          gh_write() {
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "[dry-run] would run: gh $*"
+              return 0
+            fi
+            gh "$@"
+          }
+
+          render_code_section() {
+            # Writes the api_spec code-change section for release $1 to stdout, if any.
+            local tag="$1"
+            local cf="$RUNNER_TEMP/code-changes/release-${tag}.json"
+            local lf="$RUNNER_TEMP/code-changes/release-${tag}.labels.json"
+            [ -f "$cf" ] || return 0
+            [ "$(jq -r '.hasChanges' "$cf")" = "true" ] || return 0
+            local oldl newl
+            oldl="$(jq -r '.old' "$lf" 2>/dev/null || echo previous)"
+            newl="$(jq -r '.new' "$lf" 2>/dev/null || echo "$tag")"
+            echo "## C API surface changes (from \`api_spec\`)"
+            echo
+            python3 "$SURFACE_SCRIPTS/render_changes.py" "$cf" "$oldl" "$newl"
+            echo
+          }
 
           while IFS= read -r release; do
             tag="$(
@@ -1254,6 +1453,7 @@ jobs:
             )"
 
             analysis="$RUNNER_TEMP/release-analysis/${tag}.json"
+            [ -f "$analysis" ] || echo '{}' > "$analysis"
 
             marker="duckdb-release-monitor:${tag}"
 
@@ -1262,12 +1462,30 @@ jobs:
                 --state all \
                 --limit 100 \
                 --search "\"${marker}\" in:body" \
-                --json number \
-                --jq '.[0].number // empty' || true
+                --json number,state \
+                --jq '.[0] // empty' || true
             )"
 
             if [ -n "$existing" ]; then
-              echo "Release issue already exists for ${tag}: #${existing}"
+              existing_num="$(jq -r '.number' <<<"$existing")"
+              existing_state="$(jq -r '.state' <<<"$existing")"
+              # Only an OPEN prior issue gets a fresh code-change comment; a closed
+              # one is left as the human left it.
+              if [ "$existing_state" = "OPEN" ]; then
+                code_section="$(render_code_section "$tag")"
+                if [ -n "$code_section" ]; then
+                  {
+                    echo "### Upstream re-check — \`$(date -u +"%Y-%m-%dT%H:%M:%SZ")\`"
+                    echo
+                    echo "$code_section"
+                  } > "$RUNNER_TEMP/release-comment-${tag}.md"
+                  gh_write issue comment "$existing_num" \
+                    --body-file "$RUNNER_TEMP/release-comment-${tag}.md" || true
+                  echo "Commented api_spec changes on open release issue #${existing_num} (${tag})."
+                fi
+              else
+                echo "Release issue already exists for ${tag}: #${existing_num} (state ${existing_state})."
+              fi
               continue
             fi
 
@@ -1334,6 +1552,12 @@ jobs:
                 end
               ' "$analysis"
 
+              code_section="$(render_code_section "$tag")"
+              if [ -n "$code_section" ]; then
+                echo "$code_section"
+                echo
+              fi
+
               echo "## Version tracking"
               echo
               echo "| Channel | Release | Line |"
@@ -1356,19 +1580,19 @@ jobs:
               echo "Generated automatically by \`DuckDB Upstream Monitor\`."
             } > "$RUNNER_TEMP/release-issue.md"
 
-            gh label create \
+            gh_write label create \
               "duckdb-release" \
               --description "DuckDB upstream release tracking" \
               --color "1D76DB" \
               >/dev/null 2>&1 || true
 
-            gh label create \
+            gh_write label create \
               "upstream" \
               --description "Upstream dependency changes" \
               --color "0366D6" \
               >/dev/null 2>&1 || true
 
-            gh issue create \
+            gh_write issue create \
               --title "$title" \
               --body-file "$RUNNER_TEMP/release-issue.md" \
               --label "duckdb-release" \
@@ -1460,6 +1684,17 @@ jobs:
               fi
               echo '```'
               echo
+              if [ -f "$RUNNER_TEMP/code-changes/preview.json" ] && \
+                 [ "$(jq -r '.hasChanges' "$RUNNER_TEMP/code-changes/preview.json")" = "true" ]; then
+                echo "### Preview C API surface changes (from \`api_spec\`)"
+                echo
+                echo "Code-level diff of the preview dev branch's C API against the"
+                echo "previously tracked snapshot (independent of the docs Markdown):"
+                echo
+                python3 "$SURFACE_SCRIPTS/render_changes.py" \
+                  "$RUNNER_TEMP/code-changes/preview.json" "previous" "preview" || true
+                echo
+              fi
               echo "Preview C API document: https://github.com/${DUCKDB_WEB_REPO}/blob/main/docs/preview/clients/c/api.md"
               echo
               echo "<!-- duckdb-preview-monitor:${preview_line} -->"
@@ -1564,6 +1799,17 @@ jobs:
               fi
             fi
 
+            preview_code_changed=false
+            if [ -f "$RUNNER_TEMP/code-changes/preview.json" ] && \
+               [ "$(jq -r '.hasChanges' "$RUNNER_TEMP/code-changes/preview.json")" = "true" ]; then
+              preview_code_changed=true
+              if [ -n "$changed_note" ]; then
+                changed_note="${changed_note}; the preview C API code (api_spec) changed"
+              else
+                changed_note="the preview C API code (api_spec) changed"
+              fi
+            fi
+
             if [ -n "$changed_note" ]; then
               {
                 echo "### Preview update — \`${now}\`"
@@ -1579,6 +1825,11 @@ jobs:
                   echo '```diff'
                   cat "$RUNNER_TEMP/diffs/preview.diff"
                   echo '```'
+                fi
+                if [ "$preview_code_changed" = "true" ]; then
+                  echo
+                  python3 "$SURFACE_SCRIPTS/render_changes.py" \
+                    "$RUNNER_TEMP/code-changes/preview.json" "previous" "preview" || true
                 fi
               } > "$RUNNER_TEMP/preview-issue-comment.md"
               gh_write issue comment "$issue" --body-file "$RUNNER_TEMP/preview-issue-comment.md" || true
@@ -1779,6 +2030,20 @@ jobs:
             jq -r '.channels[].name' "$DOC_CHANNELS"
           )
 
+          # Persist the normalized C API surfaces for the rolling keys so the next
+          # run diffs against them. Release-pair surfaces are run-local (compared to
+          # the previous tag within the run) and are intentionally not retained.
+          mkdir -p "$STATE_ROOT/surfaces"
+          for key in current lts preview; do
+            if [ -f "$RUNNER_TEMP/surfaces/${key}.json" ]; then
+              cp "$RUNNER_TEMP/surfaces/${key}.json" "$STATE_ROOT/surfaces/${key}.json"
+            fi
+          done
+          # Drop a stored preview surface once there is no upcoming line being tracked.
+          if [ ! -f "$RUNNER_TEMP/surfaces/preview.json" ]; then
+            rm -f "$STATE_ROOT/surfaces/preview.json"
+          fi
+
           echo "Final state:"
           jq '.' "$STATE_ROOT/state.json"
 
@@ -1819,6 +2084,7 @@ jobs:
             echo "## API tracking"
             echo
             echo "- API changed: \`${API_CHANGED:-false}\`"
+            echo "- C API code (api_spec) changed: \`${API_CODE_CHANGED:-false}\`"
             if [ -f "$RUNNER_TEMP/changed-channels.json" ]; then
               echo "- Changed channels:"
               jq -r 'if length == 0 then "  - (none)" else (.[] | "  - \(.)") end' \
