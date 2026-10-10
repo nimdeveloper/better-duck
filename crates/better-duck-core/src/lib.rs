@@ -35,7 +35,7 @@ mod helpers;
 /// Small exported declarative helper macros (`transaction!`, `params!`).
 #[macro_use]
 mod macros;
-/// An `r2d2` connection pool backed by a shared [`Database`](database::Database).
+/// An `r2d2` connection pool backed by a shared [`Database`].
 #[cfg(feature = "pool")]
 pub mod pool;
 mod raw;
