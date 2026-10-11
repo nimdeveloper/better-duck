@@ -506,7 +506,6 @@ dependencies = [
  "cexpr",
  "clang-sys",
  "log",
- "prettyplease",
  "proc-macro2",
  "quote",
  "regex",
@@ -4042,7 +4041,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde_derive_internals 0.30.0",
- "syn 3.0.5",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -4141,7 +4140,7 @@ checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.5",
+ "syn 3.0.6",
 ]
 
 [[package]]
