@@ -50,6 +50,11 @@ env:
   # 1.4 = LTS, 1.5 = current, 1.6 = LTS, etc.
   LTS_MIN_MINOR: 4
 
+  # The machine-readable C API spec (`api_spec/` YAML) only exists from DuckDB
+  # 1.5 onward — 1.4 (and earlier) predate it. Code-level C API tracking is
+  # skipped for any line below this, which still gets Markdown-based tracking.
+  API_SPEC_MIN_LINE: "1.5"
+
 jobs:
   monitor:
     name: Monitor DuckDB releases and C API
@@ -738,6 +743,22 @@ jobs:
 
           fetch() { bash "$SCRIPTS/fetch_surface.sh" "$1" "$2"; }
 
+          # DuckDB's machine-readable api_spec began at API_SPEC_MIN_LINE; refs on an
+          # older line (notably the 1.4 LTS) have no api_spec, so code-level tracking
+          # is skipped for them (the Markdown channel still covers those lines).
+          line_of() {
+            printf '%s' "$1" | sed -E 's#^v##; s#-.*$##' |
+              awk -F. '{ printf "%s.%s", ($1=="" ? 0 : $1), ($2=="" ? 0 : $2) }'
+          }
+          line_lt() {
+            awk -v a="$1" -v b="$2" 'BEGIN {
+              split(a, x, "."); split(b, y, ".");
+              am = x[1] + 0; an = x[2] + 0; bm = y[1] + 0; bn = y[2] + 0;
+              print (am < bm || (am == bm && an < bn)) ? 1 : 0
+            }'
+          }
+          has_api_spec() { [ "$(line_lt "$(line_of "$1")" "$API_SPEC_MIN_LINE")" = "0" ]; }
+
           # Diff a rolling key (current/lts/preview) against the surface stored in state.
           diff_tracked() {
             local key="$1" ref="$2"
@@ -757,8 +778,16 @@ jobs:
             fi
           }
 
-          diff_tracked current "$current_tag"
-          diff_tracked lts "$lts_tag"
+          if has_api_spec "$current_tag"; then
+            diff_tracked current "$current_tag"
+          else
+            echo "::notice::current line $(line_of "$current_tag") predates api_spec (< ${API_SPEC_MIN_LINE}); skipping code-level tracking."
+          fi
+          if has_api_spec "$lts_tag"; then
+            diff_tracked lts "$lts_tag"
+          else
+            echo "::notice::LTS line $(line_of "$lts_tag") predates api_spec (< ${API_SPEC_MIN_LINE}); skipping code-level tracking (Markdown channel still covers it)."
+          fi
           [ -n "$preview_ref" ] && diff_tracked preview "$preview_ref" || true
 
           # RUN_CODE_DIFF_CONT
@@ -768,6 +797,10 @@ jobs:
           # is sorted newest-first, so the previous tag is the next entry.
           while IFS= read -r rel; do
             tag="$(jq -r '.tag' <<<"$rel")"
+            if ! has_api_spec "$tag"; then
+              echo "::notice::release ${tag} predates api_spec (< ${API_SPEC_MIN_LINE}); skipping code-level diff."
+              continue
+            fi
             prev="$(jq -r --arg t "$tag" '
               [ .[].tag_name ] as $tags
               | ($tags | index($t)) as $i
@@ -777,6 +810,10 @@ jobs:
             fetch "$tag" "$newf" || continue
             if [ -z "$prev" ]; then
               echo "::notice::no release before ${tag}; skipping version-over-version diff."
+              continue
+            fi
+            if ! has_api_spec "$prev"; then
+              echo "::notice::previous release ${prev} predates api_spec (< ${API_SPEC_MIN_LINE}); skipping version-over-version code diff for ${tag}."
               continue
             fi
             oldf="$RUNNER_TEMP/surfaces/release-${prev}.json"
