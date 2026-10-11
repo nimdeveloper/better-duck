@@ -216,11 +216,14 @@ impl DataChunkHandle {
         idx: usize,
     ) -> Result<DUCKDB_TYPE> {
         self.check_col(idx)?;
-        // SAFETY: `self.ptr` is valid and `idx` was checked above; the logical
-        // type is owned by this call and destroyed before returning its id.
+        // SAFETY: `self.ptr` is valid and `idx` was checked above.
         let vec_ptr = unsafe { duckdb_data_chunk_get_vector(self.ptr, idx as u64) };
+        // SAFETY: `vec_ptr` is a valid vector of this chunk; the returned logical
+        // type is owned here.
         let mut lt = unsafe { duckdb_vector_get_column_type(vec_ptr) };
+        // SAFETY: `lt` is a valid logical type just returned above.
         let id = unsafe { duckdb_get_type_id(lt) };
+        // SAFETY: `lt` was allocated above and is owned here; destroyed exactly once.
         unsafe { duckdb_destroy_logical_type(&mut lt) };
         Ok(id)
     }

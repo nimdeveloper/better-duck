@@ -72,6 +72,10 @@ enum IterMode {
     /// Committed to row-by-row iteration (`next`/`exists`/`count`/`materialize`).
     Row,
     /// Committed to chunk-based iteration (`fetch_chunk`).
+    //
+    // `fetch_chunk` (the only constructor of this variant) is gated behind
+    // `udf`/`columnar`; with neither feature the variant is unconstructed by design.
+    #[cfg_attr(not(any(feature = "udf", feature = "columnar")), allow(dead_code))]
     Chunk,
 }
 

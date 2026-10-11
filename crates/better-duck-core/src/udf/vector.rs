@@ -87,9 +87,11 @@ impl<'a> VectorRef<'a> {
         &self,
         len: usize,
     ) -> Result<&'a [T]> {
-        // SAFETY: `self.ptr` is a valid vector; the logical type is owned and destroyed here.
+        // SAFETY: `self.ptr` is a valid vector; the returned logical type is owned here.
         let mut lt = unsafe { duckdb_vector_get_column_type(self.ptr) };
+        // SAFETY: `lt` is a valid logical type just returned above.
         let found = unsafe { duckdb_get_type_id(lt) };
+        // SAFETY: `lt` was allocated above and is owned here; destroyed exactly once.
         unsafe { duckdb_destroy_logical_type(&mut lt) };
         if found != T::DUCKDB_TYPE_ID {
             return Err(Error::ConversionError(DuckDBConversionError::TypeMismatch {
@@ -98,8 +100,10 @@ impl<'a> VectorRef<'a> {
             }));
         }
         // SAFETY: the type id matches `T`, so the vector's data array is `len`
-        // contiguous `T` values. The slice borrows the chunk's lifetime `'a`.
+        // contiguous `T` values; the pointer is valid for the chunk's lifetime `'a`.
         let data = unsafe { duckdb_vector_get_data(self.ptr) } as *const T;
+        // SAFETY: `data` points to `len` initialized `T` values (checked type id);
+        // the slice borrows `'a`, the chunk's lifetime.
         Ok(unsafe { slice::from_raw_parts(data, len) })
     }
 

@@ -397,10 +397,11 @@ impl Appender {
             )))));
         }
         for i in 0..appender_cols {
-            // SAFETY: `self.inn` is a valid appender; `i` is in range. The returned
-            // logical type is owned here and destroyed before the next iteration.
+            // SAFETY: `self.inn` is a valid appender; `i` is in range.
             let mut lt = unsafe { duckdb_appender_column_type(self.inn, i as idx_t) };
+            // SAFETY: `lt` is a valid logical type just returned above.
             let expected = unsafe { duckdb_get_type_id(lt) };
+            // SAFETY: `lt` was allocated above and is owned here; destroyed exactly once.
             unsafe { duckdb_destroy_logical_type(&mut lt) };
             let found = chunk.column_type_id(i)?;
             if expected != found {
@@ -414,7 +415,7 @@ impl Appender {
         // chunk whose shape was just verified. DuckDB reads it without taking ownership.
         let rc = unsafe { duckdb_append_data_chunk(self.inn, chunk.as_raw()) };
         self.check(rc)?;
-        if chunk.len() > 0 {
+        if !chunk.is_empty() {
             self.rows_appended = true;
         }
         Ok(())
