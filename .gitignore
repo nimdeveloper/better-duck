@@ -1,0 +1,16 @@
+# Rust build output (this worktree is shared with the code branches)
+/target/
+
+# Machine-specific tool wiring. The portable Mintlify skills are committed under
+# .agents/skills/ with skills-lock.json; per-tool links (e.g. .claude/skills/*)
+# are re-materialized locally by `npx skills` from those.
+/.claude/
+
+# Raw benchmark inputs; the published charts are docs/benchmarks/*.svg
+docs/benchmarks/_raw_*.json
+
+# Mintlify / Node local caches
+/.mint/
+docs/.mint/
+node_modules/
+docs/node_modules/

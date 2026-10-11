@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "skills": {
+    "mintlify": {
+      "source": "mintlify.com",
+      "sourceUrl": "https://mintlify.com/docs",
+      "sourceType": "well-known",
+      "computedHash": "199eb0d56f5b6d2d67a41e3e35a5fe4f18461d08bf1acce6ef4fcb4abcd628bb",
+      "wellKnownDigest": "sha256:1e33070f5a73ff45a53bc591805665bbd9720f7b9d61f8983f6c7b99d9a4f824"
+    },
+    "mintlify-api": {
+      "source": "mintlify.com",
+      "sourceUrl": "https://mintlify.com/docs",
+      "sourceType": "well-known",
+      "computedHash": "4b73380bdf72f728299bbd1d40b2119d44651bde75b4a23317da290936bc3301",
+      "wellKnownDigest": "sha256:dacffa9de4971a0156927fa472e6ed552e3eb013a0b728fb0340c491815168e2"
+    },
+    "mintlify-docs": {
+      "source": "mintlify.com",
+      "sourceUrl": "https://mintlify.com/docs",
+      "sourceType": "well-known",
+      "computedHash": "b710a8432c3e62bdc85da76b4396e1d4907e6a444f6ac3f825bb2c5ef9114f9a",
+      "wellKnownDigest": "sha256:9268f7316b6677ea0398ad51f0ff7ccdf1645067212a9881132b5f0e06c5482a"
+    }
+  }
+}
