@@ -1,0 +1,97 @@
+---
+title: "Introduction"
+description: "A safe, embedded-first Rust client for DuckDB with an optional Diesel ORM backend."
+---
+
+**better-duck** is a safe, embedded-first Rust client for [DuckDB](https://duckdb.org), built
+directly on DuckDB's C API via FFI. It favors a lean dependency tree and row-oriented access, with
+opt-in features for Arrow, Polars, columnar chunks, async, pooling, user-defined functions, data
+derives, a Diesel 2.3 ORM backend, and a Tauri v2 plugin. DuckDB itself is compiled and embedded by
+default — there is no system package to install and no runtime library to ship.
+
+The current release is **`0.1.0-beta.8`**.
+
+<Warning>
+  **Beta** — the API is still settling. Breaking changes before `1.0` are possible; check the
+  changelog before upgrading.
+</Warning>
+
+## Highlights
+
+- **Bundled DuckDB** — the DuckDB C library compiles straight in; no system package, no runtime
+  dependency to install.
+- **Row-oriented, Arrow-optional** — direct access to rows and values with a lean dependency tree,
+  ideal for application-level OLAP. An opt-in [`arrow`](/guide/feature-flags) feature exports results
+  via the Arrow C Data Interface with **no added dependencies**.
+- **Safe by construction** — every FFI call is wrapped; nothing `unsafe` leaks into your code, across
+  the full DuckDB type system.
+- **Comprehensive type coverage** — integers of every width, `DECIMAL`, `UUID`, `BIT`, `BIGNUM`,
+  temporals, and the composite `LIST` / `ARRAY` / `STRUCT` / `MAP` / `UNION` / `ENUM` types.
+- **Diesel 2.3 ORM backend** — a full custom backend: query DSL, migrations, an r2d2 pool, and a
+  large library of DuckDB-specific SQL functions, aggregates, and operators.
+- **User-defined functions & derives** — register plain Rust functions as scalar / table / aggregate
+  / cast functions, and map Rust structs and enums to DuckDB rows and types with `#[derive(…)]` — no
+  `unsafe`, no manual vector handling.
+- **Embedded-first** — designed to run inside Tauri desktop apps, iOS cross-builds, and other
+  environments where a system library isn't an option.
+
+## The crates
+
+better-duck is a small family of crates. Most users depend on **`better-duck-core`** (and, for the
+ORM, `better-duck-diesel`); the rest are pulled in automatically or used only in specific contexts.
+
+| Crate | What it is |
+| --- | --- |
+| `better-duck-core` | The driver — connections, prepared statements, the bulk appender, full type coverage, and the UDF runtime. **This is the crate published as `better-duck` on crates.io.** |
+| `better-duck-diesel` | The Diesel 2.3 backend — `DuckDbConnection`, the DuckDB SQL DSL, type mapping, migrations, an r2d2 pool, and UDF calls through the DSL. |
+| `better-duck-macros` | The procedural macros that power the UDFs and data derives. Pulled in through core's `udf` / `derive` feature flags — **not depended on directly**. |
+| `better-duck-tauri` | A Tauri v2 plugin that exposes embedded DuckDB to a webview as a local-analytics engine, with JS/TS bindings. |
+| `better-duck-sys` | Low-level vendored DuckDB C API bindings, compiled from source (no system lib), with optional bundled extensions and an experimental loadable-extension mode. **Rarely used directly.** |
+
+<Note>
+  The crate published as `better-duck` on crates.io is `better-duck-core`. Throughout these docs,
+  "the core crate" means `better-duck-core`.
+</Note>
+
+## Supported platforms
+
+| Platform | Status |
+| --- | --- |
+| Linux x86_64 | CI-tested |
+| macOS Apple Silicon (aarch64) | CI-tested |
+| macOS x86_64 | CI-tested |
+| Windows x86_64 | CI-tested |
+| iOS aarch64 | CI cross-build |
+| iOS Simulator x86_64 | CI cross-build |
+
+The minimum supported Rust version (**MSRV**) is **1.96**. better-duck is licensed under either
+**MIT** or **Apache-2.0**, at your option.
+
+## Where to next
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/guide/installation">
+    Add the crates to your `Cargo.toml` and pin the exact beta version.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/guide/quickstart">
+    Open a connection, create a table, insert data, and read rows end-to-end.
+  </Card>
+  <Card title="Feature flags" icon="toggle-on" href="/guide/feature-flags">
+    Every Cargo feature of `better-duck-core` and when to enable it.
+  </Card>
+  <Card title="Choosing an API" icon="signs-post" href="/guide/choosing-an-api">
+    Core vs the Diesel backend vs the Tauri plugin, with a feature-flag decision tree.
+  </Card>
+  <Card title="Core crate" icon="rust" href="/core/connections">
+    The driver API: connections, queries, values, appender, pooling, async.
+  </Card>
+  <Card title="Diesel backend" icon="layer-group" href="/diesel/setup-and-crud">
+    The Diesel 2.3 ORM backend for DuckDB.
+  </Card>
+  <Card title="Tauri plugin" icon="window" href="/tauri/overview">
+    Embedded DuckDB inside a Tauri v2 webview.
+  </Card>
+  <Card title="DuckDB essentials" icon="database" href="/guide/duckdb-essentials">
+    The dialect, type system, extensions, and engine behavior through the driver.
+  </Card>
+</CardGroup>

@@ -1,0 +1,116 @@
+---
+title: "Choosing an API"
+description: "When to use better-duck-core, the Diesel backend, or the Tauri plugin, plus a feature-flag decision tree."
+---
+
+better-duck gives you several ways to reach DuckDB. This page helps you pick the right crate and the
+right API surface for your task, and which feature flags to turn on.
+
+## Which crate?
+
+<CardGroup cols={2}>
+  <Card title="better-duck-core" icon="rust" href="/core/connections">
+    The driver. Row-oriented access, prepared statements, the bulk appender, columnar / zero-copy
+    reads, UDFs, async, pooling, and Arrow / Polars interop.
+  </Card>
+  <Card title="better-duck-diesel" icon="layer-group" href="/diesel/setup-and-crud">
+    The Diesel 2.3 ORM backend. A typed query builder (DSL), migrations, an r2d2 pool, and a large
+    library of DuckDB-specific SQL functions, aggregates, and operators.
+  </Card>
+  <Card title="better-duck-tauri" icon="window" href="/tauri/overview">
+    A Tauri v2 plugin that exposes embedded DuckDB to a webview as a local-analytics engine, with
+    JS/TS bindings (`core` or `diesel` backend).
+  </Card>
+  <Card title="better-duck-macros" icon="wand-magic-sparkles" href="/macros/udf">
+    The UDF and derive macros. **Never a direct dependency** — reached through core's
+    [`udf`](/guide/feature-flags) / [`derive`](/guide/feature-flags) features.
+  </Card>
+</CardGroup>
+
+Use this quick router:
+
+| You are… | Reach for |
+| --- | --- |
+| Writing SQL / reasoning about DuckDB types, the dialect, or extensions | [DuckDB essentials](/guide/duckdb-essentials) |
+| Using the driver's Rust API (connect, query, types, appender, pool, async, arrow, columnar) | [`better-duck-core`](/core/connections) |
+| Writing UDFs, or deriving row / struct / enum mappings | [`better-duck-macros`](/macros/udf) via core's `udf` / `derive` |
+| Using an ORM / typed query builder | [`better-duck-diesel`](/diesel/setup-and-crud) |
+| Exposing DuckDB to a Tauri v2 webview | [`better-duck-tauri`](/tauri/overview) |
+
+## Which API for which task?
+
+Even within the core crate, picking the right tool matters:
+
+- **One value per row** in a `SELECT` / `WHERE` → a scalar UDF (`#[duckdb_scalar]`).
+- **Rows from a `FROM`** → a table UDF (`#[duckdb_table_function]`).
+- **Bulk insert** → the `Appender`, not row-by-row `INSERT`.
+- **Read a big result fast / zero-copy columns** → the [`columnar`](/guide/feature-flags) feature's
+  `fetch_chunk` + `as_slice`.
+- **ORM / typed query builder** → `better-duck-diesel`.
+- **Desktop app (webview) database** → `better-duck-tauri`.
+- **Map a Rust struct to a row** → `#[derive(FromRow)]` / `#[derive(ToRow)]`.
+
+## Core directly, or the Diesel backend?
+
+<Accordion title="Use better-duck-core directly when…">
+  - You want the leanest dependency tree and direct, row-oriented control.
+  - You need the bulk `Appender`, columnar / zero-copy reads, or Arrow / Polars export.
+  - You're registering user-defined functions, or driving the engine from inside a Tauri plugin or an
+    embedded context.
+  - You prefer writing SQL yourself over a query-builder DSL.
+</Accordion>
+
+<Accordion title="Use better-duck-diesel when…">
+  - You want a typed query builder, compile-time-checked schema (`table!`), and migrations.
+  - You want DuckDB-specific SQL exposed as Diesel DSL (`.ilike()`, `string_agg`, `date_trunc`,
+    `ST_*`, …) that stock Diesel doesn't ship.
+  - You want r2d2 pooling with a `SharedDuckDbConnectionManager` and a per-connection `on_connect`
+    hook (the place to register UDFs or `LOAD` extensions on every pooled connection).
+  - It builds on `better-duck-core`, so you can still drop to the core connection for raw SQL,
+    the appender, or UDF registration when you need to.
+</Accordion>
+
+<Accordion title="Use better-duck-tauri when…">
+  - You're building a Tauri v2 desktop app and want DuckDB available in the webview as a local
+    analytics engine, with ready-made JS/TS bindings — backed by either the `core` or the `diesel`
+    backend.
+</Accordion>
+
+## Feature-flag decision tree
+
+Start from the defaults (`chrono`, `decimal`) and add what your task needs. See
+[Feature flags](/guide/feature-flags) for the full table.
+
+<Steps>
+  <Step title="Dates & numbers">
+    Keep `chrono` (default) for `chrono` temporals, or disable defaults for the native date/time
+    structs. Keep `decimal` (default) for `rust_decimal`. Add `time` to bind `time`-crate values, or
+    `uuid` for `uuid::Uuid` interop.
+  </Step>
+  <Step title="Extensions">
+    Need JSON, Parquet, or ICU with no runtime install? Bundle them with `json` / `parquet` / `icu`.
+    (Spatial loads at runtime via the extension API, no feature needed in core.)
+  </Step>
+  <Step title="Data interop">
+    Exporting to Arrow? `arrow`. Want Polars `DataFrame`s? `polars` (implies `arrow`). Need fast /
+    zero-copy columnar reads? `columnar`.
+  </Step>
+  <Step title="Functions & mapping">
+    Registering Rust functions as DuckDB functions? `udf` (also enables the `columnar` APIs). Mapping
+    structs/enums, or want `transaction!` / `params!`? `derive`.
+  </Step>
+  <Step title="Concurrency">
+    Async application? `async`. Connection pooling? `pool`. Both together give you `AsyncPool`.
+  </Step>
+</Steps>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Feature flags" icon="toggle-on" href="/guide/feature-flags">
+    Every core feature explained.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/guide/quickstart">
+    A minimal end-to-end example with the core crate.
+  </Card>
+</CardGroup>

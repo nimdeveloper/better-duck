@@ -1,0 +1,149 @@
+---
+title: "Quickstart"
+description: "Open a connection, create a table, insert, and read rows end-to-end."
+---
+
+This walkthrough takes you from an empty project to reading rows out of DuckDB using only
+`better-duck-core`. Every method here is part of the core driver API.
+
+<Steps>
+  <Step title="Add the dependency">
+    ```toml
+    [dependencies]
+    better-duck-core = "0.1.0-beta.8"
+    ```
+
+    This pulls in the default features (`chrono`, `decimal`). See [Installation](/guide/installation)
+    for why the exact version must be pinned.
+  </Step>
+
+  <Step title="Open a connection">
+    The main handle is `better_duck_core::connection::Connection`. Open a private in-memory database,
+    or a file (created if absent):
+
+    ```rust
+    use better_duck_core::connection::Connection;
+
+    let mut conn = Connection::open_in_memory()?;      // private in-memory DB
+    // let mut conn = Connection::open("app.duckdb")?; // on-disk, created if absent
+    ```
+
+    SQL methods take `&mut self`, so bind `conn` as `mut`.
+
+    <Note>
+      Each `Connection::open_in_memory()` call creates its own **isolated** in-memory database — two
+      such connections do not see each other's tables. To share one database across connections, open
+      a [`Database`](/core/connections) and `connect()` from it.
+    </Note>
+  </Step>
+
+  <Step title="Run DDL and DML">
+    Use `execute_batch` for one or more `;`-separated statements (DuckDB does the splitting), and
+    `execute_with` to bind positional parameters (`$1`, `$2`, …):
+
+    ```rust
+    conn.execute_batch("CREATE TABLE events (id INTEGER, label VARCHAR, score DOUBLE)")?;
+
+    let mut id = 1_i32;
+    let mut label = String::from("launch");
+    let mut score = 9.5_f64;
+    let result = conn.execute_with(
+        "INSERT INTO events VALUES ($1, $2, $3)",
+        &mut [&mut id, &mut label, &mut score],
+    )?;
+    assert_eq!(result.changes(), 1); // affected-row count for DML
+    ```
+
+    <Tip>
+      With the [`derive`](/guide/feature-flags) feature, the `params!` macro builds the
+      `&mut [&mut dyn AppendAble]` slice for you:
+      `conn.execute_with("INSERT INTO events VALUES ($1, $2, $3)", &mut params![1_i32, "launch".to_owned(), 9.5_f64])?;`
+    </Tip>
+  </Step>
+
+  <Step title="Query and read rows">
+    `execute` prepares and runs one statement and returns a `DuckResult`, which is an
+    `Iterator<Item = Result<DuckRow>>`. Read columns by name with `get` (case-sensitive) or by index
+    with `get_idx`; each value is a `DuckValue`:
+
+    ```rust
+    use better_duck_core::types::value::DuckValue;
+
+    for row in conn.execute("SELECT id, label FROM events ORDER BY id")? {
+        let row = row?; // Result<DuckRow>
+        match (row.get("id"), row.get("label")) {
+            (Some(DuckValue::Int(id)), Some(DuckValue::Text(label))) => {
+                println!("{id}: {label}");
+            }
+            _ => {}
+        }
+    }
+    ```
+
+    <Note>
+      `DuckValue` is `#[non_exhaustive]` — always include a `_` arm when you match on it, so your
+      code keeps compiling as new variants are added.
+    </Note>
+  </Step>
+
+  <Step title="(Optional) Materialize a result">
+    A `DuckResult` holds a live FFI handle. To detach from it — for example to move the result out of
+    a closure or across threads — call `materialize()` to get a `ResultSet`, which holds no FFI
+    handles and is `Send + Sync + Clone`:
+
+    ```rust
+    let set = conn.execute("SELECT id, label FROM events ORDER BY id")?.materialize()?;
+    for row in set.rows() {        // &[DuckRow]
+        let _ = row.get("id");
+    }
+    let n = set.len();
+    ```
+  </Step>
+</Steps>
+
+## Full example
+
+```rust
+use better_duck_core::connection::Connection;
+use better_duck_core::types::value::DuckValue;
+
+fn main() -> better_duck_core::error::Result<()> {
+    let mut conn = Connection::open_in_memory()?;
+    conn.execute_batch("CREATE TABLE events (id INTEGER, label VARCHAR, score DOUBLE)")?;
+
+    let mut id = 1_i32;
+    let mut label = String::from("launch");
+    let mut score = 9.5_f64;
+    conn.execute_with(
+        "INSERT INTO events VALUES ($1, $2, $3)",
+        &mut [&mut id, &mut label, &mut score],
+    )?;
+
+    let mut threshold = DuckValue::Double(8.0);
+    for row in conn.execute_with(
+        "SELECT id, label FROM events WHERE score > $1 ORDER BY id",
+        &mut [&mut threshold],
+    )? {
+        let row = row?;
+        println!("{:?} {:?}", row.get("id"), row.get("label"));
+    }
+    Ok(())
+}
+```
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Connections & Database" icon="plug" href="/core/connections">
+    Sharing a database, cloning connections, `Config`, interrupting queries.
+  </Card>
+  <Card title="Queries, Results & Values" icon="table" href="/core/queries-and-values">
+    Parameter binding, iterating results, `DuckValue`, and `TableDescription`.
+  </Card>
+  <Card title="Choosing an API" icon="signs-post" href="/guide/choosing-an-api">
+    When to reach for the appender, UDFs, Diesel, or Tauri.
+  </Card>
+  <Card title="DuckDB essentials" icon="database" href="/guide/duckdb-essentials">
+    Dialect, type mapping, extensions, and engine behavior.
+  </Card>
+</CardGroup>

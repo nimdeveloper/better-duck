@@ -1,0 +1,104 @@
+---
+title: "Feature Flags"
+description: "Every Cargo feature of better-duck-core and when to enable it."
+---
+
+`better-duck-core` keeps its dependency tree lean by putting almost everything behind a Cargo
+feature. This page lists **every** feature the core crate defines, what each turns on, and when you'd
+reach for it.
+
+The default feature set is:
+
+```toml
+[dependencies]
+better-duck-core = "0.1.0-beta.8"   # enables default = ["chrono", "decimal"]
+```
+
+To opt out of the defaults and pick features à la carte:
+
+```toml
+[dependencies]
+better-duck-core = { version = "0.1.0-beta.8", default-features = false, features = ["arrow", "udf"] }
+```
+
+<Warning>
+  Remember to pin the exact pre-release version — Cargo's default version match excludes
+  pre-releases. See [Installation](/guide/installation).
+</Warning>
+
+## Date, time & numeric types
+
+| Feature | Default | What it enables | When to use |
+| --- | --- | --- | --- |
+| `chrono` | ✓ | `chrono` date/time conversions for `DATE`, `TIME`, `TIMESTAMP`, `TIMESTAMPTZ`, and `INTERVAL`. | Keep it on if you want `chrono` types. Turn it off (via `default-features = false`) to use the native `DuckDate` / `DuckTime` / … structs and `std::time` types instead. |
+| `decimal` | ✓ | `rust_decimal::Decimal` support for `DECIMAL` columns. | Keep it on for exact decimal arithmetic. Without it, `DECIMAL` surfaces as the native `DuckDecimal`. |
+| `time` | — | Bind and append `time` crate values (`Date`, `Time`, `PrimitiveDateTime`, `OffsetDateTime`, `Duration`) as DuckDB temporals. Coexists with `chrono`; independent of the `DuckValue` read type. | You already use the `time` crate and want to bind its values directly. |
+| `uuid` | — | Convert between the native `DuckUuid` and the `uuid` crate's `Uuid`. | You want `uuid::Uuid` interop instead of the native `DuckUuid`. |
+
+<Note>
+  `chrono` and the native date/time path are mutually exclusive for the **read** type: only one set
+  of `DuckValue` temporal conversions is compiled at a time. The `time` feature is an independent
+  **bind/append** path that coexists with either.
+</Note>
+
+## Bundled DuckDB extensions
+
+These compile the extension straight into the embedded static library — there is **no** runtime
+`INSTALL` / `LOAD` needed.
+
+| Feature | Default | What it enables | When to use |
+| --- | --- | --- | --- |
+| `json` | — | Bundles DuckDB's JSON extension into the static lib. | You use DuckDB's JSON functions and want them available offline, with no runtime install step. |
+| `parquet` | — | Bundles DuckDB's Parquet extension into the static lib. | You read or write Parquet files. |
+| `icu` | — | Bundles DuckDB's ICU extension (timezones / collations). Requires a DuckDB archive re-vendored with ICU sources. | You need full timezone and collation support. |
+
+## Data interop
+
+| Feature | Default | What it enables | When to use |
+| --- | --- | --- | --- |
+| `arrow` | — | Export query results via the Arrow C Data Interface. **No new dependency** — it uses the ABI structs directly, and consumers reinterpret the handles as arrow-rs FFI structs. | You want to hand results to an Arrow-based pipeline without paying for an Arrow dependency. |
+| `polars` | — | Polars `DataFrame` interop, bridged through the Arrow C Data Interface. **Implies `arrow`**, and pulls in `polars` + `polars-arrow`. | You want query results as a Polars `DataFrame`, or want to query a `DataFrame` back. |
+| `columnar` | — | Columnar data-chunk read/write: `fetch_chunk`, zero-copy `as_slice` column reads, and build-and-bulk-insert. Reuses the vector / data-chunk machinery without the proc-macro dependency. | You need to read large results fast or access columns zero-copy. |
+
+<Note>
+  Enabling `udf` turns the `columnar` APIs on too — they share the same vector / data-chunk
+  machinery. You only need `columnar` explicitly when you want those APIs **without** the proc-macro
+  dependency that `udf` pulls in.
+</Note>
+
+## Concurrency
+
+| Feature | Default | What it enables | When to use |
+| --- | --- | --- | --- |
+| `async` | — | A Tokio async facade: `AsyncConnection`, `AsyncDatabase`, `AsyncPool`. Each call runs on `spawn_blocking`, so it never blocks the executor. | You're in an async application and don't want blocking DB calls on your runtime threads. |
+| `pool` | — | An `r2d2` connection pool backed by a shared `Database` handle. | You want connection pooling. Combine with `async` to get `AsyncPool`. |
+
+## Macros: UDFs & derives
+
+| Feature | Default | What it enables | When to use |
+| --- | --- | --- | --- |
+| `udf` | — | The `#[duckdb_scalar]` / `#[duckdb_table_function]` / `#[duckdb_aggregate]` / `#[duckdb_cast]` function macros (via `better-duck-macros`). Also turns on the `columnar` APIs. | You want to register plain Rust functions as DuckDB scalar / table / aggregate / cast functions. |
+| `derive` | — | `#[derive(FromRow / ToRow / DuckEnum / DuckStruct)]` plus the `transaction!` and `params!` helper macros. | You want to map Rust structs/enums to rows and DuckDB types, or want the ergonomic transaction / parameter macros. |
+| `derive-diesel` | — | Makes the data derives **additionally** emit `better_duck_diesel` `FromSql` / `ToSql` impls. Implies `derive`. | Turned on for you by `better-duck-diesel/derive` — the emitted code resolves `::better_duck_diesel` in your crate, so core itself gains no Diesel dependency. You rarely enable this by hand. |
+
+## Advanced
+
+| Feature | Default | What it enables | When to use |
+| --- | --- | --- | --- |
+| `loadable-extension` | — | **Experimental.** Build for a loadable `.duckdb_extension`: links no DuckDB and routes every FFI call through the host's API table. Implies `udf`, and pairs with the `#[duckdb_entrypoint]` macro. | You're writing a DuckDB extension in Rust that is loaded into a host DuckDB rather than embedding its own. |
+
+<Warning>
+  `loadable-extension` is experimental and changes the linking model (no DuckDB is linked in — every
+  call goes through the host's API table). Don't enable it for a normal embedded application.
+</Warning>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Choosing an API" icon="signs-post" href="/guide/choosing-an-api">
+    A decision tree for which features and crates fit your task.
+  </Card>
+  <Card title="Core crate" icon="rust" href="/core/connections">
+    The APIs these features unlock.
+  </Card>
+</CardGroup>

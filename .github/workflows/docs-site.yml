@@ -1,0 +1,52 @@
+name: Docs Site (Mintlify)
+
+# CI for the Mintlify documentation site that lives on the `docs` branch.
+# Separate from both the main code CI (ci.yml) and the rustdoc deploy
+# (docs.yml, which builds `cargo doc` and publishes to GitHub Pages). This
+# only validates the Mintlify guide docs; publishing the Mintlify site is
+# handled by Mintlify's GitHub App once the `docs` branch is connected to a
+# Mintlify project, so there is no deploy step here.
+
+on:
+  push:
+    branches: [docs]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs-site.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate Mintlify docs
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4 # consider SHA-pinning to match the other workflows
+        with:
+          node-version: "20"
+
+      - name: Install Mintlify CLI
+        run: npm i -g mint
+
+      - name: Validate docs.json is valid JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('docs.json','utf8')); console.log('docs.json OK')"
+
+      - name: Check for broken links
+        run: mint broken-links

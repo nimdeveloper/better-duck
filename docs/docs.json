@@ -1,0 +1,117 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "better-duck",
+  "description": "A safe, embedded-first Rust client for DuckDB, with an optional Diesel 2.3 ORM backend, UDF/derive macros, and a Tauri v2 plugin.",
+  "colors": {
+    "primary": "#CA8A04",
+    "light": "#FACC15",
+    "dark": "#A16207"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "versions": [
+      {
+        "version": "v0.1.0-beta.8",
+        "tabs": [
+          {
+            "tab": "Guide",
+            "groups": [
+              {
+                "group": "Getting Started",
+                "pages": [
+                  "index",
+                  "guide/introduction",
+                  "guide/installation",
+                  "guide/quickstart",
+                  "guide/choosing-an-api"
+                ]
+              },
+              {
+                "group": "Concepts",
+                "pages": [
+                  "guide/feature-flags",
+                  "guide/duckdb-essentials",
+                  "guide/benchmarks"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Core + Macros",
+            "groups": [
+              {
+                "group": "Core",
+                "pages": [
+                  "core/connections",
+                  "core/queries-and-values",
+                  "core/parameters-and-prepared",
+                  "core/transactions",
+                  "core/appender",
+                  "core/columnar",
+                  "core/async-and-pooling",
+                  "core/arrow-and-polars",
+                  "core/errors-and-extensions"
+                ]
+              },
+              {
+                "group": "Macros",
+                "pages": [
+                  "macros/udf",
+                  "macros/derives"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Diesel",
+            "groups": [
+              {
+                "group": "Diesel ORM backend",
+                "pages": [
+                  "diesel/overview",
+                  "diesel/setup-and-crud",
+                  "diesel/sql-dsl",
+                  "diesel/types-and-pooling"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Tauri",
+            "groups": [
+              {
+                "group": "Tauri plugin",
+                "pages": [
+                  "tauri/overview",
+                  "tauri/register-and-frontend",
+                  "tauri/backends-and-checkpoint",
+                  "tauri/migrations",
+                  "tauri/security"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "docs.rs",
+        "href": "https://docs.rs/better-duck-core"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "GitHub",
+      "href": "https://github.com/nimdeveloper/better-duck"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/nimdeveloper/better-duck"
+    }
+  }
+}

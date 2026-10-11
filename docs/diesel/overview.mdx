@@ -1,0 +1,138 @@
+---
+title: "Diesel Backend Overview"
+description: "What the better-duck-diesel Diesel 2.3 backend for DuckDB is, how it builds on better-duck-core, its feature flags, and when to reach for the ORM vs the raw core driver."
+---
+
+`better-duck-diesel` is a third-party [Diesel](https://diesel.rs) 2.3 backend for DuckDB. It plugs the
+[`better-duck-core`](/core/connections) driver into Diesel's typed query builder, so you connect, map a
+schema with `table!`, and build `INSERT`/`SELECT`/`UPDATE`/`DELETE` queries as Rust — while still
+reaching the DuckDB-specific SQL (operators, scalar functions, aggregates, types) that stock Diesel has
+no equivalent for.
+
+## What it is
+
+`DuckDbConnection` is a full Diesel `Connection` + `LoadConnection`. That means `.transaction(|c| …)`,
+prepared-statement caching, instrumentation, `r2d2` pooling, and `diesel migration` (it implements
+`MigrationConnection`) all work. `.inner()` / `.inner_mut()` expose the underlying core `Connection` for
+registering UDFs, loading extensions, and running core-only APIs.
+
+DuckDB is compiled and embedded through core — there is no system install.
+
+<Note>
+This crate's default feature set is `["decimal"]` only. Unlike `better-duck-core`, **`chrono` is NOT on
+by default here** — turn it on for date/time column support.
+</Note>
+
+## 30-second quickstart
+
+```toml
+[dependencies]
+better-duck-diesel = "0.1.0-beta.8"
+diesel = "2.3"
+```
+
+```rust
+use better_duck_diesel::DuckDbConnection;
+use diesel::prelude::*;
+
+diesel::table! {
+    products (id) {
+        id    -> Integer,
+        name  -> Text,
+        price -> Double,
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // `:memory:` or a file path; a leading `duckdb://` is stripped.
+    let mut conn = DuckDbConnection::establish(":memory:")?;
+    conn.batch_execute(
+        "CREATE TABLE products (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, price DOUBLE NOT NULL)",
+    )?;
+
+    diesel::insert_into(products::table)
+        .values((products::id.eq(1), products::name.eq("widget"), products::price.eq(9.99)))
+        .execute(&mut conn)?;
+
+    let rows: Vec<(i32, String, f64)> = products::table
+        .filter(products::price.lt(20.0))
+        .order(products::name.asc())
+        .load(&mut conn)?;
+    assert_eq!(rows, [(1, "widget".to_string(), 9.99)]);
+    Ok(())
+}
+```
+
+See [Setup & CRUD](/diesel/setup-and-crud) for the full connection and query surface.
+
+## The two SQL surfaces
+
+Diesel core already gives you the **portable** surface, and it works on `DuckDbConnection` with no extra
+imports: `=`/`<`/`>`, `LIKE`, `count`/`sum`/`avg`/`min`/`max`, `.filter`/`.order`/`.limit`, joins,
+`insert_into`/`update`/`delete`, `RETURNING`, `ON CONFLICT`.
+
+The **DuckDB-only** surface lives behind one import, brought in alongside Diesel's prelude:
+
+```rust
+use diesel::prelude::*;
+use better_duck_diesel::dsl::*;
+```
+
+That prelude adds two operator extension traits (`DuckExpressionMethods`, `DuckTextExpressionMethods`)
+plus a large library of typed free functions and aggregates — all emitting real DuckDB SQL, none
+requiring `sql_query`. See the [DuckDB SQL DSL](/diesel/sql-dsl) page for the verified inventory.
+
+<Note>
+Spatial `ST_*` functions are **not** in the `dsl::*` prelude — import them from
+`better_duck_diesel::spatial::*` under `feature = "spatial"`.
+</Note>
+
+## Feature flags
+
+Verified against `crates/better-duck-diesel/Cargo.toml`.
+
+| Feature | Default | Enables |
+|---|---|---|
+| `decimal` | ✓ | Diesel `Numeric` ↔ `rust_decimal::Decimal` (forwards to core `decimal`) |
+| `chrono` | — | Diesel date/time impls (DATE, TIME, TIMESTAMP, TIMESTAMPTZ, INTERVAL, TIME_TZ, TIME_NS) |
+| `r2d2` | — | r2d2 pooling: `diesel::r2d2` support + `pool::SharedDuckDbConnectionManager` |
+| `udf` | — | expose the core connection for registering `#[duckdb_*]` UDFs, callable in the DSL |
+| `spatial` | — | the `spatial` module: `ST_*` DSL functions + `ensure_loaded` |
+| `json` | — | bundle DuckDB's JSON extension so the JSON DSL works offline (forwards to core `json`) |
+| `derive` | — | re-export `FromRow`/`ToRow`/`DuckEnum`/`DuckStruct` with Diesel `FromSql`/`ToSql` emission on |
+
+<Warning>
+There is **no `bundled` feature** on this crate (the README's feature table lists one, but `Cargo.toml`
+does not define it). DuckDB is embedded through core regardless. The `spatial` feature carries no extra
+Rust deps — it only gates the module; the `ST_*` functions are plain SQL, and `ensure_loaded`
+installs/loads the extension at runtime (needs network unless already present).
+</Warning>
+
+For the full project-wide feature picture, see [feature flags](/guide/feature-flags).
+
+## When to use the ORM vs raw core
+
+Reach for `better-duck-diesel` when you want a typed query builder, schema mapping, migrations, or
+pooling over DuckDB.
+
+Drop to [`better-duck-core`](/core/connections) whenever you need something below the ORM — the appender
+for bulk insert, columnar chunks, async, Arrow/Polars interop, or raw parameter binding. Those are **not**
+part of the Diesel surface. Because `DuckDbConnection::inner_mut()` hands you the core `Connection`, you
+can mix both in the same program.
+
+## Sibling crates
+
+<CardGroup cols={2}>
+  <Card title="better-duck-core" href="/core/connections">
+    The raw Rust driver: connections, values, appender, columnar chunks, async.
+  </Card>
+  <Card title="UDF & derive macros" href="/macros/udf">
+    The `#[duckdb_*]` UDF macros and `FromRow`/`DuckEnum`/`DuckStruct` derives.
+  </Card>
+  <Card title="DuckDB SQL DSL" href="/diesel/sql-dsl">
+    DuckDB-only operators, scalar functions, aggregates, and spatial.
+  </Card>
+  <Card title="Types & Pooling" href="/diesel/types-and-pooling">
+    Type mapping, the `values::*` newtypes, r2d2 pooling, and data derives.
+  </Card>
+</CardGroup>
