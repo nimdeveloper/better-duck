@@ -841,6 +841,21 @@ jobs:
               > "$RUNNER_TEMP/code-changes/release-${tag}.labels.json"
           done < <(jq -c '.[]' "$RUNNER_TEMP/new-releases.json")
 
+          # Cross-channel delta: what the upcoming preview line (e.g. the new v2
+          # C API) adds over the current stable line. Both surfaces come from
+          # api_spec (fetched above), so this is a like-for-like diff; DuckDB's v2
+          # API uses the `duckdb_v2_` symbol prefix and so appears as pure
+          # additions over current's `duckdb_` (v1) surface. Unlike the temporal
+          # channel diffs this is a *reference* (not a change event), so it is
+          # recomputed every run and never gated on `hasChanges`.
+          cur_surface="$RUNNER_TEMP/surfaces/current.json"
+          prev_surface="$RUNNER_TEMP/surfaces/preview.json"
+          if [ -f "$cur_surface" ] && [ -f "$prev_surface" ]; then
+            python3 "$SCRIPTS/diff_surface.py" "$cur_surface" "$prev_surface" \
+              "$RUNNER_TEMP/code-changes/current-to-preview.json" || true
+            echo "current->preview delta: $(jq -rc '.counts' "$RUNNER_TEMP/code-changes/current-to-preview.json" 2>/dev/null || echo n/a)"
+          fi
+
           # Render the deterministic structured section for the generic C API issue
           # (current + LTS rolling channels), used verbatim in the issue body.
           {
@@ -1657,6 +1672,72 @@ jobs:
           )
 
       # -----------------------------------------------------------------------
+      # AI: upcoming-line (v1 -> v2) delta summary
+      # -----------------------------------------------------------------------
+
+      - name: Summarize upcoming-line C API delta with Gemini
+        # A reference summary of what the upcoming line (e.g. the new v2 C API)
+        # adds over current. Soft-fail: the deterministic delta is published by
+        # the preview-issue step regardless, so a Gemini outage never blocks it.
+        continue-on-error: true
+        if: >-
+          env.HAS_UPCOMING == 'true' &&
+          env.BOOTSTRAP_EFFECTIVE != 'true' &&
+          env.STATE_BOOTSTRAP != 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          cf="$RUNNER_TEMP/code-changes/current-to-preview.json"
+          if [ ! -f "$cf" ] || [ "$(jq -r '.hasChanges' "$cf")" != "true" ]; then
+            echo "no current->preview delta this run; skipping Gemini summary."
+            exit 0
+          fi
+
+          current_version="$(jq -r '.current.version' "$RELEASE_CONTEXT")"
+          preview_line="$(jq -r '.previewLine' "$PREVIEW_CONTEXT")"
+
+          {
+            cat <<'PROMPT'
+          You are the upstream compatibility analyst for `better-duck`, a Rust
+          driver for DuckDB's C API. Below is the C API surface the UPCOMING DuckDB
+          line adds over the current stable line, from DuckDB's machine-readable
+          `api_spec`. DuckDB's new "v2" C API uses the `duckdb_v2_` symbol prefix
+          and is an additive, parallel surface; the existing `duckdb_` (v1) API is
+          unchanged.
+
+          Summarize for a driver maintainer planning ahead. Return VALID JSON ONLY:
+          {
+            "summary": "concise technical overview of the new upcoming-line C API",
+            "newApiThemes": ["subsystem or theme, one per entry"],
+            "breaksExistingV1": false,
+            "rustDriverAssessment": "what better-duck should plan to do"
+          }
+          PROMPT
+            echo
+            echo "current ${current_version} -> preview ${preview_line}"
+            echo "Counts: $(jq -rc '.counts' "$cf")"
+            echo
+            echo "Added symbols:"
+            jq -r '.added[].symbol' "$cf"
+            if [ "$(jq -r '.removed | length' "$cf")" -gt 0 ]; then
+              echo; echo "Removed symbols:"; jq -r '.removed[].symbol' "$cf"
+            fi
+            if [ "$(jq -r '.signatureChanged | length' "$cf")" -gt 0 ]; then
+              echo; echo "Signature changed:"; jq -r '.signatureChanged[].symbol' "$cf"
+            fi
+          } > "$RUNNER_TEMP/preview-delta-prompt.txt"
+
+          "$RUNNER_TEMP/gemini.sh" \
+            "$RUNNER_TEMP/preview-delta-prompt.txt" \
+            "$RUNNER_TEMP/preview-delta-analysis.json"
+
+          echo "Upcoming-line delta analysis:"
+          jq '.' "$RUNNER_TEMP/preview-delta-analysis.json"
+
+      # -----------------------------------------------------------------------
       # Update local state
       # -----------------------------------------------------------------------
 
@@ -1748,6 +1829,33 @@ jobs:
                 echo
                 python3 "$SURFACE_SCRIPTS/render_changes.py" \
                   "$RUNNER_TEMP/code-changes/preview.json" "previous" "preview" || true
+                echo
+              fi
+              cross="$RUNNER_TEMP/code-changes/current-to-preview.json"
+              if [ -f "$cross" ] && [ "$(jq -r '.hasChanges' "$cross")" = "true" ]; then
+                cur_ver="$(jq -r '.current.version' "$RELEASE_CONTEXT" 2>/dev/null || echo current)"
+                echo "### What \`v${preview_line}\` adds over current \`v${current_line}\`"
+                echo
+                echo "The upcoming line introduces a parallel \`duckdb_v2_*\` C API alongside the unchanged v1 (\`duckdb_*\`) surface — this is the C API this driver does not yet cover:"
+                echo
+                da="$RUNNER_TEMP/preview-delta-analysis.json"
+                if [ -f "$da" ] && jq -e . "$da" >/dev/null 2>&1; then
+                  summ="$(jq -r '.summary // empty' "$da")"
+                  [ -n "$summ" ] && { echo "$summ"; echo; }
+                  themes="$(jq -r '(.newApiThemes // []) | map("- " + .) | join("\n")' "$da")"
+                  [ -n "$themes" ] && { echo "**New API areas:**"; echo; echo "$themes"; echo; }
+                  assess="$(jq -r '.rustDriverAssessment // empty' "$da")"
+                  [ -n "$assess" ] && { echo "**Rust driver:** ${assess}"; echo; }
+                  if [ "$(jq -r '.breaksExistingV1 // false' "$da")" = "true" ]; then
+                    echo "> ⚠️ The model flagged possible impact to the existing v1 surface — verify before relying on it."
+                    echo
+                  fi
+                fi
+                echo "<details><summary>Full surface delta (from <code>api_spec</code>)</summary>"
+                echo
+                python3 "$SURFACE_SCRIPTS/render_changes.py" "$cross" "current ${cur_ver}" "preview ${preview_line}" || true
+                echo
+                echo "</details>"
                 echo
               fi
               echo "Preview C API document: https://github.com/${DUCKDB_WEB_REPO}/blob/main/docs/preview/clients/c/api.md"
@@ -2151,6 +2259,9 @@ jobs:
             if [ -f "$PREVIEW_CONTEXT" ] && [ "$(jq -r '.hasUpcoming' "$PREVIEW_CONTEXT")" = "true" ]; then
               echo "- Upcoming preview: \`$(jq -r '.previewRaw' "$PREVIEW_CONTEXT")\` (line \`$(jq -r '.previewLine' "$PREVIEW_CONTEXT")\`)"
               echo "- Preview C API changed this run: \`${PREVIEW_API_CHANGED:-false}\`"
+              if [ -f "$RUNNER_TEMP/code-changes/current-to-preview.json" ]; then
+                echo "- Upcoming-line surface delta vs current: \`$(jq -rc '.counts' "$RUNNER_TEMP/code-changes/current-to-preview.json")\`"
+              fi
               if [ -n "${PREVIEW_TRACKED_ISSUE:-}" ]; then
                 echo "- Tracking issue: #${PREVIEW_TRACKED_ISSUE}"
               fi
