@@ -1,0 +1,92 @@
+---
+title: "Benchmarks"
+description: "How better-duck-core compares to the duckdb crate across types and operations."
+---
+
+These benchmarks compare `better-duck-core` against the community [`duckdb`](https://crates.io/crates/duckdb)
+crate across primitive types, composite types, and common operations.
+
+<Note>
+  **Methodology.** Latency columns are min / median / p95 over the measured reps (warmup discarded).
+  Throughput is `item_count / median_latency`. `better-duck-core` and the `duckdb` crate each vendor
+  their own copy of DuckDB and cannot be linked into one process, so each ran in its **own** process;
+  the timings are still directly comparable — both are in-process, native calls with no
+  subprocess-per-operation overhead on either side.
+</Note>
+
+## Primitive types
+
+Insert + full-scan of 20,000 rows per type. better-duck-core is ahead on most primitive types, and
+substantially faster on a few — notably `UUID` (≈50.95 ms vs ≈185.80 ms median), `TIMESTAMPTZ`
+(≈50.47 ms vs ≈87.89 ms), and `TIMESTAMP` (≈47.30 ms vs ≈78.29 ms). The two are close on `HUGEINT`,
+`UHUGEINT`, and `DECIMAL`.
+
+<Frame caption="Primitive types — latency (lower is better)">
+  <img src="/benchmarks/comparison-primitive-types-latency.svg" alt="Primitive types latency comparison" />
+</Frame>
+
+<Frame caption="Primitive types — throughput (higher is better)">
+  <img src="/benchmarks/comparison-primitive-types-throughput.svg" alt="Primitive types throughput comparison" />
+</Frame>
+
+## Composite types
+
+Insert + full-scan of 2,000 rows of `LIST`, `ARRAY`, `STRUCT`, and `MAP`, using each library's
+appender API.
+
+<Warning>
+  The `duckdb` crate has **no safe write API** for these composite types. In the charts, its row is a
+  **neutral placeholder** (`better-duck-core`'s latency + 1 ms, throughput − 1) — **not** a
+  measurement. Plotting the actual workaround (a vectorized bulk SQL insert) would be unfair, since
+  that is a fundamentally different and much faster operation than a row-by-row appender. The real
+  workaround timings are reported separately, for reference only, in the source report.
+</Warning>
+
+The takeaway: better-duck-core offers a **safe appender** path for `LIST` / `ARRAY` / `STRUCT` /
+`MAP` where the `duckdb` crate offers none. Treat the composite charts as "better-duck-core has this
+capability," not as a head-to-head speed result.
+
+<Frame caption="Composite types — latency (duckdb crate is a placeholder, see warning above)">
+  <img src="/benchmarks/comparison-composite-types-latency.svg" alt="Composite types latency comparison" />
+</Frame>
+
+<Frame caption="Composite types — throughput (duckdb crate is a placeholder, see warning above)">
+  <img src="/benchmarks/comparison-composite-types-throughput.svg" alt="Composite types throughput comparison" />
+</Frame>
+
+## Operations
+
+A mix of end-to-end workloads. The results here are mixed and we report them faithfully: the `duckdb`
+crate is somewhat faster on these particular operations, while better-duck-core stays competitive.
+
+| Operation | What it measures | better-duck-core (median) | duckdb crate (median) |
+| --- | --- | --- | --- |
+| `crud_basics` | Single-row INSERT + point SELECT + UPDATE + DELETE | 9.26 ms | 6.89 ms |
+| `bulk_ingest` | Ingest 10,000 rows via each library's appender | 49.01 ms | 43.74 ms |
+| `analytical` | GROUP BY + AVG + ORDER BY on 100,000 rows (query only) | 4.94 ms | 4.36 ms |
+| `prepared_reuse` | 100 point-SELECTs reusing one prepared statement | 140.28 ms | 108.20 ms |
+| `all_types` | INSERT + full-scan of 1,000 rows across 11 column types | 53.43 ms | 43.51 ms |
+
+<Frame caption="Operations — latency (lower is better)">
+  <img src="/benchmarks/comparison-operations-latency.svg" alt="Operations latency comparison" />
+</Frame>
+
+<Frame caption="Operations — throughput (higher is better)">
+  <img src="/benchmarks/comparison-operations-throughput.svg" alt="Operations throughput comparison" />
+</Frame>
+
+## Reading the results
+
+better-duck-core's strengths show up in **type handling** — especially `UUID` and the temporal types,
+and the safe composite-type appender the `duckdb` crate lacks — while the two crates are close on raw
+operation throughput. Pick the crate that fits your workload and the API surface you want; see
+[Choosing an API](/guide/choosing-an-api).
+
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/guide/introduction">
+    What better-duck is and how its crates fit together.
+  </Card>
+  <Card title="Core crate" icon="rust" href="/core/connections">
+    The driver API measured here.
+  </Card>
+</CardGroup>

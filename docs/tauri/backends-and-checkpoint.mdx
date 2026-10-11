@@ -1,0 +1,102 @@
+---
+title: "Backends & Checkpoint"
+description: "Choose between backend-core and backend-diesel, understand migration backup vs checkpointing, and tune the composable WAL checkpoint strategies."
+---
+
+The plugin builds on exactly one backend, selected by a Cargo feature, and folds its DuckDB WAL into
+the main file on a checkpoint schedule you control. This page covers both choices.
+
+## Choosing a backend
+
+Both backends expose the **identical** webview command API — the choice is purely about the Rust
+side (migrations, pooling, how connections are managed). Both implement the `DuckBackend` trait;
+commands are written against the trait and dispatched through managed state.
+
+| Feature | Built on | Entry point | Migrations | Connection model |
+|---|---|---|---|---|
+| `backend-core` *(default)* | better-duck-core | `core::init()` / `core::Builder` | inline engine, `Vec<Migration>` | registry of shared `Database` handles; a short-lived `Connection` per operation |
+| `backend-diesel` | [better-duck-diesel](/diesel/overview) | `diesel::init()` / `diesel::Builder` | Diesel `embed_migrations!` (`EmbeddedMigrations`) | r2d2 pool of `DuckDbConnection` per connection string |
+
+<Warning>
+Building with **neither** feature is a `compile_error!`. Pick exactly one backend feature (`arrow`
+is an orthogonal add-on, not a backend).
+</Warning>
+
+<Accordion title="How the Diesel backend runs dynamic SQL">
+In the Diesel engine, the dynamic-column SQL the plugin forwards (arbitrary statements + JSON
+params) runs on the pooled connection's underlying core `Connection` via `inner_mut()`, reusing the
+same `DuckValue`⇄JSON materialization as the core engine. Diesel's compile-time `QueryableByName`
+can't express the plugin's dynamic result shape, so the plugin drops to the core path for these.
+</Accordion>
+
+### `on_connect` hook timing differs
+
+- **Core engine:** runs the hooks on every checked-out connection.
+- **Diesel engine:** attaches them to the r2d2 manager, so they run **once per physical
+  connection** — r2d2 reuses connections, and re-registering a UDF on an already-initialized
+  connection would fail.
+
+### Picking
+
+- Default to **`backend-core`**: lighter dependency tree, inline migrations.
+- Use **`backend-diesel`** when the app already uses [better-duck-diesel](/diesel/overview) (shared
+  schema / DSL / `embed_migrations!`) and wants a connection pool.
+
+<Note>
+Beta edges: the Diesel-native pool and `embed_migrations!` are the forward direction, and
+`queryArrow` + Android CI are the pending items. The `diesel::init()` path and the pool wiring are
+present in the crate — verify against the exact release you pin.
+</Note>
+
+## Backup vs checkpointing — two different things
+
+<Warning>
+Do not confuse these two mechanisms:
+
+- **Migration backup** (automatic, on-disk only): the crash-safe backup-in-place protocol around
+  migrations — `<db>.bak` + `<db>.migrate-journal`, restored on an interrupted prior run. Covered in
+  [migrations](/tauri/migrations).
+- **Checkpointing** (below): folding the WAL into the main database file.
+</Warning>
+
+## Checkpoint strategies (WAL → main file)
+
+DuckDB writes go to a WAL and are folded into the main file on checkpoint. All strategies are
+**composable** (configured on the builder); the default is fully passive — rely on DuckDB's own
+WAL-size auto-checkpoint. `CHECKPOINT` fails while a transaction is active, so background and
+after-write sweeps can use `FORCE CHECKPOINT` (which waits for the lock).
+
+| Builder method | Strategy | Behavior |
+|---|---|---|
+| `checkpoint_threshold("64MB")` | Automatic | `SET checkpoint_threshold=…` at load (DuckDB's own auto-checkpoint) |
+| `checkpoint_after_writes(n)` | AfterWrites | Checkpoint after every `n`-th write operation |
+| `checkpoint_interval(dur)` | Interval | A background thread sweeps **all** loaded connections every `dur` |
+| `checkpoint_on_exit(true)` | OnAppLifecycle | Checkpoint all connections on the Tauri `Exit` event |
+| `checkpoint_force(true)` | — | Use `FORCE CHECKPOINT` for background / after-write sweeps |
+| `checkpoint_platform_defaults()` | per-platform | Mobile (Android/iOS) → `OnAppLifecycle` + `FORCE CHECKPOINT`; desktop stays passive |
+
+### How `checkpoint_platform_defaults()` merges
+
+It **merges** under anything you set explicitly: `Option` fields fall back to the defaults, and the
+`on_exit` / `force` booleans are OR-ed in. A platform default can *enable* a strategy but never
+*disables* one you turned on, so call order relative to the other `checkpoint_*` setters doesn't
+matter.
+
+<Tip>
+The mobile default exists because the OS can suspend or kill the app without a clean process exit,
+so pending WAL data must be flushed on the lifecycle event.
+</Tip>
+
+### Explicit checkpoint from the frontend
+
+`db.checkpoint(force?)` runs `CHECKPOINT` (or `FORCE CHECKPOINT` when `force` is `true`) on that one
+connection. The Interval and OnAppLifecycle sweeps use an internal `checkpoint_all` that best-effort
+checkpoints every loaded connection.
+
+### Picking a strategy
+
+- **Desktop, moderate write volume:** `checkpoint_interval(…)` and/or `checkpoint_on_exit(true)`.
+- **Mobile:** `checkpoint_platform_defaults()` (or `checkpoint_on_exit(true).checkpoint_force(true)`).
+- **Bursty writes you want flushed promptly:** `checkpoint_after_writes(n)`.
+- **Large-WAL tolerance tuning:** `checkpoint_threshold("…")`.
+- **A critical moment** (before export, on logout): call `db.checkpoint(true)` from JS.

@@ -1,0 +1,64 @@
+---
+title: "better-duck"
+description: "A safe, embedded-first Rust client for DuckDB — with an optional Diesel 2.3 ORM backend, UDF/derive macros, and a Tauri v2 plugin."
+---
+
+<Note>
+**Beta** — the API is settling. Breaking changes before `1.0` are possible; check the
+[changelog](https://github.com/nimdeveloper/better-duck/blob/main/CHANGELOG.md) before upgrading.
+Current version: **0.1.0-beta.8**.
+</Note>
+
+**better-duck** is a safe, embedded-first Rust client for [DuckDB](https://duckdb.org). The DuckDB
+C library compiles straight into your binary — no system package, no runtime dependency — and every
+FFI call is wrapped so nothing `unsafe` leaks into your code, across the full DuckDB type system.
+
+## Highlights
+
+- **Bundled DuckDB** — compiles from source; no system library to install.
+- **Row-oriented, Arrow-optional** — a lean dependency tree for application-level OLAP, with an
+  opt-in `arrow` feature that exports results via the Arrow C Data Interface with no added dependencies.
+- **Safe by construction** — the whole DuckDB type system behind a safe API.
+- **Comprehensive types** — every integer width, `DECIMAL`, `UUID`, `BIT`, `BIGNUM`, temporals, and
+  the composite `LIST` / `ARRAY` / `STRUCT` / `MAP` / `UNION` / `ENUM` types.
+- **Diesel 2.3 backend** — query DSL, migrations, an r2d2 pool, and a large library of DuckDB-specific
+  SQL functions, aggregates, and operators.
+- **UDFs & derives** — register plain Rust functions as scalar/table/aggregate/cast functions and map
+  Rust structs/enums to DuckDB rows and types with `#[derive(…)]` — no `unsafe`, no manual vectors.
+- **Embedded-first** — built to run inside Tauri desktop apps, iOS cross-builds, and anywhere a system
+  library isn't an option.
+
+## Start here
+
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/guide/introduction">
+    What better-duck is, the crate map, and how the pieces fit together.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/guide/quickstart">
+    Open a connection, run a query, and read values end-to-end.
+  </Card>
+  <Card title="Installation" icon="download" href="/guide/installation">
+    Add the crates, pin the beta version, and understand bundled DuckDB.
+  </Card>
+  <Card title="Feature flags" icon="toggle-on" href="/guide/feature-flags">
+    Every Cargo feature explained — and when to turn it on.
+  </Card>
+</CardGroup>
+
+## Explore by area
+
+<CardGroup cols={2}>
+  <Card title="Core + Macros" icon="rust" href="/core/connections">
+    The DuckDB client API — connections, queries, parameters, the appender, columnar chunks,
+    async, pooling, Arrow/Polars — plus the UDF and data-derive macros.
+  </Card>
+  <Card title="Diesel ORM" icon="database" href="/diesel/overview">
+    The Diesel 2.3 backend — schema, CRUD, the DuckDB-only SQL DSL, type mapping, and pooling.
+  </Card>
+  <Card title="Tauri plugin" icon="window" href="/tauri/overview">
+    Expose embedded DuckDB to a Tauri v2 webview as a local analytics engine.
+  </Card>
+  <Card title="DuckDB essentials" icon="duck" href="/guide/duckdb-essentials">
+    The SQL dialect, type system, and engine behaviors as seen through the driver.
+  </Card>
+</CardGroup>

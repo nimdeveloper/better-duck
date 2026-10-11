@@ -1,0 +1,155 @@
+---
+title: "Parameters & Prepared Statements"
+description: "Bind positional and named parameters, use the AppendAble trait, and prepare reusable statements with Statement / CachedStatement."
+---
+
+DuckDB parameters are positional (`$1, $2, …` or `?`) or named (`$name`). Bind values as
+`&mut dyn AppendAble` — every [`DuckValue`](/core/queries-and-values#the-duckvalue-type) and the
+primitive Rust types (`i32`, `f64`, `&str` / `String`, `bool`, …) implement `AppendAble`, and mixed
+types coerce to `&mut dyn AppendAble` at the call site.
+
+## Positional parameters — `execute_with`
+
+`execute_with` takes `&mut [&mut dyn AppendAble]`. Heterogeneous types are fine.
+
+```rust
+use better_duck_core::types::value::DuckValue;
+
+// Primitive binds.
+let mut min_id = 1i32;
+let mut label = String::from("gamma");
+let matched = conn
+    .execute_with(
+        "SELECT id FROM events WHERE id >= $1 AND label = $2",
+        &mut [&mut min_id, &mut label],
+    )?
+    .count();
+
+// Bind a DuckValue, including an explicit SQL NULL.
+let mut null_bind = DuckValue::Null;
+let coalesced: Vec<_> = conn
+    .execute_with("SELECT COALESCE($1, 'fallback') AS v", &mut [&mut null_bind])?
+    .collect::<better_duck_core::error::Result<_>>()?;
+```
+
+## Named parameters — `execute_with_named`
+
+`execute_with_named` takes `&mut [(&str, &mut dyn AppendAble)]`. Order is irrelevant; binding is by
+`$name`.
+
+```rust
+let mut id = 7_i32;
+let mut name = String::from("bound");
+conn.execute_with_named(
+    "INSERT INTO t VALUES ($id, $name)",
+    &mut [
+        ("name", &mut name as &mut dyn better_duck_core::AppendAble),
+        ("id",   &mut id   as &mut dyn better_duck_core::AppendAble),
+    ],
+)?;
+```
+
+A name not present in the SQL yields `Error::InvalidParameterName`.
+
+## Convenience forms
+
+- `conn.insert::<T: AppendAble, I: IntoIterator<Item = T>>(sql, values)` binds a **homogeneous**
+  iterator as consecutive positional parameters and executes once. It **errors if no rows
+  changed**.
+
+  ```rust
+  conn.insert::<i32, _>("INSERT INTO t VALUES ($1, $2)", [10, 20])?;
+  // A statement that changes nothing (e.g. a bare SELECT) is a failed insert:
+  // Error::DuckDBFailure(_, Some("Failed to insert values"))
+  ```
+
+- The `derive` feature's `params![a, b, DuckValue::Null, …]` macro builds the
+  `&mut [&mut dyn AppendAble]` slice for `execute_with` — see [helper macros](/macros/derives#helper-macros).
+
+## Prepared statements — `Statement`
+
+There is no `Connection::prepare`; the entry point is `conn.db().prepare(sql)`, which returns a
+`Statement` that **borrows** the connection. `bind` auto-increments the positional index; `bind_at`
+targets a specific 1-based index; `clear_bindings` resets for reuse.
+
+```rust
+let mut stmt = conn.db().prepare("SELECT v FROM nums WHERE v >= $1 AND v <= $2")?;
+let _n = stmt.bind_parameter_count();
+
+stmt.bind(&mut 10i32)?;                // fills $1
+stmt.bind(&mut 20i32)?;                // fills $2
+let n = stmt.execute()?.count();
+
+stmt.clear_bindings()?;                // reuse with explicit indices
+stmt.bind_at(&mut 20i32, 1)?;
+stmt.bind_at(&mut 40i32, 2)?;
+let n = stmt.execute()?.count();
+```
+
+## Reusable statements — `CachedStatement`
+
+Unlike `Statement`, a `CachedStatement` holds its own handle to the connection, so it does not
+borrow `conn` and is `'static` and freely reusable. Binds are **1-based**; `bind_named` targets
+`$name` parameters; `reset_bindings` clears for the next execution.
+
+```rust
+use better_duck_core::CachedStatement;
+
+let mut stmt = CachedStatement::prepare(conn.db(), "INSERT INTO t VALUES ($1)")?;
+let _count = stmt.parameter_count();
+
+stmt.bind(1, &mut 100i32)?;
+stmt.execute()?;
+stmt.reset_bindings()?;
+stmt.bind(1, &mut 200i32)?;
+stmt.execute()?;
+
+// Named parameters, and a RETURNING clause that yields rows:
+let mut named = CachedStatement::prepare(conn.db(), "SELECT $x + $y AS s")?;
+named.bind_named("x", &mut 3i32)?;
+named.bind_named("y", &mut 4i32)?;
+let row = named.execute()?.next().expect("row")?;
+```
+
+## Multi-statement batches — `ExtractedStatements`
+
+`conn.extract_statements(sql)` parses a `;`-separated batch (DuckDB does the parsing, so a
+semicolon inside a string literal is not a split) into statements you `prepare(i)` and run
+individually. Prepare a given index at most once; an out-of-range index is rejected.
+
+```rust
+let batch = conn.extract_statements("SELECT 1 AS a; SELECT 'two' AS b; SELECT 3 AS c")?;
+for i in 0..batch.len() {
+    let mut stmt = batch.prepare(i)?;
+    let row = stmt.execute()?.next().expect("row")?;
+}
+```
+
+## Incremental (task-at-a-time) execution
+
+`CachedStatement::pending()` returns a `PendingResult` that runs the query one task at a time —
+useful for cooperative scheduling or progress reporting. `into_pending()` yields an `OwnedPending`
+that is `Send + 'static` (no borrow of the statement).
+
+```rust
+use better_duck_core::{CachedStatement, PendingState};
+
+let stmt = CachedStatement::prepare(conn.db(), "SELECT count(*) AS n FROM range(50000)")?;
+let mut pending = stmt.pending()?;
+loop {
+    let state = pending.execute_task();
+    if matches!(
+        state,
+        PendingState::Ready | PendingState::Error | PendingState::NoTasksAvailable
+    ) {
+        break;
+    }
+}
+let row = pending.execute()?.next().expect("row")?;   // finalize regardless
+```
+
+<Tip>
+  Step until `Ready`, `Error`, or `NoTasksAvailable` (the remaining work is owned by background
+  workers, so stepping would never itself reach `Ready`). `execute()` finalizes the query either
+  way.
+</Tip>

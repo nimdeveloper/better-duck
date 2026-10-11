@@ -1,0 +1,125 @@
+---
+title: "Async & Pooling"
+description: "The Tokio async facade (AsyncConnection / AsyncDatabase / AsyncPool) and the r2d2 connection pool over a shared Database."
+---
+
+Two independent, opt-in integration surfaces: a Tokio async facade and an r2d2 connection pool.
+They combine into an `AsyncPool`.
+
+## Async (feature `async`)
+
+<Info>Requires `feature = "async"`. Types re-export at the crate root.</Info>
+
+A Tokio facade: every call dispatches to `tokio::task::spawn_blocking`, so DuckDB never blocks the
+async executor. **Results are materialized** — the async methods return an owned
+[`ResultSet`](/core/queries-and-values#materializing-to-a-resultset) (`Send`), not a borrowing
+`DuckResult`.
+
+```rust
+use better_duck_core::AsyncConnection;
+use better_duck_core::types::value::DuckValue;
+
+let conn = AsyncConnection::open_in_memory().await?;   // or ::open(path).await?
+conn.execute_batch("CREATE TABLE t (id INTEGER)").await?;
+let set = conn.execute("SELECT id FROM t").await?;      // ResultSet
+
+// Parameters are passed by value as Vec<DuckValue> (not &mut dyn, which isn't Send).
+let set = conn
+    .execute_with("SELECT id FROM t WHERE id = $1", vec![DuckValue::Int(2)])
+    .await?;
+```
+
+`AsyncConnection` is `Clone + Send + Sync`; clones share one connection serialized by an internal
+mutex. Key methods:
+
+- `with_connection(|&mut Connection| -> Result<T>)` — the primitive; run anything (e.g. a
+  transaction) on the blocking thread. Everything else is built on it.
+- `execute_batch`, `execute`, `execute_with` — as above.
+- `execute_pending(sql)` — steps the query one DuckDB task per dispatch, yielding to the runtime
+  between tasks so a long query neither monopolizes a blocking thread nor blocks cancellation.
+- `with_appender(table, schema, |&mut Appender| …)` — the appender holds raw FFI pointers, so it
+  never leaves the closure.
+- `AsyncConnection::new(conn)` wraps an existing `Connection`; `try_into_inner()` recovers it if
+  this is the last clone.
+
+<Note>
+  **Cancellation (cancel-on-drop).** The query futures request interruption of the native query if
+  the future is dropped. Because `spawn_blocking` tasks cannot be aborted, the drop *signals* DuckDB
+  to interrupt and lets the blocking task wind down — it does not stop native work instantly. The
+  connection becomes usable again once that task releases the mutex. `query_control()` /
+  `interrupt()` / `progress()` go through a **mutex-free** control source, so they work *while* a
+  query holds the connection mutex on a blocking thread.
+</Note>
+
+`AsyncDatabase` mirrors [`Database`](/core/connections#sharing-a-database-across-connections) for
+sharing one database across async connections: `AsyncDatabase::open_in_memory().await?`, then
+`db.connect().await?` → an `AsyncConnection`; `from_database(db)` / `database()` bridge to/from a
+sync `Database`. These methods panic if called outside a Tokio runtime (matching `spawn_blocking`).
+
+## Pooling (feature `pool`)
+
+<Info>Requires `feature = "pool"`.</Info>
+
+An `r2d2` pool whose connections all share **one** `Database` (so an in-memory pool observes one
+consistent database, not one per slot).
+
+```rust
+use better_duck_core::error::Error;
+use better_duck_core::pool::{DuckDbConnectionManager, Pool};
+
+let manager = DuckDbConnectionManager::memory()?;        // shared in-memory DB
+// r2d2's builder/checkout errors are their own type; map them into the core error.
+let pool: Pool = Pool::builder()
+    .max_size(8)
+    .build(manager)
+    .map_err(|e| Error::Pool(e.to_string()))?;
+
+let mut conn = pool.get().map_err(|e| Error::Pool(e.to_string()))?;  // PooledConnection
+conn.execute_batch("CREATE TABLE t (id INTEGER)")?;      // derefs to Connection
+
+let state = pool.state();                                // PoolState { connections, idle_connections }
+```
+
+Managers: `memory()`, `memory_with_flags(Config)`, `file(path)`, `file_with_flags(path, Config)`,
+`new(Database)` (wrap an existing one). `database()` returns the shared `Database`. Re-exports under
+`better_duck_core::pool`: `Pool`, `PooledConnection`, `PoolBuilder`, `PoolError`, `PoolState`. The
+manager is `Clone + Send + Sync`.
+
+## Async pool (`async` + `pool`)
+
+<Note>`AsyncPool` needs both the `async` and `pool` features.</Note>
+
+`AsyncPool` wraps a `Pool`. `with` is the primitive — it checks a connection out, runs a closure on
+a blocking thread, and releases the checkout when the closure returns.
+
+```rust
+use better_duck_core::AsyncPool;
+use better_duck_core::pool::{DuckDbConnectionManager, Pool};
+use better_duck_core::types::value::DuckValue;
+
+let core_pool = Pool::builder().max_size(4).build(DuckDbConnectionManager::memory()?)?;
+let pool = AsyncPool::new(core_pool);
+
+pool.execute_batch("CREATE TABLE t (id INTEGER)").await?;
+
+// Run a transaction correctly — entirely inside the closure, no await inside:
+pool.with(|conn| {
+    conn.execute_batch("BEGIN")?;
+    conn.execute_batch("INSERT INTO t VALUES (1), (2), (3)")?;
+    conn.execute_batch("COMMIT")?;
+    Ok(())
+}).await?;
+
+pool.execute_with("INSERT INTO t VALUES ($1)", vec![DuckValue::Int(4)]).await?;
+let set = pool.execute("SELECT count(*) AS c FROM t").await?;
+let state = pool.state().await;
+```
+
+<Warning>
+  `with` is **deliberately** the only way to touch a pooled connection: holding a pooled-connection
+  guard across an `.await` would pin a pool slot for the whole suspension (a classic async-pool
+  deadlock), and a transaction must not span an `.await`. Keep the whole unit of work inside the
+  closure.
+</Warning>
+
+Also available: `pool()`, `state() -> PoolState`, and `execute_with(sql, Vec<DuckValue>)`.
