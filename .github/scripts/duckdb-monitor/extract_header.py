@@ -5,15 +5,15 @@ Usage:
     python extract_header.py <duckdb.h> <out_surface.json>
 
 Used only when ``api_spec`` is unavailable for a ref (older DuckDB lines). It
-regex-parses ``DUCKDB_API`` function prototypes and ``typedef`` names into the
-same surface shape the spec extractor emits (no lifecycle/since; status defaults
-to ``stable``), so the differ treats both sources identically. Best-effort by
-design — comparisons are only ever header-vs-header.
+regex-parses the exported-function macro (``DUCKDB_C_API``, or legacy
+``DUCKDB_API``) prototypes and ``typedef`` names into the same surface shape the
+spec extractor emits (no lifecycle/since; status defaults to ``stable``), so the
+differ treats both sources identically. Best-effort by design — comparisons are
+only ever header-vs-header.
 """
 
 from __future__ import annotations
 
-import hashlib
 import re
 import sys
 from typing import Any, Dict, List
@@ -24,11 +24,15 @@ import surface
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
 
+# DuckDB renamed the public export macro from `DUCKDB_API` to `DUCKDB_C_API`;
+# modern headers (1.5+) use `DUCKDB_C_API`. Match either so the fallback works
+# across the rename. The required whitespace after the macro keeps the version
+# guard `DUCKDB_API_VERSION_AT_LEAST(...)` (no space before `_VERSION`) from
+# matching as a prototype.
 _FUNC = re.compile(
-    r"DUCKDB_API\s+(?P<ret>[A-Za-z_][\w\s\*]*?)\s+(?P<name>duckdb_\w+)\s*\((?P<params>[^;{]*?)\)\s*;",
+    r"DUCKDB_(?:C_)?API\s+(?P<ret>[A-Za-z_][\w\s\*]*?)\s+(?P<name>duckdb_\w+)\s*\((?P<params>[^;{]*?)\)\s*;",
     re.DOTALL,
 )
-_TYPEDEF = re.compile(r"typedef\b(?P<body>[^;{]*?)\b(?P<name>duckdb_\w+)\s*;", re.DOTALL)
 
 
 def _parse_param(raw: str) -> Dict[str, Any]:
@@ -88,13 +92,15 @@ def extract(header_text: str) -> Dict[str, Any]:
             "lifecycle": [],
         }
 
+    # Header-derived type tracking is intentionally omitted. Struct/union
+    # typedefs span braces (which the prototype-oriented scan cannot reliably
+    # delimit without a real C parser), and DuckDB regenerated the header from
+    # `api_spec` at 1.5.6, which rewrote every typedef's *declaration style*
+    # without changing its meaning — a naive typedef scan reports all of them as
+    # spurious changes across that boundary. Functions are the ABI-critical
+    # signal a header can be trusted for; the richer `api_spec` path (1.5.6+)
+    # carries full, reliable type tracking.
     types: Dict[str, Any] = {}
-    for match in _TYPEDEF.finditer(text):
-        name = match.group("name")
-        if name in functions:
-            continue
-        digest = hashlib.sha256(" ".join(match.group(0).split()).encode("utf-8")).hexdigest()[:16]
-        types[name] = {"kind": "typedef", "specVersion": "header", "hash": digest}
 
     return {
         "schema": 1,

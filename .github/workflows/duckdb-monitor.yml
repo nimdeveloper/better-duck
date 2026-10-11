@@ -50,10 +50,12 @@ env:
   # 1.4 = LTS, 1.5 = current, 1.6 = LTS, etc.
   LTS_MIN_MINOR: 4
 
-  # The machine-readable C API spec (`api_spec/` YAML) only exists from DuckDB
-  # 1.5 onward — 1.4 (and earlier) predate it. Code-level C API tracking is
-  # skipped for any line below this, which still gets Markdown-based tracking.
-  API_SPEC_MIN_LINE: "1.5"
+  # The machine-readable C API spec (`api_spec/` YAML) only appears from DuckDB
+  # 1.5.6 onward — it was added mid-way through the 1.5 patch line, so 1.5.0–1.5.5
+  # (and every earlier line, including the 1.4 LTS) have no api_spec. This floor is
+  # compared at full `major.minor.patch` granularity: refs below it fall back to
+  # header-based tracking (and the Markdown channel still covers those lines).
+  API_SPEC_MIN_VERSION: "1.5.6"
 
 jobs:
   monitor:
@@ -741,29 +743,40 @@ jobs:
 
           code_changed=false
 
-          fetch() { bash "$SCRIPTS/fetch_surface.sh" "$1" "$2"; }
+          fetch() { bash "$SCRIPTS/fetch_surface.sh" "$1" "$2" "${3:-auto}"; }
 
-          # DuckDB's machine-readable api_spec began at API_SPEC_MIN_LINE; refs on an
-          # older line (notably the 1.4 LTS) have no api_spec, so code-level tracking
-          # is skipped for them (the Markdown channel still covers those lines).
-          line_of() {
+          # DuckDB's machine-readable api_spec began at API_SPEC_MIN_VERSION; refs
+          # before it (the 1.4 LTS, and 1.5.0–1.5.5) have no api_spec, so the
+          # rolling spec-based channels skip them (the Markdown channel still
+          # covers those lines). Version-over-version release diffs instead fall
+          # back to header-vs-header below, so a change landing right at the
+          # api_spec boundary is still detected.
+          #
+          # `ver_of` reduces a tag/branch ref to `major.minor.patch` (missing
+          # components default to 0, so a dev branch like `v2.0-cyanoptera`
+          # becomes `2.0.0`). `ver_lt` compares two such triples numerically.
+          ver_of() {
             printf '%s' "$1" | sed -E 's#^v##; s#-.*$##' |
-              awk -F. '{ printf "%s.%s", ($1=="" ? 0 : $1), ($2=="" ? 0 : $2) }'
+              awk -F. '{ printf "%d.%d.%d", ($1==""?0:$1), ($2==""?0:$2), ($3==""?0:$3) }'
           }
-          line_lt() {
+          ver_lt() {
             awk -v a="$1" -v b="$2" 'BEGIN {
               split(a, x, "."); split(b, y, ".");
-              am = x[1] + 0; an = x[2] + 0; bm = y[1] + 0; bn = y[2] + 0;
-              print (am < bm || (am == bm && an < bn)) ? 1 : 0
+              for (i = 1; i <= 3; i++) {
+                ai = x[i] + 0; bi = y[i] + 0;
+                if (ai < bi) { print 1; exit }
+                if (ai > bi) { print 0; exit }
+              }
+              print 0
             }'
           }
-          has_api_spec() { [ "$(line_lt "$(line_of "$1")" "$API_SPEC_MIN_LINE")" = "0" ]; }
+          has_api_spec() { [ "$(ver_lt "$(ver_of "$1")" "$(ver_of "$API_SPEC_MIN_VERSION")")" = "0" ]; }
 
           # Diff a rolling key (current/lts/preview) against the surface stored in state.
           diff_tracked() {
             local key="$1" ref="$2"
             local new="$RUNNER_TEMP/surfaces/${key}.json"
-            if ! fetch "$ref" "$new"; then
+            if ! fetch "$ref" "$new" spec; then
               echo "::notice::no C API surface for ${key} (ref ${ref}); skipping code diff."
               return 0
             fi
@@ -781,12 +794,12 @@ jobs:
           if has_api_spec "$current_tag"; then
             diff_tracked current "$current_tag"
           else
-            echo "::notice::current line $(line_of "$current_tag") predates api_spec (< ${API_SPEC_MIN_LINE}); skipping code-level tracking."
+            echo "::notice::current $(ver_of "$current_tag") predates api_spec (< ${API_SPEC_MIN_VERSION}); skipping rolling code-level tracking."
           fi
           if has_api_spec "$lts_tag"; then
             diff_tracked lts "$lts_tag"
           else
-            echo "::notice::LTS line $(line_of "$lts_tag") predates api_spec (< ${API_SPEC_MIN_LINE}); skipping code-level tracking (Markdown channel still covers it)."
+            echo "::notice::LTS $(ver_of "$lts_tag") predates api_spec (< ${API_SPEC_MIN_VERSION}); skipping rolling code-level tracking (Markdown channel still covers it)."
           fi
           [ -n "$preview_ref" ] && diff_tracked preview "$preview_ref" || true
 
@@ -795,29 +808,34 @@ jobs:
           # Per new release: diff its tag's surface against the previous stable
           # release's tag (covers both major and minor bumps). `stable-releases.json`
           # is sorted newest-first, so the previous tag is the next entry.
+          #
+          # Source selection: use api_spec only when BOTH refs have it; otherwise
+          # extract BOTH from the duckdb.h header so the comparison is
+          # header-vs-header (never header-vs-spec, which would report the two
+          # extractors' structural differences as bogus changes). This is what
+          # lets a change straddling the api_spec boundary — e.g. 1.5.5 -> 1.5.6 —
+          # be diffed cleanly on the common header surface.
           while IFS= read -r rel; do
             tag="$(jq -r '.tag' <<<"$rel")"
-            if ! has_api_spec "$tag"; then
-              echo "::notice::release ${tag} predates api_spec (< ${API_SPEC_MIN_LINE}); skipping code-level diff."
-              continue
-            fi
             prev="$(jq -r --arg t "$tag" '
               [ .[].tag_name ] as $tags
               | ($tags | index($t)) as $i
               | if $i == null then empty else ($tags[$i + 1] // empty) end
             ' "$RUNNER_TEMP/stable-releases.json")"
-            newf="$RUNNER_TEMP/surfaces/release-${tag}.json"
-            fetch "$tag" "$newf" || continue
             if [ -z "$prev" ]; then
               echo "::notice::no release before ${tag}; skipping version-over-version diff."
               continue
             fi
-            if ! has_api_spec "$prev"; then
-              echo "::notice::previous release ${prev} predates api_spec (< ${API_SPEC_MIN_LINE}); skipping version-over-version code diff for ${tag}."
-              continue
+            if has_api_spec "$tag" && has_api_spec "$prev"; then
+              src=spec
+            else
+              src=header
+              echo "::notice::${prev} -> ${tag} straddles/precedes the api_spec floor; comparing on the duckdb.h header surface."
             fi
+            newf="$RUNNER_TEMP/surfaces/release-${tag}.json"
             oldf="$RUNNER_TEMP/surfaces/release-${prev}.json"
-            fetch "$prev" "$oldf" || continue
+            fetch "$tag" "$newf" "$src" || continue
+            fetch "$prev" "$oldf" "$src" || continue
             python3 "$SCRIPTS/diff_surface.py" "$oldf" "$newf" "$RUNNER_TEMP/code-changes/release-${tag}.json"
             jq -n --arg old "$prev" --arg new "$tag" '{old: $old, new: $new}' \
               > "$RUNNER_TEMP/code-changes/release-${tag}.labels.json"
