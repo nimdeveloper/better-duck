@@ -1,0 +1,147 @@
+---
+title: "Scalar Types"
+description: "Booleans, every integer width (including 128-bit), floats, text, blobs, DECIMAL, UUID, BIT, and BIGNUM — the non-temporal, non-composite DuckValue variants and their Rust types."
+---
+
+These are the "flat" [`DuckValue`](/core/values-overview) variants. All of their inner Rust types
+implement [`AppendAble`](/core/values-overview#the-conversion-traits), so you can bind and append
+them directly, and most primitive Rust types read back through
+[`FromDuckValue`](/core/values-overview#the-conversion-traits).
+
+## Booleans, integers, floats
+
+| DuckDB type | `DuckValue` variant | Inner Rust type |
+|---|---|---|
+| `BOOLEAN` | `Boolean` | `bool` |
+| `TINYINT` / `SMALLINT` / `INTEGER` / `BIGINT` | `TinyInt` / `SmallInt` / `Int` / `BigInt` | `i8` / `i16` / `i32` / `i64` |
+| `HUGEINT` | `HugeInt` | `i128` |
+| `UTINYINT` / `USMALLINT` / `UINTEGER` / `UBIGINT` | `UTinyInt` / `USmallInt` / `UInt` / `UBigInt` | `u8` / `u16` / `u32` / `u64` |
+| `UHUGEINT` | `UHugeInt` | `u128` |
+| `FLOAT` / `DOUBLE` | `Float` / `Double` | `f32` / `f64` |
+
+```rust
+use better_duck_core::types::value::DuckValue;
+
+let row = conn.execute("SELECT 42::INTEGER AS a, 3.5::DOUBLE AS b")?.next().unwrap()?;
+assert_eq!(row.get("a"), Some(&DuckValue::Int(42)));
+assert_eq!(row.get("b"), Some(&DuckValue::Double(3.5)));
+```
+
+<Tip>
+  `FromDuckValue` performs **lossless widening**: an `INTEGER` column reads cleanly into `i32`,
+  `i64`, or `i128`. A value that does not fit the requested integer type is reported as
+  [`Error::IntegralValueOutOfRange`](/core/errors), never silently truncated.
+</Tip>
+
+### 128-bit integers
+
+`HugeInt` (`i128`) and `UHugeInt` (`u128`) are first-class. DuckDB stores them as a struct of two
+64-bit halves; `better-duck-core` encodes/decodes the full `i128`/`u128` range. For `f64`
+conversions use the helpers re-exported at the crate root:
+
+```rust
+use better_duck_core::{hugeint_to_double, double_to_hugeint, uhugeint_to_double, double_to_uhugeint};
+
+let d: f64 = hugeint_to_double(170_141_183_460_469i128);
+let h: i128 = double_to_hugeint(1.5e18)?;    // Err on non-finite / out-of-range input
+```
+
+These use DuckDB's own routines and are lossy beyond `f64`'s 53-bit significand.
+
+## Text
+
+| DuckDB type | `DuckValue` variant | Inner Rust type |
+|---|---|---|
+| `VARCHAR` | `Text` | `String` |
+
+Bind `&str` or `String` directly; build a value with `DuckValue::text("…")`. Invalid UTF-8 from a
+column surfaces as [`Error::Utf8Error`](/core/errors).
+
+## Blobs — `Blob`
+
+| DuckDB type | `DuckValue` variant | Inner Rust type |
+|---|---|---|
+| `BLOB` (and `GEOMETRY` WKB) | `Blob` | `better_duck_core::types::Blob` |
+
+`Blob` is a newtype `pub struct Blob(pub Vec<u8>)` — distinct from a plain `Vec<u8>` so that
+`Vec<T>` is free to map to a `LIST` (see [composite types](/core/composite-types)).
+
+```rust
+use better_duck_core::types::Blob;
+let b = Blob::new(vec![0xDE, 0xAD]);
+let bytes: &[u8] = b.as_bytes();
+```
+
+<Info>
+  A `GEOMETRY` column physically arrives as its WKB `Blob`. Types without read support yet surface
+  as a [`DuckDBConversionError`](/core/errors).
+</Info>
+
+## DECIMAL — `DuckDecimal`
+
+| DuckDB type | `DuckValue` variant | Inner Rust type |
+|---|---|---|
+| `DECIMAL(width, scale)` | `Decimal` | `better_duck_core::types::DuckDecimal` |
+
+`DuckDecimal` preserves the declared precision: the numeric value is `mantissa * 10^(-scale)`.
+
+```rust
+use better_duck_core::types::DuckDecimal;
+
+// DECIMAL(6, 2) value 1234.56
+let d = DuckDecimal::new(123456, 6, 2)?;     // (mantissa, width, scale)
+let approx: f64 = d.to_double();             // 1234.56 (lossy for large magnitudes)
+let d2 = DuckDecimal::from_double(1234.56, 6, 2)?;   // DuckDB's own rounding
+```
+
+- `new(value, width, scale)` validates `1 <= width <= 38` (`DECIMAL_MAX_WIDTH`) and
+  `scale <= width`, matching DuckDB's bounds; otherwise [`DuckDBConversionError`](/core/errors).
+- `from_double` rejects non-finite values and magnitudes that overflow `width`.
+- `to_double` is lossy beyond `f64`'s significand — read `value`/`width`/`scale` directly when
+  exactness matters.
+
+<Note>
+  With the `rust_decimal` feature, `DuckDecimal` converts to/from `rust_decimal::Decimal`. A DuckDB
+  scale beyond 28 (which `rust_decimal` cannot hold) is reported as precision loss, not silently
+  truncated.
+</Note>
+
+## UUID — `DuckUuid`
+
+| DuckDB type | `DuckValue` variant | Inner Rust type |
+|---|---|---|
+| `UUID` | `Uuid` | `better_duck_core::types::DuckUuid` |
+
+`pub struct DuckUuid(pub u128)` holds the value in standard big-endian bit order — `DuckUuid(0)` is
+the nil UUID and ordering matches standard UUID ordering (the storage-level sign flip DuckDB uses
+internally is handled for you). With the `uuid` feature it round-trips with `uuid::Uuid` as a plain
+`u128` passthrough.
+
+## BIT — `DuckBit`
+
+| DuckDB type | `DuckValue` variant | Inner Rust type |
+|---|---|---|
+| `BIT` | `Bit` | `better_duck_core::types::DuckBit` |
+
+`pub struct DuckBit(pub Vec<u8>)` stores DuckDB's exact wire format: the first byte is the padding
+count (0–7), the rest is bit-packed data, MSB first — so a value round-trips byte-for-byte.
+
+## BIGNUM — `DuckBignum`
+
+| DuckDB type | `DuckValue` variant | Inner Rust type |
+|---|---|---|
+| `BIGNUM` | `Bignum` | `better_duck_core::types::DuckBignum` |
+
+An arbitrary-precision signed integer: `DuckBignum { magnitude: Vec<u8>, is_negative: bool }`, where
+`magnitude` is the absolute value in little-endian byte order.
+
+```rust
+use better_duck_core::types::DuckBignum;
+let n = DuckBignum::new(vec![0x01, 0x00, 0x00], false);   // magnitude LE, sign
+```
+
+## See also
+
+- [Values overview](/core/values-overview) — the `DuckValue` enum and conversion traits.
+- [Temporal types](/core/temporal-types) · [Composite types](/core/composite-types).
+- [Errors](/core/errors) — `IntegralValueOutOfRange`, `PrecisionLoss`, `ConversionError`.

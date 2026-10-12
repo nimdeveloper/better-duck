@@ -1,0 +1,84 @@
+---
+title: "RETURNING"
+description: "Read columns back from INSERT, UPDATE, and DELETE on DuckDB through Diesel's RETURNING clause, using get_result and get_results."
+---
+
+DuckDB supports `RETURNING` on `INSERT`, `UPDATE`, and `DELETE`, and the Diesel backend exposes it
+through `.returning(...)`. It is the way to read server-defaulted or server-computed values back from a
+write in a single round-trip — no follow-up `SELECT`.
+
+## How it works
+
+Chain `.returning(expr)` on an insert/update/delete, then execute with a result-returning method instead
+of `.execute`:
+
+| Rows expected | Method | Returns |
+|---|---|---|
+| exactly one | `.get_result(&mut conn)` | `T` (`Err(NotFound)` if none) |
+| many | `.get_results(&mut conn)` | `Vec<T>` |
+| zero or one | `.get_result(...).optional()` | `Option<T>` |
+
+The `.returning` argument is a single column or a tuple of columns, mirroring `.select` — the Rust type
+you load into follows from it.
+
+## INSERT
+
+```rust
+use diesel::prelude::*;
+
+let id: i32 = diesel::insert_into(products::table)
+    .values((products::id.eq(4), products::name.eq("doohickey"), products::price.eq(1.0)))
+    .returning(products::id)
+    .get_result(&mut conn)?;
+
+let returned: Vec<(i32, String)> = diesel::insert_into(products::table)
+    .values(&rows)
+    .returning((products::id, products::name))
+    .get_results(&mut conn)?;
+```
+
+## UPDATE
+
+```rust
+let new_price: f64 = diesel::update(products::table.filter(products::id.eq(1)))
+    .set(products::price.eq(11.99))
+    .returning(products::price)
+    .get_result(&mut conn)?;
+```
+
+## DELETE
+
+```rust
+let removed: Vec<(i32, String)> = diesel::delete(products::table.filter(products::price.lt(1.0)))
+    .returning((products::id, products::name))
+    .get_results(&mut conn)?;
+```
+
+<Tip>
+`RETURNING *` maps naturally to a `#[derive(Queryable, Selectable)]` struct: use
+`.returning(Product::as_returning())` to pull a whole row back into a typed struct.
+</Tip>
+
+<Note>
+`.returning(...)` projects columns through the typed loader, so it reads standard types and the narrow
+unsigned-integer `Duck*` widths. The composite/semantic `Duck*` types (and `HUGEINT`/`UHUGEINT`) cannot
+be read this way — use `diesel::sql_query("… RETURNING …")` with a `QueryableByName` struct instead. See
+[Type mapping](/diesel/type-mapping#how-duck-columns-move-through-diesel).
+</Note>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Insert" href="/diesel/insert">
+    Where RETURNING is most used.
+  </Card>
+  <Card title="Upsert" href="/diesel/upsert">
+    RETURNING works after ON CONFLICT too.
+  </Card>
+  <Card title="Update" href="/diesel/update">
+    Return changed values.
+  </Card>
+  <Card title="Delete" href="/diesel/delete">
+    Return removed values.
+  </Card>
+</CardGroup>

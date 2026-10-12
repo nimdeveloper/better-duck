@@ -1,0 +1,80 @@
+---
+title: "Date & Time Functions"
+description: "DuckDB date/time scalar functions as typed Diesel DSL: extract parts (year/month/.../epoch), truncate and format timestamps, build dates/times/timestamps, and compute calendar parts and differences."
+---
+
+DuckDB's temporal scalar functions as free functions in `better_duck_diesel::dsl::*`.
+
+```rust
+use diesel::prelude::*;
+use better_duck_diesel::dsl::*;
+```
+
+<Warning>
+These need the [`chrono` feature](/diesel/overview#feature-flags) for the Rust-side mapping of
+`Date`/`Time`/`Timestamp` values (or core's native `date_native` structs without it). `chrono` is **not**
+on by default in this crate — enable it first.
+</Warning>
+
+## Extracting parts
+
+`Timestamp -> BigInt` unless noted:
+
+`year`, `month`, `day`, `hour`, `minute`, `second`,
+`epoch(ts)` (→`Double`, seconds since the Unix epoch),
+`date_trunc(part: Text, ts)` (→`Timestamp`, truncate to `'day'`/`'month'`/`'hour'`/…),
+`strftime(ts, format: Text)` (→`Text`, format a timestamp).
+
+```rust
+let months: Vec<i64> = events::table.select(month(events::ts)).load(&mut conn)?;
+
+let stamp: String = diesel::select(
+    strftime(now_ts, "%Y-%m-%d")
+).get_result(&mut conn)?;
+```
+
+## Calendar parts and differences
+
+`Timestamp -> BigInt` unless noted:
+
+`dayofweek(ts)`, `isodow(ts)`, `dayofyear(ts)`, `weekofyear(ts)`, `quarter(ts)`,
+`dayname(ts)` (→`Text`), `monthname(ts)` (→`Text`), `last_day(d: Date)` (→`Date`),
+`datediff(part: Text, start, finish)` (→`BigInt`, whole `part` units between two timestamps).
+
+```rust
+let span: i64 = diesel::select(datediff("day", start_ts, end_ts)).get_result(&mut conn)?;
+```
+
+## Building dates, times, and timestamps
+
+| Function | Signature | Returns |
+|---|---|---|
+| `make_date(year, month, day)` | all `Integer` | `Date` |
+| `make_time(hour, minute, seconds)` | `Integer, Integer, Double` | `Time` |
+| `make_timestamp(micros)` | `BigInt` | `Timestamp` |
+
+```rust
+let d: chrono::NaiveDate = diesel::select(make_date(2026, 1, 15)).get_result(&mut conn)?;
+```
+
+<Note>
+`make_timestamp` takes **microseconds** since the Unix epoch, matching DuckDB's native `TIMESTAMP`
+resolution.
+</Note>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Type mapping" href="/diesel/type-mapping">
+    DATE / TIME / TIMESTAMP / TIMESTAMPTZ ↔ chrono.
+  </Card>
+  <Card title="Numeric & utility" href="/diesel/numeric-functions">
+    Math on the `BigInt`/`Double` results.
+  </Card>
+  <Card title="Feature flags" href="/guide/feature-flags">
+    `chrono` vs the native date path.
+  </Card>
+  <Card title="DSL overview" href="/diesel/dsl-overview">
+    The rest of the DSL.
+  </Card>
+</CardGroup>

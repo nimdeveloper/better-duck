@@ -1,0 +1,105 @@
+---
+title: "Pooling"
+description: "An r2d2 connection pool over a shared Database — managers, the Pool type aliases, checkout, and the async AsyncPool wrapper."
+---
+
+<Info>Requires `feature = "pool"`. (`AsyncPool` additionally needs `async`.)</Info>
+
+The `pool` feature provides an [`r2d2`](https://docs.rs/r2d2) connection pool whose connections all
+share **one** [`Database`](/core/sharing-a-database) — so an in-memory pool observes a single
+consistent database, not one isolated database per slot.
+
+```rust
+use better_duck_core::error::Error;
+use better_duck_core::pool::{DuckDbConnectionManager, Pool};
+
+let manager = DuckDbConnectionManager::memory()?;            // shared in-memory DB
+// r2d2's builder/checkout errors are its own type; map them into the core error:
+let pool: Pool = Pool::builder()
+    .max_size(8)
+    .build(manager)
+    .map_err(|e| Error::Pool(e.to_string()))?;
+
+let mut conn = pool.get().map_err(|e| Error::Pool(e.to_string()))?;   // PooledConnection
+conn.execute_batch("CREATE TABLE t (id INTEGER)")?;          // derefs to Connection
+
+let state = pool.state();                                    // PoolState
+```
+
+## Managers
+
+`DuckDbConnectionManager` is the `r2d2::ManageConnection` that mints connections from a shared
+`Database`:
+
+| Constructor | Backing database |
+|---|---|
+| `memory()` | shared in-memory |
+| `memory_with_flags(Config)` | shared in-memory with a [`Config`](/core/configuration) |
+| `file(path)` | file-based |
+| `file_with_flags(path, Config)` | file-based with a `Config` |
+| `new(Database)` | wrap an existing [`Database`](/core/sharing-a-database) |
+
+`database() -> &Database` returns the shared database. The manager is `Clone + Send + Sync`.
+
+## Type aliases and re-exports
+
+The `pool` module re-exports r2d2 types so you don't depend on `r2d2` directly:
+
+- `Pool` = `r2d2::Pool<DuckDbConnectionManager>`.
+- `PooledConnection` = `r2d2::PooledConnection<DuckDbConnectionManager>` — derefs to
+  [`Connection`](/core/opening-connections).
+- `PoolBuilder` = `r2d2::Builder`, `PoolError` = `r2d2::Error`, `PoolState` = `r2d2::State`
+  (`{ connections, idle_connections }`).
+
+<Note>
+  r2d2's builder and checkout return r2d2's own error type, not [`Error`](/core/errors). Map it
+  with `.map_err(|e| Error::Pool(e.to_string()))` (there is an `Error::Pool(String)` variant for
+  exactly this).
+</Note>
+
+## Async pool
+
+<Note>`AsyncPool` needs both the `async` and `pool` features.</Note>
+
+`AsyncPool` wraps a `Pool`. `with` is the primitive: it checks a connection out, runs a closure on a
+blocking thread, and releases the checkout when the closure returns.
+
+```rust
+use better_duck_core::AsyncPool;
+use better_duck_core::pool::{DuckDbConnectionManager, Pool};
+use better_duck_core::types::value::DuckValue;
+
+let core_pool = Pool::builder().max_size(4).build(DuckDbConnectionManager::memory()?)?;
+let pool = AsyncPool::new(core_pool);
+
+pool.execute_batch("CREATE TABLE t (id INTEGER)").await?;
+
+// A transaction belongs entirely inside the closure (no .await inside):
+pool.with(|conn| {
+    conn.execute_batch("BEGIN")?;
+    conn.execute_batch("INSERT INTO t VALUES (1), (2), (3)")?;
+    conn.execute_batch("COMMIT")?;
+    Ok(())
+}).await?;
+
+pool.execute_with("INSERT INTO t VALUES ($1)", vec![DuckValue::Int(4)]).await?;
+let set = pool.execute("SELECT count(*) AS c FROM t").await?;
+let state = pool.state().await;
+```
+
+<Warning>
+  `with` is **deliberately** the only way to touch a pooled connection. Holding a pooled-connection
+  guard across an `.await` would pin a pool slot for the whole suspension — the classic async-pool
+  deadlock — and a transaction must not span an `.await`. Keep the whole unit of work inside the
+  closure.
+</Warning>
+
+Also available: `pool() -> &Pool`, `state().await -> PoolState`,
+`execute_batch(sql).await`, `execute(sql).await -> ResultSet`, and
+`execute_with(sql, Vec<DuckValue>).await -> ResultSet`.
+
+## See also
+
+- [Sharing a database](/core/sharing-a-database) — the model a pool is built on.
+- [Async](/core/async) — `AsyncConnection` and the `.await`-boundary rules.
+- [Errors](/core/errors) — `Error::Pool`.

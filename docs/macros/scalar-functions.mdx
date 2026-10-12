@@ -1,0 +1,107 @@
+---
+title: "Scalar Functions"
+description: "#[duckdb_scalar]: row-wise functions for SELECT / WHERE, with options for naming, volatility, and shared state — plus the VScalar trait behind it."
+---
+
+<Info>Requires `feature = "udf"`. See the [UDF overview](/macros/udf-overview) for shared semantics.</Info>
+
+`#[duckdb_scalar]` turns a Rust function into a DuckDB scalar function — one value computed per row,
+usable in a `SELECT` list or `WHERE` clause.
+
+```rust
+use better_duck_core::{connection::Connection, duckdb_scalar};
+
+#[duckdb_scalar]
+fn repeat_str(s: &str, n: i32) -> String {
+    s.repeat(n.max(0) as usize)
+}
+
+#[duckdb_scalar(name = "to_int")]
+fn parse_int(s: &str) -> Result<i32, std::num::ParseIntError> { s.parse() }
+
+#[duckdb_scalar]
+fn double_or_null(x: Option<i32>) -> Option<i32> { x.map(|v| v * 2) }
+
+# fn main() -> better_duck_core::error::Result<()> {
+let mut conn = Connection::open_in_memory()?;
+repeat_str::register(&mut conn)?;
+let _ = conn.execute("SELECT repeat_str('ab', 3)")?;      // "ababab"
+# Ok(())
+# }
+```
+
+Parameter and return types are inferred from the signature. A function must **return a value**
+(a bare `fn f()` is rejected). An `Option<T>` return/parameter maps to `NULL`; a `Result<T, E>`
+return fails the query on `Err`.
+
+## NULL handling
+
+- A **non-`Option`** parameter short-circuits NULL rows: DuckDB fills the output with `NULL` without
+  calling your body (so the slot's value may not even be valid to read).
+- Any **`Option<T>`** parameter auto-enables `special_handling`, so your body **is** called for NULL
+  inputs and decides what to do.
+
+## Options
+
+| Option | Meaning |
+|---|---|
+| `name = "sql_name"` | SQL function name (defaults to the Rust fn name) |
+| `crate = ::path` | retarget the generated `::better_duck_core` path (for re-exporting crates) |
+| `volatile` | mark the function volatile — re-evaluated per row even with no arguments, defeating constant-folding (needed for RNG/UUID-style functions) |
+| `state(Type, init_expr)` | a shared `VScalar::State` of `Type`, initialized to `init_expr` |
+
+<Note>
+  `name` must be a non-empty string literal without NUL bytes; specifying `name` or `state` twice is
+  a compile error. The function also remains callable as a plain Rust fn.
+</Note>
+
+## Shared state with `duck_state!`
+
+With `state(Type, init_expr)`, read a `Clone` copy of the shared state inside the body with
+`duck_state!(Type)`:
+
+```rust
+use better_duck_core::{duck_state, duckdb_scalar};
+
+#[duckdb_scalar(state(i32, 10))]
+fn add_offset(x: i32) -> i32 {
+    x + duck_state!(i32)
+}
+```
+
+The same state is shared across every row of a scan (and every worker thread), so any interior
+mutation must be synchronized. `duck_state!` panics if called outside a `state`-carrying scalar body
+— contained by the callback machinery, so it surfaces as a normal query error. See
+[helper macros](/macros/helper-macros#duck_state).
+
+## The `VScalar` trait
+
+The macro implements `better_duck_core::udf::VScalar`. Implement it by hand when you need multiple
+overloads or bind-time constant folding:
+
+<Accordion title="VScalar by hand">
+  ```rust
+  // Associated types and methods:
+  // type State: Send + Sync + 'static;    — registration-time shared state
+  // type BindData: Send + Sync + 'static; — per-query data from bind()
+  // fn signatures() -> Result<Vec<ScalarSignature>>;
+  // fn bind(&ScalarBindInfo) -> UdfResult<Self::BindData>;
+  // fn invoke(state, bind_data, input: &DataChunkHandle, output: &mut VectorMut) -> UdfResult<()>;
+  // fn volatile() -> bool { false }
+  // fn special_handling() -> bool { false }
+  ```
+
+  A `ScalarSignature` is `exact(params, ret)` or `variadic(param, ret)` — each becomes a DuckDB
+  overload. Register with `conn.register_scalar_function::<T>(name)` or
+  `register_scalar_function_with_state::<T>(name, state)`. `ScalarBindInfo` exposes the call's
+  argument [`Expression`](/core/columnar-overview)s (`argument_count`, `argument`), the bind-time
+  `client_context()` for folding a constant argument, and `set_bind_data`. The execution handle
+  reads `State` / per-query `BindData` back. Work over
+  [`DataChunkHandle`](/core/data-chunks) / [`VectorMut`](/core/vectors).
+</Accordion>
+
+## See also
+
+- [UDF overview](/macros/udf-overview) — shared semantics and the panic caveat.
+- [Table functions](/macros/table-functions) · [Aggregate functions](/macros/aggregate-functions).
+- [Vectors](/core/vectors) — the read/write views `invoke` uses.

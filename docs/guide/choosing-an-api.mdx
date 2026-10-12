@@ -9,11 +9,11 @@ right API surface for your task, and which feature flags to turn on.
 ## Which crate?
 
 <CardGroup cols={2}>
-  <Card title="better-duck-core" icon="rust" href="/core/connections">
+  <Card title="better-duck-core" icon="rust" href="/core/opening-connections">
     The driver. Row-oriented access, prepared statements, the bulk appender, columnar / zero-copy
     reads, UDFs, async, pooling, and Arrow / Polars interop.
   </Card>
-  <Card title="better-duck-diesel" icon="layer-group" href="/diesel/setup-and-crud">
+  <Card title="better-duck-diesel" icon="layer-group" href="/diesel/installation-and-setup">
     The Diesel 2.3 ORM backend. A typed query builder (DSL), migrations, an r2d2 pool, and a large
     library of DuckDB-specific SQL functions, aggregates, and operators.
   </Card>
@@ -21,7 +21,7 @@ right API surface for your task, and which feature flags to turn on.
     A Tauri v2 plugin that exposes embedded DuckDB to a webview as a local-analytics engine, with
     JS/TS bindings (`core` or `diesel` backend).
   </Card>
-  <Card title="better-duck-macros" icon="wand-magic-sparkles" href="/macros/udf">
+  <Card title="better-duck-macros" icon="wand-magic-sparkles" href="/macros/udf-overview">
     The UDF and derive macros. **Never a direct dependency** — reached through core's
     [`udf`](/guide/feature-flags) / [`derive`](/guide/feature-flags) features.
   </Card>
@@ -31,10 +31,11 @@ Use this quick router:
 
 | You are… | Reach for |
 | --- | --- |
-| Writing SQL / reasoning about DuckDB types, the dialect, or extensions | [DuckDB essentials](/guide/duckdb-essentials) |
-| Using the driver's Rust API (connect, query, types, appender, pool, async, arrow, columnar) | [`better-duck-core`](/core/connections) |
-| Writing UDFs, or deriving row / struct / enum mappings | [`better-duck-macros`](/macros/udf) via core's `udf` / `derive` |
-| Using an ORM / typed query builder | [`better-duck-diesel`](/diesel/setup-and-crud) |
+| New here — want the crate map and the safety model | [Architecture](/guide/architecture) |
+| Writing SQL / reasoning about the dialect, types, or extensions | [SQL dialect](/guide/sql-dialect) · [Type system](/guide/type-system) · [Extensions](/guide/extensions) |
+| Using the driver's Rust API (connect, query, types, appender, pool, async, arrow, columnar) | [`better-duck-core`](/core/opening-connections) |
+| Writing UDFs, or deriving row / struct / enum mappings | [`better-duck-macros`](/macros/udf-overview) via core's `udf` / `derive` |
+| Using an ORM / typed query builder | [`better-duck-diesel`](/diesel/installation-and-setup) |
 | Exposing DuckDB to a Tauri v2 webview | [`better-duck-tauri`](/tauri/overview) |
 
 ## Which API for which task?
@@ -110,7 +111,13 @@ Start from the defaults (`chrono`, `decimal`) and add what your task needs. See
   <Card title="Feature flags" icon="toggle-on" href="/guide/feature-flags">
     Every core feature explained.
   </Card>
+  <Card title="Architecture" icon="sitemap" href="/guide/architecture">
+    The crate family and the FFI safety model.
+  </Card>
   <Card title="Quickstart" icon="rocket" href="/guide/quickstart">
     A minimal end-to-end example with the core crate.
+  </Card>
+  <Card title="DuckDB essentials" icon="database" href="/guide/duckdb-essentials">
+    The dialect, types, and extensions through the driver.
   </Card>
 </CardGroup>

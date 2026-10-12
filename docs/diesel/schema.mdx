@@ -1,0 +1,152 @@
+---
+title: "Schema & Migrations"
+description: "Declare a DuckDB schema with Diesel's table! macro, map DuckDB-specific column types, derive Queryable/Selectable/Insertable/AsChangeset structs, and run diesel migrations against a DuckDbConnection."
+---
+
+How to describe your DuckDB tables to Diesel: the `table!` macro with both standard and DuckDB-specific
+column types, mapping rows to Rust structs with Diesel's derives, and running migrations through the
+backend's `MigrationConnection` impl.
+
+## Declaring a schema with `table!`
+
+Standard Diesel. A table using only standard column types needs no extra imports:
+
+```rust
+diesel::table! {
+    products (id) {
+        id    -> Integer,
+        name  -> Text,
+        price -> Double,
+    }
+}
+```
+
+For DuckDB-specific column types, also `use better_duck_diesel::sql_types::*;` inside the macro so the
+`Duck*` SQL types resolve:
+
+```rust
+diesel::table! {
+    use diesel::sql_types::*;
+    use better_duck_diesel::sql_types::*;
+
+    readings (id) {
+        id     -> Integer,
+        sensor -> DuckEnum,        // ENUM
+        ts     -> DuckTimestamptz, // TIMESTAMPTZ
+        tags   -> DuckList,        // LIST
+    }
+}
+```
+
+The full set of standard and `Duck*` column types, and how each maps to Rust, is on the
+[Type mapping](/diesel/type-mapping) page.
+
+<Warning>
+Most `Duck*` column types do not flow through the typed insert/select builder — they round-trip via
+`diesel::sql_query` + `QueryableByName`. The narrow unsigned-integer widths
+(`DuckTinyInt`…`DuckUBigInt`) are a partial exception: they **load** typed but still need raw SQL or a
+[`values::*` newtype](/diesel/type-mapping#the-values-binding-newtypes) to bind. Standard-typed columns
+in the same table use the typed builder as usual. See
+[Type mapping](/diesel/type-mapping#how-duck-columns-move-through-diesel).
+</Warning>
+
+## Mapping rows to structs
+
+Diesel's own derives work exactly as they do on any backend:
+
+<ParamField path="Queryable" type="derive">
+  Reads a row **positionally** into a struct, in field order.
+</ParamField>
+<ParamField path="Selectable" type="derive">
+  Lets `.select(T::as_select())` pick columns **by name**, decoupling struct field order from the query.
+</ParamField>
+<ParamField path="Insertable" type="derive">
+  Turns a struct into an `INSERT` value set — see [Insert](/diesel/insert#inserting-structs).
+</ParamField>
+<ParamField path="AsChangeset" type="derive">
+  Turns a struct into an `UPDATE … SET` clause — see [Update](/diesel/update#updating-from-a-struct).
+</ParamField>
+
+```rust
+use better_duck_diesel::backend::DuckDb;
+use diesel::prelude::*;
+
+#[derive(Queryable, Selectable, Debug, PartialEq)]
+#[diesel(table_name = items)]
+#[diesel(check_for_backend(DuckDb))]
+struct Item {
+    id: i32,
+    label: String,
+    score: i32,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = items)]
+struct NewItem<'a> {
+    id: i32,
+    label: &'a str,
+    score: i32,
+}
+
+#[derive(AsChangeset)]
+#[diesel(table_name = items)]
+struct ItemPatch<'a> {
+    label: Option<&'a str>, // None fields are omitted from the SET clause
+    score: Option<i32>,
+}
+```
+
+<Tip>
+`#[diesel(check_for_backend(DuckDb))]` makes a field/column type mismatch a **compile-time** error
+against the DuckDB backend rather than a runtime surprise. The `DuckDb` backend type lives in
+`better_duck_diesel::backend`.
+</Tip>
+
+<Note>
+`better-duck-core`'s own `FromRow` derive is for the core driver's row API, **not** Diesel's `Queryable`.
+Use Diesel's `Queryable`/`Selectable` here. The `derive` feature re-exports the core derives for the
+DuckDB-specific `Duck*` column types — see [Data derives](/diesel/data-derives).
+</Note>
+
+## Migrations
+
+`DuckDbConnection` implements `diesel::migration::MigrationConnection`. Its `setup()` creates the
+`__diesel_schema_migrations` bookkeeping table (a `VARCHAR(50)` primary key plus a
+`TIMESTAMP DEFAULT current_timestamp`), so the standard migration machinery works:
+
+- `diesel migration run` / `revert` / `redo` via the Diesel CLI.
+- `embed_migrations!` + `MigrationHarness` for migrations compiled into the binary.
+
+```rust
+use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+
+const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
+
+conn.run_pending_migrations(MIGRATIONS)
+    .map_err(|e| /* box / log */ e)?;
+```
+
+The `embed_migrations!` / `MigrationHarness` machinery is Diesel's own; this crate only supplies the
+`MigrationConnection` impl that makes it run against DuckDB.
+
+<Warning>
+Write migration SQL in DuckDB's dialect (e.g. `CREATE SEQUENCE` + `DEFAULT nextval(...)` for
+autoincrement, DuckDB type names). Diesel does not translate DDL between dialects.
+</Warning>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Type mapping" href="/diesel/type-mapping">
+    Every column type and its Rust counterpart.
+  </Card>
+  <Card title="Select" href="/diesel/select">
+    Load rows into tuples and structs.
+  </Card>
+  <Card title="Insert" href="/diesel/insert">
+    `Insertable` structs and value tuples.
+  </Card>
+  <Card title="Data derives" href="/diesel/data-derives">
+    ORM-emitting `DuckEnum` / `DuckStruct` for `Duck*` columns.
+  </Card>
+</CardGroup>

@@ -1,0 +1,92 @@
+---
+title: "Data Derives (ORM Emission)"
+description: "The derive feature re-exports better-duck-core's DuckEnum/DuckStruct/FromRow/ToRow with Diesel FromSql/ToSql emission on, so your Rust enums and structs bind and load through a DuckDbConnection at the DuckEnum/DuckStruct SQL types via sql_query + QueryableByName."
+---
+
+With this crate's `derive` feature on, `better-duck-core`'s data derives are re-exported from
+`better_duck_diesel` **with Diesel `FromSql`/`ToSql` emission enabled**. The same Rust type that maps to
+a DuckDB `ENUM` or `STRUCT` in core then also binds and loads through a `DuckDbConnection` at its
+`sql_types::DuckEnum` / `sql_types::DuckStruct` column type.
+
+## What the feature does
+
+The core derives (`DuckEnum`, `DuckStruct`, `FromRow`, `ToRow`) always exist in core. Turning on
+`better-duck-diesel/derive` makes `DuckEnum` and `DuckStruct` *additionally* emit Diesel `ToSql` /
+`FromSql` impls against `better_duck_diesel::sql_types::DuckEnum` / `DuckStruct`. Mechanically this flips
+on core's `derive-diesel` feature, whose generated code resolves `::better_duck_diesel` in your crate —
+so core itself never gains a Diesel dependency. See
+[core feature flags](/guide/feature-flags#macros-udfs-derives).
+
+<Note>
+The ORM path for these DuckDB-specific types is `sql_query` + `QueryableByName` (not the plain
+`Queryable` builder), because the `Duck*` SQL types have no `Queryable` blanket impl — see
+[Type mapping](/diesel/type-mapping#duckdb-specific-sql-types).
+</Note>
+
+## Mapping an enum to `ENUM`
+
+```rust
+use better_duck_diesel::{DuckDbConnection, DuckEnum};
+use better_duck_diesel::sql_types::DuckEnum as DuckEnumSql;
+use diesel::prelude::*;
+use diesel::sql_types::Integer;
+
+#[derive(DuckEnum, Debug, PartialEq, Clone, Copy)]
+enum Priority { Low, High }
+
+#[derive(QueryableByName, Debug, PartialEq)]
+struct Row {
+    #[diesel(sql_type = Integer)]      id: i32,
+    #[diesel(sql_type = DuckEnumSql)]  p: Priority,
+}
+
+// bind (ToSql)
+diesel::sql_query("INSERT INTO tasks VALUES (1, $1)")
+    .bind::<DuckEnumSql, _>(Priority::High)
+    .execute(&mut conn)?;
+
+// read (FromSql via QueryableByName)
+let rows: Vec<Row> =
+    diesel::sql_query("SELECT id, p FROM tasks ORDER BY id").get_results(&mut conn)?;
+```
+
+## Mapping a struct to `STRUCT`
+
+`#[derive(DuckStruct)]` works the same way at `sql_types::DuckStruct` — bind with
+`.bind::<DuckStructSql, _>(value)` and read via a `QueryableByName` field typed
+`#[diesel(sql_type = DuckStructSql)]`.
+
+## Renaming
+
+Field/variant renaming honors `#[duck(rename = "…")]` / `#[duck(rename_all = "…")]` (and the
+`#[duck_enum(...)]` forms for enums), identical to the core derives. The full casing list and resolution
+order are on the [data derives](/macros/derives-overview) page.
+
+## Re-exports
+
+Available from `better_duck_diesel` under the `derive` feature: `FromRow`, `ToRow`, `DuckEnum`,
+`DuckStruct`.
+
+<Warning>
+`FromRow` / `ToRow` are the **core** driver's row traits, not Diesel's `Queryable`/`Insertable`. For
+ordinary standard-typed tables use Diesel's own derives (see [Schema](/diesel/schema)); use
+`DuckEnum` / `DuckStruct` here specifically for the DuckDB `ENUM` / `STRUCT` column types. Without the
+`derive` feature, the derives still exist in core but don't emit the Diesel `FromSql`/`ToSql` impls.
+</Warning>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Data derives (core)" href="/macros/derives-overview">
+    Authoring `DuckEnum` / `DuckStruct` and renaming rules.
+  </Card>
+  <Card title="Type mapping" href="/diesel/type-mapping">
+    The `DuckEnum` / `DuckStruct` SQL types.
+  </Card>
+  <Card title="Schema" href="/diesel/schema">
+    Declaring the columns these types back.
+  </Card>
+  <Card title="Feature flags" href="/guide/feature-flags">
+    How `derive` relates to core's `derive-diesel`.
+  </Card>
+</CardGroup>

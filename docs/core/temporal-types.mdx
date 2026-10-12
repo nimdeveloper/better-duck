@@ -1,0 +1,123 @@
+---
+title: "Temporal Types"
+description: "Dates, times, timestamps at four precisions, timezone-aware values, intervals, and lossless ±infinity sentinels — with and without the chrono feature."
+---
+
+DuckDB's temporal types map to [`DuckValue`](/core/values-overview) variants whose **inner Rust
+type depends on the `chrono` feature** (on by default). With `chrono`, you get
+`chrono::NaiveDate` / `NaiveTime` / `NaiveDateTime` / `DateTime<Utc>` / `Duration`. Without it, you
+get the crate's native `DuckDate` / `DuckTime` / `std::time::SystemTime` / `std::time::Duration`.
+
+## The variants
+
+| DuckDB type | `DuckValue` variant | Inner (chrono) | Inner (no-chrono) |
+|---|---|---|---|
+| `DATE` | `Date` | `NaiveDate` | `types::date_native::DuckDate` |
+| `TIME` | `Time` | `NaiveTime` | `DuckTime` |
+| `TIME_NS` | `TimeNs` | `NaiveTime` | `DuckTimeNs` |
+| `TIME_TZ` | `TimeTz` | `types::date_chrono::TimeTz` | `date_native::DuckTimeTz` |
+| `TIMESTAMP` | `Timestamp` | `NaiveDateTime` | `SystemTime` |
+| `TIMESTAMP_S` | `TimestampS` | `NaiveDateTime` | `SystemTime` |
+| `TIMESTAMP_MS` | `TimestampMs` | `NaiveDateTime` | `SystemTime` |
+| `TIMESTAMP_NS` | `TimestampNs` | `NaiveDateTime` | `SystemTime` |
+| `TIMESTAMPTZ` | `TimestampTz` | `DateTime<Utc>` | `SystemTime` |
+| `INTERVAL` | `Interval` | `chrono::Duration` | `std::time::Duration` |
+| ± infinity | `TemporalInfinity { kind, sign }` | feature-independent | feature-independent |
+
+```rust
+use better_duck_core::types::value::DuckValue;
+use chrono::NaiveDate;
+
+let row = conn.execute("SELECT DATE '2026-01-15' AS d")?.next().unwrap()?;
+assert_eq!(row.get("d"), Some(&DuckValue::Date(NaiveDate::from_ymd_opt(2026, 1, 15).unwrap())));
+```
+
+<Note>
+  The four `TIMESTAMP*` variants are distinct DuckDB types with different precisions (seconds,
+  milliseconds, microseconds, nanoseconds). They all map to `NaiveDateTime` under `chrono`, but
+  they are **not** interchangeable: a value keeps its originating column type when written back, so
+  a read→write round trip preserves precision.
+</Note>
+
+## Timezone-aware values
+
+`TIMESTAMPTZ` (`TimestampTz`) is a UTC instant — `chrono::DateTime<Utc>`. DuckDB stores
+`TIMESTAMP` and `TIMESTAMPTZ` in the same microsecond wire format but treats them as distinct
+logical types, so the variant you get back tells you which column type it came from.
+
+`TIME_TZ` (`TimeTz`) is a time-of-day with an offset; it uses the crate's `TimeTz` wrapper even
+under `chrono` (there is no exact `chrono` counterpart).
+
+## Intervals
+
+`INTERVAL` (`Interval`) carries months, days, and microseconds. Under `chrono` it maps to
+`chrono::Duration`; without `chrono`, to `std::time::Duration`.
+
+<Warning>
+  A DuckDB `INTERVAL` has three independent components (months, days, micros) because months and
+  days are not fixed-length. Converting to a single `Duration` collapses that structure — round-trip
+  a value through its original column type rather than reconstructing it from a `Duration` when the
+  month/day split matters.
+</Warning>
+
+## ±infinity — `TemporalInfinity`
+
+DuckDB reserves the extreme sentinels of `DATE`/`TIMESTAMP` for `+infinity` / `-infinity`, which no
+finite `chrono` value can represent. Rather than lose them, such a value reads back as:
+
+```rust
+use better_duck_core::types::value::DuckValue;
+use better_duck_core::types::{Sign, TemporalKind};
+
+match row.get("d") {
+    Some(DuckValue::TemporalInfinity { kind, sign }) => {
+        // kind: TemporalKind — Date / Timestamp / TimestampS / TimestampMs / TimestampNs / TimestampTz
+        // sign: Sign — Positive (+inf) or Negative (-inf)
+        let _ = (kind, sign);
+    }
+    _ => {}
+}
+```
+
+This variant is **feature-independent** (no `chrono` type involved). It is tagged with the temporal
+family (`TemporalKind`) and direction (`Sign`) so it round-trips losslessly into the same column
+type. `TemporalKind::type_id()` gives the DuckDB `duckdb_type` id it belongs to.
+
+<Info>
+  DuckDB uses ±`INT64_MAX` for timestamp infinity (`-infinity == i64::MIN + 1`), not `i64::MIN`.
+  You never deal with the raw sentinel — read the `TemporalInfinity` variant instead.
+</Info>
+
+## Decomposing timestamps
+
+For calendar/clock arithmetic without pulling in `chrono`, the crate root re-exports DuckDB-backed
+helpers:
+
+```rust
+use better_duck_core::{timestamp_micros_to_parts, parts_to_timestamp_micros, TimestampParts};
+
+let parts: TimestampParts = timestamp_micros_to_parts(1_700_000_000_000_000);
+// parts: { year, month, day, hour, min, sec, micros }
+let micros: i64 = parts_to_timestamp_micros(parts);   // exact inverse
+```
+
+Both use DuckDB's own normalisation (`duckdb_from_timestamp` / `duckdb_to_timestamp`).
+
+## Choosing chrono vs native
+
+<CardGroup cols={2}>
+  <Card title="chrono (default)">
+    Rich date/time arithmetic, formatting, and ecosystem interop. Keep it on unless you must trim
+    dependencies.
+  </Card>
+  <Card title="no-chrono (native)">
+    `DuckDate` / `DuckTime` / `SystemTime` with zero extra dependencies — for embedded or
+    size-sensitive builds. Disable `chrono` in Cargo.
+  </Card>
+</CardGroup>
+
+## See also
+
+- [Values overview](/core/values-overview) · [Scalar types](/core/scalar-types) ·
+  [Composite types](/core/composite-types).
+- [Feature flags](/guide/feature-flags) — toggling `chrono` and `time`.

@@ -1,0 +1,78 @@
+---
+title: "Append Rows"
+description: "Bulk-insert JSON object rows into a table in a single statement — column inference from the first row, NULL fill for missing keys, identifier validation, and how it compares to execute and import."
+---
+
+`append_rows` bulk-inserts an array of JSON objects into a table as one multi-row `INSERT`. It is
+the ergonomic path for pushing in-memory data from the webview without hand-building SQL or writing
+a file.
+
+```ts
+await db.appendRows('events', [
+  { id: 1, kind: 'click' },
+  { id: 2, kind: 'nav' },
+  { id: 3, kind: 'click' },
+])
+```
+
+- Signature: `appendRows(table: string, rows: Record<string, unknown>[]): Promise<ExecuteResult>`.
+- `ExecuteResult.rowsAffected` is the number of rows inserted.
+
+## Semantics
+
+<Steps>
+  <Step title="Column order comes from the first row">
+    The columns of the generated `INSERT` are taken from `rows[0]`'s keys, in iteration order.
+  </Step>
+  <Step title="Missing keys bind NULL">
+    For later rows, any column present in the first row but absent here binds `NULL`. Extra keys not
+    present in the first row are ignored.
+  </Step>
+  <Step title="Values bind as parameters">
+    Every cell is bound as a positional parameter (same [JS → DuckDB mapping](/tauri/frontend-overview#value-mapping)
+    as `execute`), not interpolated — so values are injection-safe.
+  </Step>
+  <Step title="Empty input is a no-op">
+    An empty `rows` array returns `{ rowsAffected: 0 }` without running any SQL.
+  </Step>
+</Steps>
+
+The backend emits a single statement of the form:
+
+```sql
+INSERT INTO <table> (<col1>, <col2>, …) VALUES ($1, $2, …), ($3, $4, …), …
+```
+
+<Warning>
+  **The table name and every column name are validated** as bare SQL identifiers (ASCII
+  alphanumeric + `_`). A name with spaces, quotes, or punctuation is rejected with
+  `backend error: invalid table identifier: …`. This guards the identifiers that cannot be bound as
+  parameters.
+</Warning>
+
+<Note>
+  Because the column list is fixed from the first row, make sure the **first object carries every
+  column you intend to populate**. If row 1 omits a column that later rows set, that column is never
+  part of the `INSERT` and those later values are silently dropped.
+</Note>
+
+## When to use it
+
+| Use | Reach for |
+|---|---|
+| Many rows already in JS memory | `appendRows` — one round-trip, one statement |
+| A single parameterized insert | [`execute('INSERT … VALUES ($1,…)')`](/tauri/query-and-execute) |
+| Data already in a Parquet/CSV/JSON file | [`import`](/tauri/import-export) |
+| Very large / streaming insert from a file | [`import`](/tauri/import-export) with a glob |
+
+## Policy and permissions
+
+- `append_rows` is a **write**: rejected under `read_only(true)` with `denied by policy: …`.
+- Permission: `better-duck-tauri:allow-append-rows` (not in the default set). It also honors the
+  [`AfterWrites` checkpoint strategy](/tauri/checkpointing) if configured.
+
+## See also
+
+- [Query & execute](/tauri/query-and-execute) — single-statement inserts and the parameter model.
+- [Import & export](/tauri/import-export) — load rows from files instead.
+- [The Appender](/core/appender) — the high-throughput bulk-load API on the core driver.

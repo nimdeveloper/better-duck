@@ -33,7 +33,7 @@ This walkthrough takes you from an empty project to reading rows out of DuckDB u
     <Note>
       Each `Connection::open_in_memory()` call creates its own **isolated** in-memory database — two
       such connections do not see each other's tables. To share one database across connections, open
-      a [`Database`](/core/connections) and `connect()` from it.
+      a [`Database`](/core/opening-connections) and `connect()` from it.
     </Note>
   </Step>
 
@@ -134,10 +134,10 @@ fn main() -> better_duck_core::error::Result<()> {
 ## Where to go next
 
 <CardGroup cols={2}>
-  <Card title="Connections & Database" icon="plug" href="/core/connections">
+  <Card title="Connections & Database" icon="plug" href="/core/opening-connections">
     Sharing a database, cloning connections, `Config`, interrupting queries.
   </Card>
-  <Card title="Queries, Results & Values" icon="table" href="/core/queries-and-values">
+  <Card title="Queries, Results & Values" icon="table" href="/core/iterating-results">
     Parameter binding, iterating results, `DuckValue`, and `TableDescription`.
   </Card>
   <Card title="Choosing an API" icon="signs-post" href="/guide/choosing-an-api">

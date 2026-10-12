@@ -1,0 +1,83 @@
+---
+title: "Maintenance"
+description: "Operational commands beyond queries: load DuckDB extensions, flush the WAL with checkpoint, and undo the last migration with revert — plus the policy and permissions that gate each."
+---
+
+Three commands cover operational tasks a webview may need beyond reads and writes: `load_extension`,
+`checkpoint`, and `revert`. Each has its own permission and policy interaction.
+
+## load_extension
+
+Load (installing first if needed) a DuckDB extension on this connection.
+
+```ts
+await db.loadExtension('spatial') // or 'json', 'vss', …
+```
+
+- Signature: `loadExtension(name: string): Promise<void>`.
+- The backend runs the install-and-load path (`ensure_extension`), so a not-yet-installed extension
+  is fetched and loaded.
+
+<Warning>
+  **Network extensions are gated.** When [`allow_network`](/tauri/scope-and-policy) is off (the
+  default), loading `httpfs`, `aws`, or `azure` is rejected with
+  `denied by policy: network extension … requires allow_network`, because they enable SQL-driven
+  network egress (SSRF / data exfiltration). Non-network extensions like `spatial`, `json`, and
+  `vss` are unaffected.
+</Warning>
+
+- Permission: `better-duck-tauri:allow-load-extension` (not in the default set).
+
+<Tip>
+  To make every connection carry an extension automatically, `LOAD` it in an
+  [`on_connect` hook](/tauri/registration) at init time rather than exposing `load_extension` to the
+  webview.
+</Tip>
+
+## checkpoint
+
+Flush the write-ahead log (WAL) into the main database file on this connection.
+
+```ts
+await db.checkpoint()      // CHECKPOINT
+await db.checkpoint(true)  // FORCE CHECKPOINT (waits for the lock)
+```
+
+- Signature: `checkpoint(force?: boolean): Promise<void>` (`force` defaults to `false`).
+- `CHECKPOINT` fails while a transaction is active; pass `force: true` to run `FORCE CHECKPOINT`,
+  which waits for the lock.
+- Permission: `better-duck-tauri:allow-checkpoint` (not in the default set).
+
+This is the **explicit, per-connection** checkpoint. For automatic strategies (interval,
+after-writes, on-exit, platform defaults), configure them on the builder — see
+[Checkpointing](/tauri/checkpointing).
+
+<Tip>
+  Call `db.checkpoint(true)` at a critical moment — before an export, on logout, or before a known
+  app shutdown — to guarantee the WAL is folded into the file.
+</Tip>
+
+## revert
+
+Undo the most recently applied migration on this connection.
+
+```ts
+const reverted = await db.revert() // the reverted version number, or null
+```
+
+- Signature: `revert(): Promise<number | null>`.
+- Runs the `Down` SQL of the highest applied migration version in one transaction and removes its
+  bookkeeping row; resolves to that version, or `null` if nothing was applied.
+- Errors if the last-applied version has **no matching `Down`** migration (core backend).
+- `revert` is a **write**: rejected under `read_only(true)`.
+- Permission: `better-duck-tauri:allow-revert` (not in the default set).
+
+See [Migrations](/tauri/migrations) for how versions are tracked and the `Down` direction is
+authored for each backend.
+
+## See also
+
+- [Checkpointing](/tauri/checkpointing) — automatic WAL-flush strategies.
+- [Migrations](/tauri/migrations) — what `revert` undoes.
+- [Scope & Policy](/tauri/scope-and-policy) — `allow_network`, `read_only`, and the statement filter.
+- [Errors & extensions](/core/errors) — the extension model underneath.

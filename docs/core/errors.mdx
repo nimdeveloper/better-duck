@@ -1,0 +1,98 @@
+---
+title: "Errors"
+description: "The Error and Result types, every variant, DuckDB's typed EngineError classification, and the conversion-error and owned-value helpers."
+---
+
+Everything fallible returns `better_duck_core::error::Result<T>` — an alias for
+`Result<T, better_duck_core::error::Error>` (both re-exported at the crate root). `Error` is
+`#[non_exhaustive]`, so always match with a `_` arm.
+
+## The Error enum
+
+| Variant | Meaning |
+|---|---|
+| `Engine(EngineError)` | A typed engine error carrying DuckDB's own classification + message. The main runtime failure. |
+| `DuckDBFailure(ffi::Error, Option<String>)` | A raw C-API failure (status code + optional message) from APIs with no typed classification (prepare, extract, table description). |
+| `ConversionError(DuckDBConversionError)` | A value conversion failed — see [below](#conversion-errors). |
+| `NulError(..)` | A `&str` / path contained an interior NUL byte (caught before the FFI call). |
+| `Utf8Error(..)` | A DuckDB string was not valid UTF-8. |
+| `InvalidParameterName(String)` | A `$name` passed to [`execute_with_named`](/core/named-parameters) is not in the SQL. |
+| `InvalidParameterCount(got, needed)` | Wrong number of bound parameters. |
+| `InvalidColumnIndex(usize)` | Column index out of range. |
+| `InvalidColumnName(String)` | Unknown column name. |
+| `IntegralValueOutOfRange(col, i128)` | A value does not fit the requested integer type. |
+| `MixedIterationMode` | Row-by-row and chunk ([`fetch_chunk`](/core/columnar-overview)) consumption mixed on one `DuckResult`. |
+| `MultipleStatement` | A single-statement API was given multiple statements. |
+| `InvalidQuery` | The query was rejected as invalid. |
+| `InvalidPath(PathBuf)` | A database path could not be used. |
+| `StatementChangedRows(usize)` | A statement changed an unexpected number of rows. |
+| `ExecuteReturnedResults` | An execute-only path unexpectedly produced rows. |
+| `QueryReturnedNoRows` | A query expected to return a row returned none. |
+| `AppendError` | A generic appender failure. |
+| `ToSqlConversionFailure(Box<dyn Error + Send + Sync>)` | A to-SQL conversion failed. |
+| `BackgroundTaskFailed(String)` | A `spawn_blocking` task (async facade) panicked or was cancelled. |
+| `Pool(String)` | A pool checkout timed out or the manager failed. |
+| `UNKNOWN(Box<dyn Error + Send + Sync>)` | An otherwise-unclassified error. |
+
+`Error` implements `std::error::Error` (with `source()`), `Display`, and a partial `PartialEq`.
+
+## EngineError — DuckDB's classification
+
+```rust
+use better_duck_core::error::{Error, EngineError, EngineErrorKind};
+
+match conn.execute_batch("NOT VALID SQL") {
+    Err(Error::Engine(EngineError { kind, message })) => {
+        // kind: EngineErrorKind (e.g. Syntax, Parser, Catalog, Constraint, Conversion, …)
+        // message: Option<String> — DuckDB's own text, copied out and owned.
+        eprintln!("{kind}: {message:?}");
+    }
+    _ => {}
+}
+```
+
+`EngineError { kind: EngineErrorKind, message: Option<String> }` is **fully owned** — every field is
+copied out of DuckDB memory when built, so it stays valid after the handle it came from (and the
+connection) are gone.
+
+`EngineErrorKind` mirrors `duckdb_error_type` and is `#[non_exhaustive]`:
+
+- **Known kinds** map 1:1 — `Invalid`, `OutOfRange`, `Conversion`, `UnknownType`, `Decimal`,
+  `MismatchType`, `DivideByZero`, `ObjectSize`, `InvalidType`, `Serialization`, `Transaction`,
+  `NotImplemented`, `Expression`, `Catalog`, `Parser`, `Planner`, `Scheduler`, `Executor`,
+  `Constraint`, `Index`, `Stat`, `Connection`, `Syntax`, `Settings`, `Binder`, `Network`,
+  `Optimizer`, `NullPointer`, `Io`, `Interrupt`, `Fatal`, `Internal`, `InvalidInput`,
+  `OutOfMemory`, `Permission`, `ParameterNotResolved`, `ParameterNotAllowed`, `Dependency`,
+  `Http`, `MissingExtension`, `Autoload`, `Sequence`, `InvalidConfiguration`. The full set is
+  `EngineErrorKind::KNOWN`.
+- `Unknown(raw)` preserves a classification a future DuckDB adds — nothing is lost across upgrades.
+- `Unavailable` is an **explicit absence**: the originating API exposes only a status code and a
+  message, with no typed classification. The driver never invents a kind by parsing message text.
+
+`EngineErrorKind::from_raw` / `to_raw` round-trip the raw code; `KNOWN` lists every mapped kind;
+`EngineError::unavailable(message)` builds the `Unavailable` form.
+
+## Conversion errors
+
+`DuckDBConversionError` (inside `Error::ConversionError`) classifies a value conversion failure:
+
+| Variant | Meaning |
+|---|---|
+| `TypeMismatch { expected, found }` | A value's variant doesn't match the requested Rust type |
+| `ConversionError(String)` | A general conversion failure with a message |
+| `NullValue` | A `NULL` was read into a non-`Option` target |
+| `PrecisionLoss(String)` | A value could not be represented without losing precision |
+
+## OwnedValue
+
+`better_duck_core::OwnedValue` (with `IntervalParts`) is a standalone, owned DuckDB value for
+introspection — built from a [`DuckValue`](/core/values-overview) via `to_owned_value()`. It
+exposes SQL-`NULL` checking, SQL string rendering, and `STRUCT` child access, outliving the handle
+it came from. Reach for it when you need DuckDB's own view of a value rather than the Rust-side
+enum.
+
+## See also
+
+- [Extensions](/core/extensions) — the other half of the former combined page.
+- [Values overview](/core/values-overview) — where `DuckDBConversionError` originates.
+- [Columnar overview](/core/columnar-overview) — `MixedIterationMode`.

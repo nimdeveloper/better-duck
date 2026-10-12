@@ -1,0 +1,111 @@
+---
+title: "Configuration"
+description: "Tune DuckDB at open time with the Config builder: access mode, memory and threads, extension autoloading, and the generic with() escape hatch."
+---
+
+`better_duck_core::config::Config` (re-exported as `better_duck_core::Config`) is a builder that
+collects DuckDB open-time settings. Pass the finished builder to a `*_with_flags`
+[constructor](/core/opening-connections#opening).
+
+Every setter returns `Result<Config>`, because DuckDB validates each key/value as it is set — so
+chain with `?`:
+
+```rust
+use better_duck_core::config::{AccessMode, Config, DefaultNullOrder, DefaultOrder};
+use better_duck_core::connection::Connection;
+
+let config = Config::default()
+    .access_mode(AccessMode::ReadWrite)?
+    .default_order(DefaultOrder::Desc)?
+    .default_null_order(DefaultNullOrder::NullsLast)?
+    .enable_external_access(true)?
+    .enable_object_cache(true)?
+    .max_memory("512MB")?
+    .threads(2)?
+    .custom_user_agent("better-duck-app")?
+    .with("custom_setting", "value")?;      // arbitrary key/value escape hatch
+
+let mut conn = Connection::open_in_memory_with_flags(config)?;
+```
+
+`Config` is `Send`. It is consumed by the constructor you pass it to.
+
+## Typed setters
+
+<ParamField path="access_mode(AccessMode)">
+  `Automatic`, `ReadOnly`, or `ReadWrite`.
+</ParamField>
+<ParamField path="default_order(DefaultOrder)">
+  Default `ORDER BY` direction: `Asc` or `Desc`.
+</ParamField>
+<ParamField path="default_null_order(DefaultNullOrder)">
+  Where NULLs sort: `NullsFirst` or `NullsLast`.
+</ParamField>
+<ParamField path="threads(i64)">
+  Worker-thread count for query execution.
+</ParamField>
+<ParamField path="max_memory(&str)">
+  Memory limit, e.g. `"512MB"`, `"2GB"`.
+</ParamField>
+<ParamField path="enable_external_access(bool)">
+  Whether DuckDB may touch the filesystem/network (needed to install extensions, read files). On
+  by default.
+</ParamField>
+<ParamField path="enable_object_cache(bool)">
+  Cache parsed objects (e.g. Parquet metadata) between queries.
+</ParamField>
+<ParamField path="enable_autoload_extension(bool)">
+  Autoload known extensions on first use.
+</ParamField>
+<ParamField path="allow_unsigned_extensions()">
+  Permit loading unsigned extension binaries. Takes no argument.
+</ParamField>
+<ParamField path="custom_user_agent(&str)">
+  Appends to the user-agent DuckDB reports (telemetry/diagnostics).
+</ParamField>
+
+## The generic escape hatch
+
+```rust
+let config = Config::default().with("threads", "4")?.with("preserve_insertion_order", "false")?;
+```
+
+`with(key, value)` accepts **any** DuckDB setting name as strings. DuckDB errors on an unknown or
+invalid setting. An interior NUL in a key or value is rejected as [`Error::NulError`](/core/errors).
+
+<Note>
+  `open_with_flags` internally sets `duckdb_api = "rust"` for you; you never need to set it.
+</Note>
+
+## Discovering available flags at runtime
+
+DuckDB can enumerate its own settings, which `Config` surfaces as associated functions:
+
+```rust
+for flag in Config::flags().take(5) {
+    println!("{}: {}", flag.name, flag.description);
+}
+```
+
+- `Config::flag_count() -> usize` — number of known flags.
+- `Config::flag(index) -> Option<ConfigFlag>` — the flag at `index`, as
+  `ConfigFlag { name: String, description: String }`.
+- `Config::flags() -> impl Iterator<Item = ConfigFlag>` — iterate all of them.
+
+## Library version
+
+```rust
+let v: String = better_duck_core::config::library_version();   // e.g. "v1.5.5"
+// also re-exported as better_duck_core::library_version
+```
+
+Returns the linked DuckDB version string — handy for logs and the `min_duckdb_version` of a
+[loadable extension](/macros/entrypoint).
+
+## See also
+
+- [Opening connections](/core/opening-connections) — the `*_with_flags` constructors.
+- [Extensions](/core/extensions) — `allow_unsigned_extensions` and `enable_external_access` in
+  context.
+- [Feature flags](/guide/feature-flags) — build-time Cargo features (distinct from these runtime
+  settings).

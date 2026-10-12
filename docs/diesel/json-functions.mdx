@@ -1,0 +1,68 @@
+---
+title: "JSON Functions"
+description: "DuckDB JSON scalar functions as typed Diesel DSL — json_valid, json_type, json_extract_string, json_array_length — with the json feature flag that bundles the extension offline."
+---
+
+DuckDB's JSON scalar functions, exposed as free functions in `better_duck_diesel::dsl::*`.
+
+```rust
+use diesel::prelude::*;
+use better_duck_diesel::dsl::*;
+```
+
+## Functions
+
+| Function | Signature | Returns | Meaning |
+|---|---|---|---|
+| `json_valid(x)` | `Text` | `Bool` | is the string valid JSON |
+| `json_type(x)` | `Text` | `Text` | JSON type name (`OBJECT`, `ARRAY`, …) |
+| `json_extract_string(json, path)` | `Text, Text` | `Nullable<Text>` | value at a JSON path, as text |
+| `json_array_length(x)` | `Text` | `BigInt` | number of elements in a JSON array |
+
+```rust
+let ok: bool = diesel::select(json_valid(r#"{"a":1}"#)).get_result(&mut conn)?; // true
+
+let name: Option<String> = docs::table
+    .select(json_extract_string(docs::body, "$.user.name"))
+    .first(&mut conn)?;
+```
+
+<Note>
+`json_extract_string` returns `Nullable<Text>` — a missing path yields `NULL`, so load it into an
+`Option<String>`.
+</Note>
+
+## The `json` feature
+
+JSON functions rely on DuckDB's JSON extension, which DuckDB **normally autoloads** on first use.
+Enabling this crate's [`json` feature](/diesel/overview#feature-flags) instead bundles the extension into
+the embedded library (it forwards to core's `json`), so the functions work **offline** with no runtime
+autoload or `INSTALL`/`LOAD` step — useful in sandboxed or air-gapped environments.
+
+<Tip>
+If you have disabled autoload and not enabled the feature, load the extension explicitly on the core
+connection: `conn.inner_mut().load_extension("json")?` — or, in a pool, from the
+[`on_connect` hook](/diesel/pooling#per-connection-setup-with-on_connect).
+</Tip>
+
+## JSON aggregates
+
+`json_group_array` and `json_group_object` aggregate rows into a JSON array/object. They live on the
+[Aggregates](/diesel/aggregates#json) page.
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Aggregates" href="/diesel/aggregates">
+    `json_group_array` / `json_group_object`.
+  </Card>
+  <Card title="List & map functions" href="/diesel/list-and-map-functions">
+    Native LIST/MAP as an alternative to JSON.
+  </Card>
+  <Card title="Feature flags" href="/guide/feature-flags">
+    What the `json` feature bundles.
+  </Card>
+  <Card title="DSL overview" href="/diesel/dsl-overview">
+    The rest of the DSL.
+  </Card>
+</CardGroup>

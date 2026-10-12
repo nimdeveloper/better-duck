@@ -1,0 +1,68 @@
+---
+title: "Derives Overview"
+description: "The derive feature's four derive macros and two helper macros for mapping Rust types to DuckDB rows, STRUCTs, and ENUMs — plus the shared rename_all casings."
+---
+
+<Info>
+  These derives and helper macros come from `better-duck-core`'s `feature = "derive"`. Import them
+  from `better_duck_core::…` — you never depend on `better-duck-macros` directly.
+</Info>
+
+Four derive macros map plain Rust types to DuckDB rows, `STRUCT`s, and `ENUM`s, and two helper
+macros smooth out transactions and parameter binding.
+
+<CardGroup cols={2}>
+  <Card title="FromRow / ToRow" href="/macros/fromrow-torow">
+    Read a query row into a struct; write a struct as an appender row or statement parameters.
+  </Card>
+  <Card title="DuckEnum" href="/macros/duckenum">
+    Map a Rust unit enum to a DuckDB `ENUM`.
+  </Card>
+  <Card title="DuckStruct" href="/macros/duckstruct">
+    Map a Rust struct to a DuckDB `STRUCT` value.
+  </Card>
+  <Card title="Helper macros" href="/macros/helper-macros">
+    `transaction!`, `params!`, and the UDF body macros.
+  </Card>
+</CardGroup>
+
+## The `#[duck(...)]` attributes
+
+`FromRow`, `ToRow`, and `DuckStruct` share the `#[duck(...)]` attribute:
+
+- **Container**: `#[duck(rename_all = "…")]`, `#[duck(crate = ::path)]`.
+- **Field**: `#[duck(rename = "column")]`.
+
+`DuckEnum` uses a **separate** `#[duck_enum(...)]` attribute with the same `rename` / `rename_all` /
+`crate` options (so an enum can derive both `DuckEnum` and other `#[duck]`-based traits without
+clashing).
+
+The `crate = ::path` option retargets the generated `::better_duck_core` path — useful for crates
+that re-export the library under another name.
+
+## `rename_all` casings
+
+`rename_all` accepts these casing names. Names are split into words on `_` / `-` **and** at
+lower→Upper boundaries, so both snake-case fields and Pascal/camel variants map correctly (a run of
+uppercase letters counts as one word, e.g. `HTTPServer` → `httpserver` under snake_case):
+
+| `rename_all` value | `userName` → |
+|---|---|
+| `"lowercase"` | `username` |
+| `"UPPERCASE"` | `USERNAME` |
+| `"snake_case"` | `user_name` |
+| `"SCREAMING_SNAKE_CASE"` | `USER_NAME` |
+| `"kebab-case"` | `user-name` |
+| `"SCREAMING-KEBAB-CASE"` | `USER-NAME` |
+| `"camelCase"` | `userName` |
+| `"PascalCase"` | `UserName` |
+
+**Resolution order** for a field/variant name: explicit `rename` → container `rename_all` → the Rust
+identifier verbatim.
+
+## See also
+
+- [FromRow / ToRow](/macros/fromrow-torow) · [DuckEnum](/macros/duckenum) ·
+  [DuckStruct](/macros/duckstruct).
+- [Values overview](/core/values-overview) — the traits these derives implement.
+- [Diesel docs](/diesel/overview) — the extra Diesel emission these derives can produce.

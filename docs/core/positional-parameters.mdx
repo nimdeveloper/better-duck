@@ -1,0 +1,87 @@
+---
+title: "Positional Parameters"
+description: "Bind $1 / $2 / ? parameters with execute_with and the AppendAble trait, mix heterogeneous types, bind explicit NULL, and use the params! and insert convenience forms."
+---
+
+DuckDB positional parameters are written `$1`, `$2`, … (or `?`). Bind them with `execute_with`,
+passing values as `&mut dyn AppendAble`. Every [`DuckValue`](/core/values-overview) and the
+primitive Rust types (`i32`, `f64`, `&str` / `String`, `bool`, …) implement
+[`AppendAble`](/core/values-overview#the-conversion-traits), and mixed types coerce to
+`&mut dyn AppendAble` at the call site.
+
+## execute_with
+
+`execute_with(sql, binds: &mut [&mut dyn AppendAble]) -> Result<DuckResult>`. Heterogeneous types
+are fine; binds fill `$1`, `$2`, … in slice order.
+
+```rust
+use better_duck_core::types::value::DuckValue;
+
+let mut min_id = 1i32;
+let mut label = String::from("gamma");
+let matched = conn
+    .execute_with(
+        "SELECT id FROM events WHERE id >= $1 AND label = $2",
+        &mut [&mut min_id, &mut label],
+    )?
+    .count();
+```
+
+Why `&mut`? Binding goes through DuckDB's value API, and the `AppendAble` contract takes the value
+by mutable reference so it can hand ownership of a built `duckdb_value` to the FFI call without an
+extra copy. The slice itself is `&mut` for the same reason.
+
+### Binding an explicit NULL
+
+```rust
+use better_duck_core::types::value::DuckValue;
+
+let mut null_bind = DuckValue::Null;
+let coalesced = conn
+    .execute_with("SELECT COALESCE($1, 'fallback') AS v", &mut [&mut null_bind])?
+    .materialize()?;
+```
+
+An `Option<T>` also binds as `Null` / `Some` — `None` becomes SQL `NULL`.
+
+## The `params!` macro
+
+With the `derive` feature, `params![…]` builds the `&mut [&mut dyn AppendAble]` slice for you,
+mixing literals, owned values, and `Null` without the `&mut x as &mut dyn …` boilerplate:
+
+```rust
+use better_duck_core::{params, types::value::DuckValue};
+
+conn.execute_with(
+    "INSERT INTO t VALUES ($1, $2, $3)",
+    &mut params![1_i32, "hi".to_owned(), DuckValue::Null],
+)?;
+```
+
+See [helper macros](/macros/helper-macros#params) for details.
+
+## insert — homogeneous bind-and-run
+
+For a statement filled from a **homogeneous** iterator, `insert` is terser:
+
+```rust
+conn.insert::<i32, _>("INSERT INTO t VALUES ($1, $2)", [10, 20])?;
+```
+
+<Warning>
+  `insert` **errors if no rows changed**. Use `execute_with` when a zero-change result is valid, or
+  when the bind values have different types. See
+  [executing SQL](/core/executing-sql#insert-a-homogeneous-bind-and-run).
+</Warning>
+
+## Errors
+
+- Wrong number of bound parameters → [`Error::InvalidParameterCount`](/core/errors).
+- A value that doesn't fit its target type → [`Error::IntegralValueOutOfRange`](/core/errors) or a
+  [`ConversionError`](/core/errors).
+
+## See also
+
+- [Named parameters](/core/named-parameters) — bind by `$name`.
+- [Prepared statements](/core/prepared-statements) — reuse a statement across many binds.
+- [Values overview](/core/values-overview) — the `AppendAble` trait.

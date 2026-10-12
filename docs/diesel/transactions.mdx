@@ -1,0 +1,90 @@
+---
+title: "Transactions"
+description: "Run atomic work on DuckDB through Diesel's transaction closure, roll back explicitly, use test transactions for isolation, and understand why DuckDB has no savepoints for nested transactions."
+---
+
+`DuckDbConnection` implements Diesel's transaction manager, so the full transaction API works. The one
+DuckDB-specific caveat is savepoints — covered below.
+
+## The transaction closure
+
+`.transaction(|conn| …)` runs the closure inside `BEGIN`/`COMMIT`. It commits when the closure returns
+`Ok`, and rolls back on `Err` or panic:
+
+```rust
+use diesel::prelude::*;
+
+conn.transaction(|conn| {
+    diesel::insert_into(products::table)
+        .values((products::id.eq(5), products::name.eq("x"), products::price.eq(1.0)))
+        .execute(conn)?;
+
+    diesel::update(products::table.filter(products::id.eq(1)))
+        .set(products::price.eq(2.0))
+        .execute(conn)?;
+
+    Ok::<_, diesel::result::Error>(())  // return Err to roll everything back
+})?;
+```
+
+The closure's error type is yours to choose, as long as it is `From<diesel::result::Error>`.
+
+## Rolling back explicitly
+
+To abort without surfacing a "real" error, return `Error::RollbackTransaction`:
+
+```rust
+conn.transaction::<(), diesel::result::Error, _>(|conn| {
+    diesel::delete(products::table).execute(conn)?;
+    // changed our mind — discard the delete
+    Err(diesel::result::Error::RollbackTransaction)
+}).ok(); // the rollback is not treated as a hard failure
+```
+
+## Savepoints and nesting
+
+<Warning>
+DuckDB has **no savepoints** — `SAVEPOINT` and `ROLLBACK TO` are not supported by the engine. Only the
+**top-level** `.transaction` closure drives real `BEGIN`/`COMMIT`/`ROLLBACK` via SQL. Nested
+`.transaction` calls therefore do not open independent, partially-rollbackable sub-transactions the way
+they would on a savepoint-capable backend; they run within the single outermost transaction. Design for
+one transaction scope rather than relying on inner rollback points.
+</Warning>
+
+See the [DuckDB essentials](/guide/duckdb-essentials) notes on the engine's transaction model.
+
+## Test transactions
+
+For test isolation, `begin_test_transaction` / `test_transaction` are implemented: every write on a
+test-transaction connection is discarded when the connection is dropped, so tests never persist state.
+
+```rust
+let mut conn = DuckDbConnection::establish(":memory:")?;
+conn.begin_test_transaction()?;   // nothing committed after this will survive
+// … run the code under test against `conn` …
+```
+
+## The core `transaction!` macro
+
+<Tip>
+With `better-duck-core`'s `derive` feature, the [`transaction!(conn, { … })`](/macros/derives-overview#helper-macros)
+macro works against both a core `Connection` and a `DuckDbConnection` — both expose
+`transaction(|c| -> Result<_>)`. Use it to share transaction code across the two APIs.
+</Tip>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Core transactions" href="/core/transactions">
+    The driver-level transaction model.
+  </Card>
+  <Card title="DuckDB essentials" href="/guide/duckdb-essentials">
+    Engine behavior, including the savepoint limitation.
+  </Card>
+  <Card title="Pooling" href="/diesel/pooling">
+    Transactions are per-connection — mind pooled handles.
+  </Card>
+  <Card title="Insert" href="/diesel/insert">
+    The writes you'll wrap in a transaction.
+  </Card>
+</CardGroup>

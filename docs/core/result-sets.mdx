@@ -1,0 +1,101 @@
+---
+title: "Result Sets"
+description: "Materialize a DuckResult into an owned, Send + Sync + Clone ResultSet that holds no FFI handles — and deserialize whole results into Vec<T>."
+---
+
+A [`DuckResult`](/core/iterating-results) borrows DuckDB FFI handles, so it is neither `Send` nor
+`Clone`. `DuckResult::materialize()` consumes it into a `better_duck_core::ResultSet` that holds
+**no FFI handles** — it is `Send + Sync + Clone`, so it can cross threads and outlive the
+connection.
+
+```rust
+let set = conn.execute("SELECT id, name FROM t ORDER BY id")?.materialize()?;
+
+assert!(!set.is_empty());
+for row in set.rows() {                 // &[DuckRow]
+    let _ = row.get("id");
+}
+let first = set.first();                // Option<&DuckRow>
+let n = set.len();
+let changed = set.changes();            // affected-row count for DML; 0 for SELECT
+
+// Send + Sync + Clone — move it to another thread:
+let moved = set.clone();
+let counted = std::thread::spawn(move || moved.len()).join().unwrap();
+```
+
+<Info>
+  The [async facade](/core/async) returns a `ResultSet` from every query method — materializing is
+  what makes an owned result safe to hand back out of a `spawn_blocking` closure.
+</Info>
+
+## API
+
+<ParamField path="rows() -> &[DuckRow]">
+  All rows as a slice.
+</ParamField>
+<ParamField path="into_rows() -> Vec<DuckRow>">
+  Consume into an owned `Vec<DuckRow>`.
+</ParamField>
+<ParamField path="first() -> Option<&DuckRow>">
+  The first row, if any.
+</ParamField>
+<ParamField path="len() -> usize / is_empty() -> bool">
+  Row count helpers.
+</ParamField>
+<ParamField path="changes() -> u64">
+  Affected-row count (DML); `0` for `SELECT`.
+</ParamField>
+<ParamField path="column_names() -> &[Box<str>]">
+  Column names in order.
+</ParamField>
+<ParamField path="column_schema() -> &[TypeInfo]">
+  Lossless per-column [`TypeInfo`](/core/composite-types#logicaltype-and-typeinfo).
+</ParamField>
+<ParamField path="statement_type() -> StatementType / result_type() -> ResultType">
+  The same metadata a `DuckResult` carries — see
+  [metadata](/core/iterating-results#result-column-metadata).
+</ParamField>
+
+`ResultSet` also implements `IntoIterator` (yielding owned `DuckRow`s), so you can `for row in set`
+or `set.into_iter().map(...)`.
+
+## Deserializing into structs
+
+With the `derive` feature and a [`#[derive(FromRow)]`](/macros/fromrow-torow) type,
+`to_structs::<T>()` reads the whole result into a `Vec<T>`:
+
+```rust
+use better_duck_core::FromRow;
+
+#[derive(FromRow, Debug)]
+struct Task { id: i32, name: String, done: Option<bool> }
+
+let tasks: Vec<Task> = conn
+    .execute("SELECT id, name, done FROM tasks")?
+    .materialize()?
+    .to_structs()?;
+```
+
+`to_structs::<T: FromRow>() -> Result<Vec<T>, DuckDBConversionError>` reads each row by column name;
+the first row that fails conversion surfaces its error. See
+[FromRow / ToRow](/macros/fromrow-torow).
+
+## When to materialize
+
+<CardGroup cols={2}>
+  <Card title="Materialize">
+    Crossing threads, returning results from a function, caching, random access, or using
+    `to_structs`. Pays an up-front copy; frees the connection immediately.
+  </Card>
+  <Card title="Stream (DuckResult)">
+    Large results you fold once, or when you want to stop early. Zero extra copies; keeps the
+    connection borrowed until dropped.
+  </Card>
+</CardGroup>
+
+## See also
+
+- [Iterating results](/core/iterating-results) — the streaming `DuckResult` API.
+- [FromRow / ToRow](/macros/fromrow-torow) — the `to_structs` target.
+- [Async](/core/async) — returns `ResultSet` from every query.

@@ -1,0 +1,161 @@
+---
+title: "Composite Types"
+description: "LIST, ARRAY, STRUCT, MAP, UNION, and ENUM — the nested DuckValue variants, their metadata-preserving wrappers, and the LogicalType / TypeInfo descriptors."
+---
+
+DuckDB's nested types map to [`DuckValue`](/core/values-overview) variants that contain other
+values. Three of them (`Enum`, `Union`) carry **metadata-preserving** wrappers so a read→write
+round trip keeps the full schema rather than degrading to an approximation.
+
+| DuckDB type | `DuckValue` variant | Inner Rust type |
+|---|---|---|
+| `LIST` | `List` | `Vec<DuckValue>` |
+| `ARRAY` (fixed length) | `Array` | `Box<[DuckValue]>` |
+| `STRUCT` | `Struct` | `HashMap<String, DuckValue>` |
+| `MAP` | `Map` | `HashMap<DuckValue, DuckValue>` |
+| `UNION` | `Union` | `types::DuckUnion` |
+| `ENUM` | `Enum` | `types::DuckEnum` |
+
+## LIST and ARRAY
+
+`List` is variable-length; `Array` is fixed-length. On the write side, a `Vec<T>` maps to a `LIST`
+and a `Box<[T]>` to an `ARRAY` for any `T: DuckLogicalType` — including when the collection is
+**empty**, because the element type comes from `T` (known at compile time), not from the first
+element.
+
+```rust
+use better_duck_core::types::value::DuckValue;
+
+let list = DuckValue::List(vec![DuckValue::Int(1), DuckValue::Int(2)]);
+let arr  = DuckValue::Array(vec![DuckValue::text("a"), DuckValue::text("b")].into());
+let empty: Vec<i32> = Vec::new();        // still binds as LIST(INTEGER)
+```
+
+Reading a `LIST`/`ARRAY` into a `Vec<T>` goes element-by-element through
+[`FromDuckValue`](/core/values-overview#the-conversion-traits).
+
+## STRUCT — `DuckStruct`
+
+`DuckValue::Struct` holds a `HashMap<String, DuckValue>` of named fields with a fixed schema. The
+`DuckStruct` newtype (`pub struct DuckStruct(pub HashMap<String, DuckValue>)`) exists so a plain
+`HashMap<String, DuckValue>` is **not** forced to mean `STRUCT` — leaving `HashMap<K, V>` free for
+`MAP` (the same reasoning [`Blob`](/core/scalar-types#blobs-blob) applies to `Vec<u8>`).
+
+```rust
+use std::collections::HashMap;
+use better_duck_core::types::DuckStruct;
+use better_duck_core::types::value::DuckValue;
+
+let s = DuckStruct::new(HashMap::from([
+    ("id".to_string(), DuckValue::Int(1)),
+    ("name".to_string(), DuckValue::text("a")),
+]));
+```
+
+For a typed, named-field mapping, derive [`#[derive(DuckStruct)]`](/macros/duckstruct) on a Rust
+struct.
+
+## MAP
+
+`DuckValue::Map` holds a `HashMap<DuckValue, DuckValue>` of arbitrary key→value pairs with a
+dynamic schema (any key type, unlike `STRUCT`'s fixed string keys). A plain `HashMap<K, V>` binds
+as a `MAP`.
+
+```rust
+use std::collections::HashMap;
+use better_duck_core::types::value::DuckValue;
+
+let m: DuckValue = HashMap::from([(DuckValue::Int(1), DuckValue::text("one"))]).into();
+assert_eq!(m.get(1i32), Some(&DuckValue::text("one")));   // Map accessor
+```
+
+See the [`Map` helpers](/core/values-overview#constructors-and-map-helpers) (`get` / `get_mut` /
+`contains_key`).
+
+## ENUM — `DuckEnum`
+
+`DuckValue::Enum` preserves the ordered dictionary of labels **and** the selected index via
+`better_duck_core::types::DuckEnum`. The dictionary is `Arc`-shared, so cloning a value — or many
+rows of the same enum column — does not re-allocate the labels.
+
+```rust
+use better_duck_core::types::DuckEnum;
+
+let e = DuckEnum::from_label(&["low".into(), "high".into()], "high")?;
+assert_eq!(e.label(), "high");
+assert_eq!(e.index(), 1);
+let dict: &[String] = e.dictionary();
+```
+
+- `new(dict, index)` / `from_label(dict, label)` — construct; errors if `dict` is empty or the
+  index/label is invalid.
+- `label()`, `index()`, `dictionary()` — accessors.
+
+<Note>
+  The runtime `DuckEnum` **value** type is distinct from the
+  [`#[derive(DuckEnum)]`](/macros/duckenum) macro, which maps a Rust unit enum to a DuckDB `ENUM`.
+</Note>
+
+## UNION — `DuckUnion`
+
+`DuckValue::Union` preserves the full ordered member schema, the selected tag, and the active
+value via `better_duck_core::types::DuckUnion`. The schema is `Arc`-shared.
+
+```rust
+use better_duck_core::types::DuckUnion;
+use better_duck_core::types::value::DuckValue;
+
+let u = DuckUnion::single(DuckValue::Int(7))?;   // single-member UNION(value INTEGER)
+assert_eq!(u.active_name(), "value");
+assert_eq!(u.value(), &DuckValue::Int(7));
+```
+
+- `new(members, tag, value)` — full schema; errors if `members` is empty or `tag` is out of range.
+- `single(value)` — a one-member union derived from the value (used e.g. for a bare `DuckValue`
+  bound through Diesel). A value read from a real union column keeps its full schema.
+- `members()`, `tag()`, `active_name()`, `value()` — accessors.
+
+## LogicalType and TypeInfo
+
+Column type descriptors come in two forms:
+
+- `better_duck_core::types::LogicalType` — an **owned DuckDB logical-type handle** with recursive
+  introspection. Build one for a Rust type with `LogicalType::of::<T>()`, read parts with
+  `list_child`, `array_child` / `array_size`, `map_key` / `map_value`, `struct_child` /
+  `struct_child_name` / `struct_child_count`, `union_member` / `union_member_name` /
+  `union_member_count`, and `enum_dictionary`. `set_alias` / `alias` name a custom type (then
+  [register it](/core/executing-sql#registering-a-custom-type-name) to use the alias in SQL).
+- `better_duck_core::types::TypeInfo` — a **lossless, owned, recursive descriptor** produced by
+  `LogicalType::describe()`. It is `Clone + Send`, so it outlives the FFI handles it came from.
+  This is what [`DuckResult::column_schema()`](/core/iterating-results#result-column-metadata)
+  returns.
+
+```rust
+use better_duck_core::types::{LogicalType, TypeInfo};
+
+let ty = LogicalType::of::<i32>()?;         // INTEGER
+let info: TypeInfo = ty.describe();
+```
+
+`TypeInfo` is `#[non_exhaustive]`:
+
+| Variant | Shape |
+|---|---|
+| `Scalar(id)` | A scalar fully described by its id (INTEGER, VARCHAR, DATE, …) |
+| `Decimal { width, scale }` | `DECIMAL(width, scale)` |
+| `Enum(dict)` | `ENUM` with its ordered label dictionary |
+| `List(child)` | `LIST(child)` |
+| `Array { child, size }` | `ARRAY(child, size)` |
+| `Map { key, value }` | `MAP(key, value)` |
+| `Struct(fields)` | ordered named fields |
+| `Union(members)` | ordered named members |
+
+`TypeInfo::to_logical_type()` rebuilds an owned `LogicalType` — the inverse of `describe()` — so a
+typed value can reconstruct its exact declared type on write.
+
+## See also
+
+- [Values overview](/core/values-overview) — the enum and conversion traits.
+- [DuckEnum derive](/macros/duckenum) · [DuckStruct derive](/macros/duckstruct).
+- [Appender advanced](/core/appender-advanced) and [data chunks](/core/data-chunks) — where
+  `LogicalType` is used to shape columns.

@@ -1,0 +1,149 @@
+---
+title: "Architecture"
+description: "The better-duck crate family, the FFI safety model that keeps unsafe out of your code, and how DuckDB is compiled and bundled into your binary."
+---
+
+better-duck is a small family of crates layered over a single vendored copy of DuckDB. This page is
+the mental model: which crate does what, how the safe Rust API is built on top of DuckDB's C API, and
+what "embedded-first" means for your build. Read it once and the rest of the docs — the
+[core driver](/core/opening-connections), the [Diesel backend](/diesel/overview), the
+[Tauri plugin](/tauri/overview) — slot into place.
+
+## The crate map
+
+Most applications depend on **`better-duck-core`** alone (plus `better-duck-diesel` if you want the
+ORM). Everything else is either pulled in transitively or used only in a specific context.
+
+| Crate | Role | You depend on it… |
+| --- | --- | --- |
+| `better-duck-core` | The driver: connections, prepared statements, the bulk [appender](/core/appender), full [type coverage](/guide/type-system), the UDF runtime, and optional async / pooling / Arrow / Polars. **Published on crates.io as `better-duck`.** | Directly — this is the crate you add. |
+| `better-duck-diesel` | A full [Diesel 2.3 backend](/diesel/overview): `DuckDbConnection`, the DuckDB SQL DSL, type mapping, migrations, and an r2d2 pool. Builds *on* core. | Directly, when you want the ORM. |
+| `better-duck-macros` | The procedural macros behind the [UDF](/macros/udf-overview) and [data-derive](/macros/derives-overview) attributes. | **Never directly** — reached through core's `udf` / `derive` features. |
+| `better-duck-tauri` | A [Tauri v2 plugin](/tauri/overview) exposing embedded DuckDB to a webview, with JS/TS bindings. | Directly, in a Tauri app. |
+| `better-duck-sys` | Low-level vendored DuckDB C API bindings, compiled from source, with optional bundled extensions and the experimental loadable-extension mode. | **Rarely** — core sits on top of it. |
+
+<Note>
+  The crate published as **`better-duck`** on crates.io is `better-duck-core`. Throughout these docs,
+  "the core crate" means `better-duck-core`, and imports are written `better_duck_core::…`.
+</Note>
+
+### How the layers stack
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  your app  ·  better-duck-tauri  ·  better-duck-diesel        │
+├─────────────────────────────────────────────────────────────┤
+│  better-duck-core        (safe Rust API: Connection, DuckValue,│
+│    ▲  udf / derive  ──►   Appender, columnar, async, pool…)    │
+│    └── better-duck-macros (compile-time codegen for #[duckdb_*])│
+├─────────────────────────────────────────────────────────────┤
+│  better-duck-sys         (vendored DuckDB C API, compiled)     │
+├─────────────────────────────────────────────────────────────┤
+│  DuckDB engine           (statically linked into your binary)  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+`better-duck-diesel` and `better-duck-tauri` both *build on* core rather than wrapping it opaquely —
+you can always drop to the underlying core [`Connection`](/core/opening-connections) (Diesel exposes it via
+`inner_mut()`; the Tauri plugin runs core directly) for the appender, columnar reads, UDF
+registration, or raw SQL that the higher layers don't surface.
+
+## The FFI safety model
+
+DuckDB ships a C API. better-duck's central promise is that **nothing `unsafe` leaks into your
+code** while still exposing the full type system. A few principles make that hold:
+
+<AccordionGroup>
+  <Accordion title="Every FFI call is wrapped and validated Rust-side">
+    Handles are owned by Rust types that free them on drop (`Connection`, `Database`, `Appender`,
+    `Statement`, `DataChunkHandle`, result handles). Inputs that the C API cannot represent are
+    rejected *before* the call: a `&str` or path with an interior NUL byte becomes
+    [`Error::NulError`](/core/errors), an out-of-range column index becomes
+    `Error::InvalidColumnIndex`, a wrong parameter count becomes `Error::InvalidParameterCount`.
+  </Accordion>
+  <Accordion title="Errors are copied out of DuckDB memory, so they outlive the handle">
+    A failed query surfaces as [`Error::Engine(EngineError { kind, message })`](/guide/error-handling),
+    where every field is copied out of DuckDB's own memory when the error is built. The error stays
+    valid after the result — and the connection — are gone, and `kind` preserves DuckDB's typed
+    classification (never guessed by parsing message text).
+  </Accordion>
+  <Accordion title="The borrow checker closes aliasing holes">
+    A [`VectorMut`](/core/columnar-overview) is built from `&mut DataChunkHandle`, so the compiler guarantees
+    it is the only live view of that column — an aliasing hole present in some other DuckDB bindings.
+    A [`DuckResult`](/core/iterating-results) is consumed in exactly one mode (row-by-row *or*
+    chunk-by-chunk); mixing them is a clean `Error::MixedIterationMode`, not undefined behavior.
+  </Accordion>
+  <Accordion title="Failures poison rather than corrupt">
+    When DuckDB invalidates a resource mid-operation — most notably a failed flush on the
+    [`Appender`](/core/appender) — the Rust wrapper **poisons** it: every later call fails fast
+    without re-entering DuckDB, and drop skips the dangerous re-flush. The originating connection
+    stays usable.
+  </Accordion>
+</AccordionGroup>
+
+### The handful of `unsafe` entry points
+
+The safe surface is the default; `unsafe` appears only where the caller must uphold a contract the
+compiler cannot check, and each is clearly marked:
+
+- `Connection::open_from_raw(db)` — wrap a `duckdb_database` **owned by a host process** (loadable
+  extensions); it never closes that database.
+- `Connection::register_arrow(view_name, stream)` — register a caller-owned `ArrowArrayStream`
+  pointer; the stream must stay valid until the returned [`ArrowView`](/core/arrow) guard
+  drops.
+
+<Warning>
+  **Panics and `panic = "abort"`.** UDF/callback panics are caught and reported to DuckDB as a query
+  error **only** under `panic = "unwind"` (the default for `dev`/`test`). Under `panic = "abort"` —
+  common in `release` — a panicking callback **aborts the process**. In fallible UDF bodies, return
+  `Err` (or [`duck_bail!`](/macros/udf-overview)) instead of panicking. See
+  [error handling](/guide/error-handling).
+</Warning>
+
+## Bundled DuckDB (embedded-first)
+
+DuckDB is **compiled from vendored source and statically linked** into your binary by
+`better-duck-sys`. There is no system package to install and no shared library to ship at runtime.
+This is what lets better-duck run inside Tauri desktop apps, iOS cross-builds, and anywhere a system
+library isn't an option.
+
+<Tip>
+  Because the engine is compiled from source, your **first** build (and any clean rebuild) is slower
+  than a typical crate — it is compiling DuckDB itself. Incremental builds reuse the artifact. Turning
+  on an [extension feature](/guide/extensions) (`json`, `parquet`, `icu`) recompiles a DuckDB variant,
+  which takes noticeably longer. See [Installation](/guide/installation) for build-time guidance.
+</Tip>
+
+### How features flow down to the sys crate
+
+The [extension feature flags](/guide/feature-flags) on `better-duck-core` are forwarded to
+`better-duck-sys`, which compiles that extension straight into the static library — so `json`,
+`parquet`, and `icu` need **no** runtime `INSTALL` / `LOAD`. Extensions without a bundling feature
+(for example **spatial**) are instead loaded at runtime through the
+[extension API](/guide/extensions). The DuckDB version itself is pinned in `better-duck-sys`;
+[`better_duck_core::library_version()`](/core/opening-connections#library-version) returns the linked version
+string at runtime.
+
+### The loadable-extension inversion
+
+The experimental [`loadable-extension`](/guide/feature-flags) feature flips the model: the crate
+links **no** DuckDB of its own and routes every FFI call through a host DuckDB's dynamically-loaded
+API table, building a `cdylib`. It pairs with the [`#[duckdb_entrypoint]`](/macros/udf-overview) macro and is
+for *writing* a DuckDB extension in Rust — not for a normal embedded application.
+
+## Where to next
+
+<CardGroup cols={2}>
+  <Card title="Feature flags" icon="toggle-on" href="/guide/feature-flags">
+    Every Cargo feature, grouped, with its implications.
+  </Card>
+  <Card title="Type system" icon="table-cells" href="/guide/type-system">
+    How DuckDB types arrive as `DuckValue`, feature by feature.
+  </Card>
+  <Card title="Error handling" icon="triangle-exclamation" href="/guide/error-handling">
+    How failures surface, from `NulError` to `EngineError`.
+  </Card>
+  <Card title="Versioning & compatibility" icon="code-branch" href="/guide/versioning-and-compatibility">
+    Beta policy, MSRV, platforms, and the vendored DuckDB version.
+  </Card>
+</CardGroup>

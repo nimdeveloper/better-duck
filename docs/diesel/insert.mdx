@@ -1,0 +1,102 @@
+---
+title: "Insert"
+description: "Insert rows into DuckDB through Diesel: single-row and batch inserts with value tuples or Insertable structs, affected-row counts, and pointers to RETURNING and ON CONFLICT upserts."
+---
+
+Writing rows with `diesel::insert_into`. This is Diesel's portable insert builder on the DuckDB backend.
+
+## Single row
+
+Pass a tuple of `column.eq(value)` assignments to `.values(...)`:
+
+```rust
+use diesel::prelude::*;
+
+diesel::insert_into(products::table)
+    .values((products::id.eq(1), products::name.eq("widget"), products::price.eq(9.99)))
+    .execute(&mut conn)?;
+```
+
+`.execute` returns the affected-row count as `usize`.
+
+## Batch insert
+
+Pass a slice of value tuples. DuckDB inserts them in one statement:
+
+```rust
+let rows = vec![
+    (products::id.eq(2), products::name.eq("gadget"), products::price.eq(4.99)),
+    (products::id.eq(3), products::name.eq("gizmo"),  products::price.eq(14.0)),
+];
+let n = diesel::insert_into(products::table).values(&rows).execute(&mut conn)?; // n == 2
+```
+
+<Tip>
+For very large bulk loads, the ORM insert path is not the fastest option. Drop to the core
+[appender](/core/appender) via `conn.inner_mut()` — it is purpose-built for high-throughput inserts.
+</Tip>
+
+## Inserting structs
+
+A `#[derive(Insertable)]` struct becomes a value set. Fields map to columns by name:
+
+```rust
+#[derive(Insertable)]
+#[diesel(table_name = products)]
+struct NewProduct<'a> {
+    id: i32,
+    name: &'a str,
+    price: f64,
+}
+
+diesel::insert_into(products::table)
+    .values(&NewProduct { id: 4, name: "doohickey", price: 1.0 })
+    .execute(&mut conn)?;
+
+// a Vec<NewProduct> inserts as a batch
+diesel::insert_into(products::table).values(&many).execute(&mut conn)?;
+```
+
+See [Schema](/diesel/schema#mapping-rows-to-structs) for deriving `Insertable`.
+
+<Note>
+Columns typed with a DuckDB-specific `Duck*` SQL type cannot be inserted through this typed builder —
+they bind via `diesel::sql_query(...).bind::<DuckXxx, _>(value)`. See
+[Type mapping](/diesel/type-mapping#duckdb-specific-sql-types).
+</Note>
+
+## Getting values back
+
+To return server-generated or defaulted columns from an insert, chain `.returning(...)` and use
+`get_result`/`get_results` instead of `execute`:
+
+```rust
+let id: i32 = diesel::insert_into(products::table)
+    .values((products::id.eq(5), products::name.eq("x"), products::price.eq(1.0)))
+    .returning(products::id)
+    .get_result(&mut conn)?;
+```
+
+Full details on the [RETURNING](/diesel/returning) page.
+
+## Handling conflicts
+
+To make an insert idempotent or merge on a key collision, add `.on_conflict(...)`. See
+[Upsert (ON CONFLICT)](/diesel/upsert).
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="RETURNING" href="/diesel/returning">
+    Read columns back from a write.
+  </Card>
+  <Card title="Upsert" href="/diesel/upsert">
+    `ON CONFLICT DO NOTHING` / `DO UPDATE`.
+  </Card>
+  <Card title="Transactions" href="/diesel/transactions">
+    Group many writes atomically.
+  </Card>
+  <Card title="Appender (core)" href="/core/appender">
+    The fast path for bulk inserts.
+  </Card>
+</CardGroup>

@@ -1,0 +1,181 @@
+---
+title: "Type Mapping"
+description: "The Rust-to-DuckDB column type mapping for Diesel: standard SQL types, the DuckDB-specific sql_types::Duck* newtypes, QueryableByName round-trips for them, and the values::* binding newtypes for u64/i128/UUID and friends."
+---
+
+How Rust types map to DuckDB columns through Diesel: the standard types that work out of the box, the
+DuckDB-specific `sql_types::Duck*` markers and how to read/write them, and the `values::*` newtypes that
+make foreign Rust types bindable. Verified against
+`crates/better-duck-diesel/src/types/duckdb_types.rs` and `src/values.rs`.
+
+## Standard Diesel types
+
+These work with no extra imports — Diesel's own SQL types with DuckDB backend impls provided here:
+
+| Diesel SQL type | DuckDB type | Rust type |
+|---|---|---|
+| `Bool` | `BOOLEAN` | `bool` |
+| `SmallInt` | `SMALLINT` | `i16` |
+| `Integer` | `INTEGER` | `i32` |
+| `BigInt` | `BIGINT` | `i64` |
+| `Float` / `Double` | `FLOAT` / `DOUBLE` | `f32` / `f64` |
+| `Text` | `VARCHAR` | `String` |
+| `Binary` | `BLOB` | `Vec<u8>` |
+| `Date` / `Time` / `Timestamp` | `DATE` / `TIME` / `TIMESTAMP` | `chrono::*` *(feature `chrono`)* |
+| `Numeric` | `DECIMAL` | `rust_decimal::Decimal` *(feature `decimal`, default)* |
+
+## DuckDB-specific SQL types
+
+`use better_duck_diesel::sql_types::*;` — use these inside `table!` and in `.bind::<T, _>` /
+`.into_sql::<T>()`. Each is a zero-size type implementing Diesel's `SqlType` + `QueryId`:
+
+| `sql_types::*` | DuckDB type | Rust / loads as |
+|---|---|---|
+| `DuckTinyInt` | `TINYINT`/`INT1` | `i8` |
+| `DuckUTinyInt` | `UTINYINT` | `u8` |
+| `DuckUSmallInt` | `USMALLINT` | `u16` |
+| `DuckUInt` | `UINTEGER` | `u32` |
+| `DuckUBigInt` | `UBIGINT` | `u64` |
+| `DuckHugeInt` | `HUGEINT` | `i128` |
+| `DuckUHugeInt` | `UHUGEINT` | `u128` |
+| `DuckTimestamptz` | `TIMESTAMPTZ` | `chrono::DateTime<Utc>` *(chrono)* |
+| `DuckInterval` | `INTERVAL` | `chrono::Duration` *(chrono)* / `std::time::Duration` |
+| `DuckTimeTz` | `TIME WITH TIME ZONE` | `TimeTz` (offset preserved) *(chrono)* |
+| `DuckTimeNs` | `TIME_NS` | `NaiveTime` (nanosecond) *(chrono)* |
+| `DuckEnum` | `ENUM` | `String` or `#[derive(DuckEnum)]` |
+| `DuckList` | `LIST` | `Vec<DuckValue>` |
+| `DuckArray` | `ARRAY` | fixed-length `Vec<DuckValue>` |
+| `DuckStruct` | `STRUCT` | `HashMap<…>` or `#[derive(DuckStruct)]` |
+| `DuckMap` | `MAP` | key→value collection |
+| `DuckUnion` | `UNION` | active member value |
+| `DuckUuid` | `UUID` | `values::Uuid` (wraps `DuckUuid`) |
+| `DuckBit` | `BIT` | `values::Bit` (wraps `DuckBit`) |
+| `DuckBignum` | `BIGNUM` | `values::Bignum` (wraps `DuckBignum`) |
+
+<Note>
+Date/time types map to `chrono` with the `chrono` feature, or to
+`better_duck_core::types::date_native` plain structs without it. Only one set compiles at a time — see
+[Feature flags](/guide/feature-flags).
+</Note>
+
+### How `Duck*` columns move through Diesel
+
+These marker types do not all behave the same through the query builder. There are two tiers:
+
+<AccordionGroup>
+  <Accordion title="Narrow unsigned widths — load typed, bind via raw SQL or values::*">
+    `DuckTinyInt`, `DuckUTinyInt`, `DuckUSmallInt`, `DuckUInt`, `DuckUBigInt` (Rust `i8`/`u8`/`u16`/`u32`/`u64`)
+    **can be loaded** through the typed `.select(...)` DSL — their Rust types satisfy Diesel's
+    `Queryable` blanket, so a `.select((t::tiny, t::ubig))` into `(i8, u64)` works. They have **no**
+    `AsExpression`, however, so they cannot be written with `.values(...)` — insert them with
+    `diesel::sql_query(...).bind::<DuckXxx, _>(v)` or wrap them in the matching
+    [`values::*` newtype](#the-values-binding-newtypes) (which adds both bind and load).
+
+    ```rust
+    // seeded with raw SQL, then loaded through the typed DSL as a tuple
+    let widths: (i8, u8, u16, u32, u64) = t_widths::table
+        .select((t_widths::tiny, t_widths::utiny, t_widths::usmall, t_widths::uint, t_widths::ubig))
+        .first(&mut conn)?;
+    ```
+  </Accordion>
+  <Accordion title="HUGEINT/UHUGEINT and composite/semantic types — raw SQL only">
+    `DuckHugeInt`/`DuckUHugeInt` (`i128`/`u128`) and `DuckUuid`, `DuckEnum`, `DuckList`, `DuckArray`,
+    `DuckStruct`, `DuckMap`, `DuckUnion`, `DuckBit`, `DuckBignum`, `DuckTimestamptz`, `DuckInterval`,
+    `DuckTimeTz`, `DuckTimeNs` do **not** flow through the typed builder at all. Round-trip them via raw
+    SQL: `diesel::sql_query(...).bind::<DuckXxx, _>(value)` to write, and a `#[derive(QueryableByName)]`
+    struct whose field carries `#[diesel(sql_type = DuckXxx)]` to read. Values are ordinary
+    `better_duck_core` types (`DuckValue`, `DuckUuid`, `DuckBit`, …). The scalar ones
+    (`i128`/`u128`/`DuckUuid`/`DuckBit`/`DuckBignum`) also become fully typed-DSL-usable through their
+    [`values::*` newtype](#the-values-binding-newtypes).
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+`DECIMAL` (`Numeric` → `rust_decimal::Decimal`) is similar: `Decimal` has no `AsExpression<Numeric>`, so
+it binds through `diesel::sql_query(...).bind::<Numeric, _>(d)` rather than `.values(...)`, though its
+`FromSql`/`ToSql` for the DuckDB backend still apply. `INTERVAL` can be bound either through `DuckInterval`
+or Diesel's own `diesel::sql_types::Interval` (both map to `chrono::Duration`).
+</Note>
+
+## Reading & writing raw-SQL `Duck*` columns
+
+```rust
+use better_duck_core::types::value::DuckValue;
+use better_duck_diesel::sql_types::DuckList;
+use diesel::prelude::*;
+
+#[derive(diesel::QueryableByName, Debug)]
+struct Row {
+    #[diesel(sql_type = DuckList)]
+    val: Vec<DuckValue>,
+}
+
+let items = vec![DuckValue::Int(1), DuckValue::Int(2), DuckValue::Int(3)];
+diesel::sql_query("INSERT INTO t_list VALUES ($1)")
+    .bind::<DuckList, _>(&items)
+    .execute(&mut conn)?;
+
+let got: Vec<DuckValue> =
+    diesel::sql_query("SELECT val FROM t_list").get_result::<Row>(&mut conn)?.val;
+assert_eq!(got, items);
+```
+
+For `ENUM`/`STRUCT` columns you can bind/read your own Rust types instead of `DuckValue` — see
+[Data derives](/diesel/data-derives).
+
+The concrete Rust types the composite columns read into (verified in `tests` / example `22-diesel-types`):
+`DuckStruct` → `HashMap<String, DuckValue>`, `DuckMap` → `HashMap<DuckValue, DuckValue>`, `DuckUnion` →
+`Box<DuckValue>`, `DuckEnum` → `String`, `DuckUuid`/`DuckBit`/`DuckBignum` → the core
+`DuckUuid`/`DuckBit`/`DuckBignum`, and `DuckTimestamptz` → `chrono::DateTime<Utc>`.
+
+## The `values::*` binding newtypes
+
+Diesel's blanket `impl<T: Expression> AsExpression<T::SqlType> for T` means a third-party crate can't make
+a foreign value type (`i128`, `u64`, `DuckUuid`, …) usable as an expression at a custom `Duck*` SQL type —
+coherence rejects it. The thin local newtypes in `better_duck_diesel::values::*` fix this: wrap the value
+and it becomes bindable (`.eq(…)`, `.values(…)`, function arg, `.into_sql::<T>()`) and loadable
+(`Queryable`). The standard widths (`i16`/`i32`/`i64`/`f32`/`f64`) already work directly and have no
+wrapper.
+
+| `values::*` | Inner | SQL type |
+|---|---|---|
+| `TinyInt(i8)` | `i8` | `DuckTinyInt` |
+| `UTinyInt(u8)` | `u8` | `DuckUTinyInt` |
+| `USmallInt(u16)` | `u16` | `DuckUSmallInt` |
+| `UInt(u32)` | `u32` | `DuckUInt` |
+| `UBigInt(u64)` | `u64` | `DuckUBigInt` |
+| `HugeInt(i128)` | `i128` | `DuckHugeInt` |
+| `UHugeInt(u128)` | `u128` | `DuckUHugeInt` |
+| `Uuid(DuckUuid)` | `better_duck_core::types::DuckUuid` | `DuckUuid` |
+| `Bit(DuckBit)` | `better_duck_core::types::DuckBit` | `DuckBit` |
+| `Bignum(DuckBignum)` | `better_duck_core::types::DuckBignum` | `DuckBignum` |
+
+Each has `From<inner>` / `From<newtype> for inner` both ways. Round-trip (verified in
+`tests/values_dsl.rs`):
+
+```rust
+use better_duck_diesel::values::HugeInt;
+use better_duck_diesel::sql_types::DuckHugeInt;
+use diesel::{prelude::*, IntoSql};
+
+let v = HugeInt(i128::MAX);
+let got: HugeInt = diesel::select(v.into_sql::<DuckHugeInt>()).get_result(&mut conn)?;
+assert_eq!(got, v);
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Schema" href="/diesel/schema">
+    Declaring columns with these types.
+  </Card>
+  <Card title="Data derives" href="/diesel/data-derives">
+    Map your own types to ENUM / STRUCT.
+  </Card>
+  <Card title="Core values" href="/core/iterating-results">
+    The `DuckValue` type the raw path uses.
+  </Card>
+  <Card title="DSL overview" href="/diesel/dsl-overview">
+    Binding `values::*` in expressions.
+  </Card>
+</CardGroup>

@@ -14,3 +14,16 @@ docs/benchmarks/_raw_*.json
 docs/.mint/
 node_modules/
 docs/node_modules/
+
+# Source materialized from `main` only to author the docs against (never committed
+# on this docs-only branch). Safe to delete; re-create with:
+#   git archive main -- crates examples .claude/skills README.md Cargo.toml Cargo.lock | tar -x
+/crates/
+/examples/
+/xtask/
+/target/
+/bench-comparison/
+/README.md
+/Cargo.toml
+/Cargo.lock
+/CHANGELOG.md

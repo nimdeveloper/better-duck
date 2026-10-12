@@ -1,0 +1,54 @@
+---
+title: "Entrypoint — Loadable Extensions"
+description: "#[duckdb_entrypoint]: generate the C-ABI entrypoint for a .duckdb_extension built with the loadable-extension feature."
+---
+
+<Info>
+  Requires `better-duck-core`'s **`loadable-extension`** FFI mode (which implies `udf`). In that
+  mode the crate links **no** DuckDB of its own and routes every FFI call through the host's
+  dynamically-loaded API table, building a `cdylib`. Re-exported as
+  `better_duck_core::duckdb_entrypoint`.
+</Info>
+
+`#[duckdb_entrypoint]` generates the C-ABI entrypoint DuckDB's loader calls for a Rust-authored
+**loadable extension** (`.duckdb_extension`), wrapping a `fn(&mut Connection) -> Result<…>`.
+
+```rust
+use better_duck_core::{connection::Connection, duckdb_entrypoint, duckdb_scalar};
+
+#[duckdb_scalar(name = "hello")]
+fn hello(name: &str) -> String { format!("hello, {name}!") }
+
+#[duckdb_entrypoint(name = "my_ext", min_duckdb_version = "v1.5.5")]
+fn init(conn: &mut Connection) -> better_duck_core::error::Result<()> {
+    hello::register(conn)?;        // register your UDFs on the host's connection
+    Ok(())
+}
+```
+
+The macro emits an exported `my_ext_init_c_api` symbol: it initializes the dynamically-loaded API
+table, obtains the host database, wraps it in a [`Connection`](/core/opening-connections) via
+[`open_from_raw`](/core/opening-connections#running-inside-a-loadable-extension) (which never closes
+the host-owned database), and invokes your `init` with `&mut conn`. An `Err` is reported back to
+DuckDB through the loader's `set_error`.
+
+## Options
+
+| Option | Meaning |
+|---|---|
+| `name = "<extension>"` | **Required.** The extension name, driving the generated `<name>_init_c_api` symbol. |
+| `min_duckdb_version = "v…"` | Minimum DuckDB C-API version to negotiate. Optional; defaults to `"v0.0.1"` (widest support). |
+
+<Note>
+  The generated code depends on the `loadable-extension` feature's API-table initializer
+  (`better_duck_core::extension_api::c_api_init`) and `Connection::open_from_raw`. Until built in
+  that mode, code produced by this macro will not compile — the macro itself is stable groundwork.
+</Note>
+
+## See also
+
+- [Extensions](/core/extensions#loadable-extensions-experimental) — the `loadable-extension`
+  feature and runtime extension management.
+- [UDF overview](/macros/udf-overview) — the functions you register inside `init`.
+- [Opening connections](/core/opening-connections#running-inside-a-loadable-extension) —
+  `open_from_raw`.

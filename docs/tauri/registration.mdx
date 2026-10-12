@@ -1,0 +1,190 @@
+---
+title: "Registration"
+description: "Register better-duck-tauri on tauri::Builder — the simple init() path and the fully configured per-backend Builder with migrations, policy, hooks, and checkpoint strategies."
+---
+
+The plugin is registered on `tauri::Builder` like any Tauri v2 plugin. There are two entry styles:
+a one-liner `init()` with defaults, or a per-backend `Builder` that configures migrations, the
+security policy, connection hooks, and checkpoint strategies before building.
+
+## Simplest: `init()`
+
+`init()` builds the plugin with a permissive policy, no migrations, and passive checkpointing.
+
+<Tabs>
+  <Tab title="backend-core">
+    ```rust
+    fn main() {
+        tauri::Builder::default()
+            .plugin(better_duck_tauri::core::init())
+            .run(tauri::generate_context!())
+            .expect("error while running tauri application");
+    }
+    ```
+  </Tab>
+  <Tab title="backend-diesel">
+    ```rust
+    fn main() {
+        tauri::Builder::default()
+            .plugin(better_duck_tauri::diesel::init())
+            .run(tauri::generate_context!())
+            .expect("error while running tauri application");
+    }
+    ```
+  </Tab>
+</Tabs>
+
+`core::init()` is gated behind `feature = "backend-core"`; `diesel::init()` behind
+`feature = "backend-diesel"`. This is exactly what the [example app](/tauri/overview) uses.
+
+## Configured: the per-backend `Builder`
+
+For anything beyond defaults, use `core::Builder` / `diesel::Builder`. Every setter is chainable and
+`#[must_use]`, and `build()` produces the `TauriPlugin` you pass to `.plugin(…)`.
+
+```rust
+use better_duck_tauri::{core::Builder, Migration, MigrationKind};
+
+tauri::Builder::default()
+    .plugin(
+        Builder::new()
+            .add_migrations("duckdb:app.db", migrations)      // Vec<Migration> (core)
+            .read_only(false)
+            .allow_connection("duckdb:app.db")
+            .allow_path("/data")
+            .deny_risky_statements(true)
+            .allow_network(false)
+            .checkpoint_interval(std::time::Duration::from_secs(300))
+            .checkpoint_on_exit(true)
+            .on_connect(|c| {
+                my_udf::register(c)
+                    .map_err(|e| better_duck_tauri::Error::Backend(e.to_string()))
+            })
+            .build(),
+    )
+    .run(tauri::generate_context!())?;
+```
+
+### Builder methods
+
+<ParamField path="new()" type="Builder">
+  Creates an empty builder (equivalent to `Default`).
+</ParamField>
+
+<ParamField path="add_migrations(conn_str, migrations)" type="Builder">
+  Registers migrations to run on `load` for a connection string. The **core** builder takes a
+  `Vec<Migration>` (repeatable — entries extend); the **diesel** builder takes an
+  `EmbeddedMigrations` from `embed_migrations!` (one per connection string). See
+  [Migrations](/tauri/migrations).
+</ParamField>
+
+<ParamField path="read_only(bool)" type="Builder">
+  Opens databases `READ_ONLY` and rejects write operations (`execute` / `import` / `append_rows` /
+  `revert`). See [Scope & Policy](/tauri/scope-and-policy).
+</ParamField>
+
+<ParamField path="allow_connection(conn_str)" type="Builder">
+  Restricts `load` to this exact connection string. Repeatable — each call appends to the allow-list.
+</ParamField>
+
+<ParamField path="allow_path(dir)" type="Builder">
+  Restricts import/export to files resolving within this directory. Repeatable; paths are
+  canonicalized and prefix-checked.
+</ParamField>
+
+<ParamField path="deny_risky_statements(bool)" type="Builder">
+  Rejects statements whose leading keyword is risky (`ATTACH` / `DETACH` / `INSTALL` / `LOAD` /
+  `PRAGMA` / `COPY` / `SET` / `CALL` / `EXPORT` / `IMPORT`) in `select` / `execute` / `export` /
+  `explain`.
+</ParamField>
+
+<ParamField path="allow_network(bool)" type="Builder">
+  Allows loading network-backed extensions (`httpfs` / `aws` / `azure`). **Off by default** — these
+  enable SQL-driven network egress.
+</ParamField>
+
+<ParamField path="on_connect(hook)" type="Builder">
+  Registers a `Fn(&mut Connection) -> Result<()>` run on every opened connection — the place to
+  register UDFs or `LOAD` extensions so each connection carries them. Repeatable.
+</ParamField>
+
+<ParamField path="checkpoint_threshold(s)" type="Builder">
+  `Automatic` strategy: sets DuckDB's `checkpoint_threshold` (e.g. `"64MB"`) at load.
+</ParamField>
+
+<ParamField path="checkpoint_after_writes(n)" type="Builder">
+  `AfterWrites` strategy: checkpoint after every `n`-th write operation.
+</ParamField>
+
+<ParamField path="checkpoint_interval(duration)" type="Builder">
+  `Interval` strategy: a background thread checkpoints all loaded connections this often.
+</ParamField>
+
+<ParamField path="checkpoint_on_exit(bool)" type="Builder">
+  `OnAppLifecycle` strategy: checkpoint all connections on the Tauri `Exit` event.
+</ParamField>
+
+<ParamField path="checkpoint_force(bool)" type="Builder">
+  Use `FORCE CHECKPOINT` (waits for the lock) for background / after-write sweeps.
+</ParamField>
+
+<ParamField path="checkpoint_platform_defaults()" type="Builder">
+  Applies the per-platform default strategy set: mobile (Android/iOS) enables `OnAppLifecycle` +
+  `FORCE CHECKPOINT`; desktop stays passive. Merges under anything you set explicitly.
+</ParamField>
+
+<ParamField path="build()" type="TauriPlugin<R>">
+  Assembles the engine and returns the plugin.
+</ParamField>
+
+The checkpoint setters are detailed in [Checkpointing](/tauri/checkpointing); the policy setters in
+[Scope & Policy](/tauri/scope-and-policy).
+
+<Note>
+  The **only** difference between `core::Builder` and `diesel::Builder` is `add_migrations`: core
+  takes `Vec<Migration>`, diesel takes `EmbeddedMigrations`. Every other method is identical, and
+  the resulting webview command surface is the same.
+</Note>
+
+## Host-side re-exports
+
+For writing hooks and host code, the crate re-exports:
+
+```rust
+use better_duck_tauri::{
+    Connection,                 // core DuckDB connection, for on_connect hooks
+    DuckBackend, Row, ExecuteResult, DataFormat,
+    Migration, MigrationKind,   // core migration model
+    Policy, CheckpointConfig, EngineConfig, ConnectHook,
+    Error, Result,              // plugin error + result alias
+    scope,                      // pub mod scope — the Entry schema type
+};
+```
+
+## Diesel builder shape
+
+The configured diesel builder differs only in the migration type:
+
+```rust
+use better_duck_tauri::diesel::Builder;
+use diesel_migrations::{embed_migrations, EmbeddedMigrations};
+
+const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
+
+tauri::Builder::default()
+    .plugin(
+        Builder::new()
+            .add_migrations("duckdb:app.db", MIGRATIONS)
+            .checkpoint_platform_defaults()
+            .build(),
+    )
+    .run(tauri::generate_context!())?;
+```
+
+## See also
+
+- [Capabilities & permissions](/tauri/capabilities-and-permissions) — the webview still needs
+  granted permissions to call anything.
+- [Migrations](/tauri/migrations), [Checkpointing](/tauri/checkpointing),
+  [Scope & Policy](/tauri/scope-and-policy) — the configuration surfaces in depth.
+- [UDF macros](/macros/udf-overview) — what to register inside an `on_connect` hook.

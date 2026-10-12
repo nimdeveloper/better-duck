@@ -1,0 +1,45 @@
+---
+title: "Polars Interop"
+description: "Collect DuckDB query results into a Polars DataFrame and materialize a DataFrame back into DuckDB, bridged via the Arrow C Data Interface."
+---
+
+<Info>
+  Requires `feature = "polars"`, which implies `arrow`. Bridges via the Arrow C Data Interface
+  (`polars` + `polars-arrow`, no `arrow-rs`) — no Arrow IPC or JSON copy involved.
+</Info>
+
+The `polars` feature adds two `Connection` methods that round-trip data with Polars.
+
+## Query into a DataFrame
+
+```rust
+let df = conn.query_polars("SELECT id, name FROM t ORDER BY id", &mut [])?;
+```
+
+`query_polars(sql, binds) -> Result<polars::prelude::DataFrame>` runs SQL and collects the full
+result into a `DataFrame`. The data crosses via the Arrow C Data Interface: DuckDB's Arrow
+conversion exports it and `polars-arrow`'s FFI imports it. `binds` is the same
+`&mut [&mut dyn AppendAble]` as [`execute_with`](/core/positional-parameters).
+
+## Register a DataFrame as a table
+
+```rust
+conn.register_polars("dst", &df)?;          // round-trip back into DuckDB
+conn.execute_batch("INSERT INTO other SELECT * FROM dst")?;
+```
+
+`register_polars(name, &DataFrame) -> Result<()>` materializes a `DataFrame` into DuckDB as a
+**real table** named `name` (`CREATE OR REPLACE TABLE … AS SELECT`), replacing any existing table
+of that name. Because it materializes rather than borrowing, the `DataFrame` need not outlive the
+call. An interior NUL in `name`, or an export/scan failure, is an error.
+
+<Note>
+  `register_polars` creates a real table, not a view over borrowed memory — contrast with
+  [`register_arrow`](/core/arrow#registering-an-arrow-stream-as-a-view), which registers a view
+  that reads a live stream.
+</Note>
+
+## See also
+
+- [Arrow interop](/core/arrow) — the lower-level C Data Interface this is built on.
+- [Positional parameters](/core/positional-parameters) — the `binds` argument.

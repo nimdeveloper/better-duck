@@ -1,0 +1,102 @@
+---
+title: "Vectors"
+description: "VectorRef and VectorMut: read a column zero-copy with as_slice, read/write single values, handle validity masks and NULLs, and the FixedWidth marker."
+---
+
+<Info>Requires `feature = "columnar"` (or `udf`). `better_duck_core::{VectorRef, VectorMut, FixedWidth}`.</Info>
+
+A [`DataChunkHandle`](/core/data-chunks) exposes each column as a vector view: `VectorRef` for
+reading (`vector(idx)`) and `VectorMut` for writing (`vector_mut(idx)`). The borrow checker enforces
+their aliasing rules — many `VectorRef`s may coexist; a `VectorMut` is exclusive.
+
+## VectorRef — reading a column
+
+Built from `&DataChunkHandle`, so read views coexist freely.
+
+```rust
+let chunk = result.fetch_chunk().unwrap()?;
+let col = chunk.vector(0)?;
+let n = chunk.len();
+
+let data: &[i64] = col.as_slice(n)?;        // zero-copy slice (fixed-width columns)
+let one: i64 = col.get(0)?;                 // single value
+let is_null = col.is_null(0);               // per-row NULL check
+let dv = col.as_duck_value(0)?;             // dynamic DuckValue (any column type)
+```
+
+<ParamField path="as_slice::<T: FixedWidth>(len) -> Result<&[T]>">
+  A zero-copy `&[T]` over a fixed-width column. Checks the column's type id against `T`; a mismatch
+  is [`Error::ConversionError`](/core/errors). **Does not mask NULLs** — see the warning below.
+</ParamField>
+<ParamField path="get::<T: ScalarArg>(row) -> UdfResult<T>">
+  Read one value as `T` (the fixed-width scalars, `i128` / `u128`, `&str`, `String`, `Option<T>`).
+</ParamField>
+<ParamField path="as_duck_value(row) -> Result<DuckValue>">
+  Decode one row dynamically, reusing the query-result decoder — works for **any** column type,
+  not just fixed-width.
+</ParamField>
+<ParamField path="is_null(row) -> bool">
+  Whether `row` is NULL.
+</ParamField>
+<ParamField path="validity(len) -> Option<&[u64]>">
+  Packed validity words (bit `r % 64` of word `r / 64` set ⇒ row `r` is valid), or `None` when the
+  column has no NULLs (DuckDB elides the mask).
+</ParamField>
+
+<Warning>
+  `as_slice` does **not** mask NULL rows — a NULL reads back as whatever raw bytes back it. Pair it
+  with `validity` or `is_null` whenever the column may contain NULLs.
+</Warning>
+
+## VectorMut — writing a column
+
+Built from `&mut DataChunkHandle`, so the borrow checker guarantees it is the only live view of that
+column (closing an aliasing hole present in some other DuckDB bindings).
+
+```rust
+let mut vm = chunk.vector_mut(0)?;
+vm.set(0, 123_i32)?;                        // write a value
+vm.set_null(1);                             // mark row 1 NULL
+vm.set_row_valid(1);                        // un-mask row 1
+vm.set_row_validity(2, false);             // NULL/valid in one call
+```
+
+<ParamField path="set::<T: ScalarRet>(row, value) -> UdfResult<()>">
+  Write one value (the fixed-width scalars, `i128` / `u128`, `&str`, `String`, `Option<T>` where
+  `None` writes NULL).
+</ParamField>
+<ParamField path="set_null(row)">
+  Mark the row NULL.
+</ParamField>
+<ParamField path="set_row_valid(row)">
+  Mark the row valid (un-mask when reusing a chunk).
+</ParamField>
+<ParamField path="set_row_validity(row, valid: bool)">
+  Set NULL/valid in one call.
+</ParamField>
+
+## The `FixedWidth` marker
+
+`FixedWidth` (a **sealed** trait) marks the scalars whose DuckDB physical representation is a packed
+native array — enabling the zero-copy `as_slice` read. It is implemented for `bool`, `i8` / `i16` /
+`i32` / `i64`, `u8` / `u16` / `u32` / `u64`, and `f32` / `f64`.
+
+It is **not** implemented for:
+
+- `i128` / `u128` — DuckDB uses hugeint struct storage;
+- `String` / `&str` — variable width.
+
+Read those per-row with `get` / `as_duck_value` instead of `as_slice`.
+
+<Tip>
+  `ScalarArg` (read) and `ScalarRet` (write) are the marshalling traits behind `get` / `set`. You
+  rarely name them directly — the built-in impls cover the scalar types, `i128`/`u128`, strings,
+  and `Option<T>`.
+</Tip>
+
+## See also
+
+- [Data chunks](/core/data-chunks) — allocating and shaping the chunk these views come from.
+- [Columnar overview](/core/columnar-overview) — `fetch_chunk` and the row-vs-chunk rule.
+- [Scalar functions](/macros/scalar-functions) — `invoke` reads inputs and writes output through
+  these views.

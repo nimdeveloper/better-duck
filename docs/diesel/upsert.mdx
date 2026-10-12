@@ -1,0 +1,82 @@
+---
+title: "Upsert (ON CONFLICT)"
+description: "Make inserts idempotent or merge on key collisions in DuckDB through Diesel: on_conflict with do_nothing and do_update, and pulling proposed values from the excluded row."
+---
+
+DuckDB supports `INSERT … ON CONFLICT`, and the Diesel backend exposes it through `.on_conflict(...)`.
+Use it to make an insert idempotent (`DO NOTHING`) or to merge new data onto an existing row
+(`DO UPDATE`). Verified in the crate's `tests/crud_dsl.rs`.
+
+## DO NOTHING — idempotent insert
+
+Skip the row silently when it would collide on the given target column(s):
+
+```rust
+use diesel::prelude::*;
+
+diesel::insert_into(products::table)
+    .values((products::id.eq(1), products::name.eq("dup"), products::price.eq(0.0)))
+    .on_conflict(products::id)
+    .do_nothing()
+    .execute(&mut conn)?;
+```
+
+The affected-row count is `0` when the conflict caused the row to be skipped.
+
+## DO UPDATE — merge on conflict
+
+On a collision, update the existing row. The `excluded(...)` helper references the **proposed** row (the
+values that would have been inserted):
+
+```rust
+use diesel::upsert::excluded;
+
+diesel::insert_into(products::table)
+    .values((products::id.eq(1), products::name.eq("replacement"), products::price.eq(30.0)))
+    .on_conflict(products::id)
+    .do_update()
+    .set((
+        products::name.eq(excluded(products::name)),
+        products::price.eq(excluded(products::price)),
+    ))
+    .execute(&mut conn)?;
+```
+
+`excluded` comes from Diesel's own `diesel::upsert` module. You can mix `excluded(...)` references with
+literals and column references in the `SET` clause, exactly like a normal [update](/diesel/update).
+
+<Tip>
+Pull the merged result straight back with `.returning(...)` — `RETURNING` works after `ON CONFLICT`:
+
+```rust
+let final_price: f64 = diesel::insert_into(products::table)
+    .values((products::id.eq(1), products::name.eq("x"), products::price.eq(30.0)))
+    .on_conflict(products::id)
+    .do_update()
+    .set(products::price.eq(excluded(products::price)))
+    .returning(products::price)
+    .get_result(&mut conn)?;
+```
+</Tip>
+
+<Note>
+The conflict target (`.on_conflict(products::id)`) must correspond to a `PRIMARY KEY` or `UNIQUE`
+constraint in DuckDB, as with any `ON CONFLICT` statement.
+</Note>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Insert" href="/diesel/insert">
+    The base insert builder.
+  </Card>
+  <Card title="RETURNING" href="/diesel/returning">
+    Read the merged row back.
+  </Card>
+  <Card title="Update" href="/diesel/update">
+    The SET-clause mechanics `do_update` reuses.
+  </Card>
+  <Card title="Transactions" href="/diesel/transactions">
+    Batch many upserts atomically.
+  </Card>
+</CardGroup>

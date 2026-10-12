@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "better-duck",
+  "name": "Better DuckDB",
   "description": "A safe, embedded-first Rust client for DuckDB, with an optional Diesel 2.3 ORM backend, UDF/derive macros, and a Tauri v2 plugin.",
   "colors": {
     "primary": "#CA8A04",
@@ -9,6 +9,10 @@
     "dark": "#A16207"
   },
   "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo.svg",
+    "dark": "/logo.svg"
+  },
   "navigation": {
     "versions": [
       {
@@ -30,35 +34,116 @@
               {
                 "group": "Concepts",
                 "pages": [
+                  "guide/architecture",
                   "guide/feature-flags",
                   "guide/duckdb-essentials",
-                  "guide/benchmarks"
+                  "guide/sql-dialect",
+                  "guide/type-system",
+                  "guide/extensions"
+                ]
+              },
+              {
+                "group": "Reference",
+                "pages": [
+                  "guide/error-handling",
+                  "guide/benchmarks",
+                  "guide/versioning-and-compatibility"
                 ]
               }
             ]
           },
           {
-            "tab": "Core + Macros",
+            "tab": "Library",
             "groups": [
               {
-                "group": "Core",
+                "group": "Connecting",
                 "pages": [
-                  "core/connections",
-                  "core/queries-and-values",
-                  "core/parameters-and-prepared",
-                  "core/transactions",
-                  "core/appender",
-                  "core/columnar",
-                  "core/async-and-pooling",
-                  "core/arrow-and-polars",
-                  "core/errors-and-extensions"
+                  "core/opening-connections",
+                  "core/configuration",
+                  "core/sharing-a-database"
                 ]
               },
               {
-                "group": "Macros",
+                "group": "Querying",
                 "pages": [
-                  "macros/udf",
-                  "macros/derives"
+                  "core/executing-sql",
+                  "core/iterating-results",
+                  "core/result-sets"
+                ]
+              },
+              {
+                "group": "Values & Types",
+                "pages": [
+                  "core/values-overview",
+                  "core/scalar-types",
+                  "core/temporal-types",
+                  "core/composite-types"
+                ]
+              },
+              {
+                "group": "Parameters & Statements",
+                "pages": [
+                  "core/positional-parameters",
+                  "core/named-parameters",
+                  "core/prepared-statements"
+                ]
+              },
+              {
+                "group": "Writing Data",
+                "pages": [
+                  "core/transactions",
+                  "core/appender",
+                  "core/appender-advanced"
+                ]
+              },
+              {
+                "group": "Columnar",
+                "pages": [
+                  "core/columnar-overview",
+                  "core/data-chunks",
+                  "core/vectors"
+                ]
+              },
+              {
+                "group": "Concurrency",
+                "pages": [
+                  "core/async",
+                  "core/pooling"
+                ]
+              },
+              {
+                "group": "Interop",
+                "pages": [
+                  "core/arrow",
+                  "core/polars"
+                ]
+              },
+              {
+                "group": "Errors & Extensions",
+                "pages": [
+                  "core/errors",
+                  "core/extensions"
+                ]
+              },
+              {
+                "group": "User-Defined Functions",
+                "pages": [
+                  "macros/udf-overview",
+                  "macros/scalar-functions",
+                  "macros/table-functions",
+                  "macros/aggregate-functions",
+                  "macros/cast-functions",
+                  "macros/entrypoint"
+                ]
+              },
+              {
+                "group": "Derives & Helpers",
+                "pages": [
+                  "macros/derives-overview",
+                  "macros/fromrow-torow",
+                  "macros/duckenum",
+                  "macros/duckstruct",
+                  "macros/helper-macros"
                 ]
               }
             ]
@@ -67,12 +152,46 @@
             "tab": "Diesel",
             "groups": [
               {
-                "group": "Diesel ORM backend",
+                "group": "Getting Started",
                 "pages": [
                   "diesel/overview",
-                  "diesel/setup-and-crud",
-                  "diesel/sql-dsl",
-                  "diesel/types-and-pooling"
+                  "diesel/installation-and-setup",
+                  "diesel/schema"
+                ]
+              },
+              {
+                "group": "CRUD",
+                "pages": [
+                  "diesel/select",
+                  "diesel/insert",
+                  "diesel/update",
+                  "diesel/delete",
+                  "diesel/returning",
+                  "diesel/upsert",
+                  "diesel/transactions"
+                ]
+              },
+              {
+                "group": "DuckDB SQL DSL",
+                "pages": [
+                  "diesel/dsl-overview",
+                  "diesel/operators",
+                  "diesel/string-functions",
+                  "diesel/numeric-functions",
+                  "diesel/datetime-functions",
+                  "diesel/json-functions",
+                  "diesel/list-and-map-functions",
+                  "diesel/aggregates",
+                  "diesel/calling-udfs",
+                  "diesel/spatial"
+                ]
+              },
+              {
+                "group": "Types & Pooling",
+                "pages": [
+                  "diesel/type-mapping",
+                  "diesel/pooling",
+                  "diesel/data-derives"
                 ]
               }
             ]
@@ -81,13 +200,40 @@
             "tab": "Tauri",
             "groups": [
               {
-                "group": "Tauri plugin",
+                "group": "Getting Started",
                 "pages": [
                   "tauri/overview",
-                  "tauri/register-and-frontend",
-                  "tauri/backends-and-checkpoint",
-                  "tauri/migrations",
-                  "tauri/security"
+                  "tauri/installation",
+                  "tauri/registration"
+                ]
+              },
+              {
+                "group": "Frontend API",
+                "pages": [
+                  "tauri/frontend-overview",
+                  "tauri/query-and-execute",
+                  "tauri/schema-introspection",
+                  "tauri/import-export",
+                  "tauri/append-rows",
+                  "tauri/streaming",
+                  "tauri/arrow",
+                  "tauri/maintenance"
+                ]
+              },
+              {
+                "group": "Backends & Persistence",
+                "pages": [
+                  "tauri/backends",
+                  "tauri/checkpointing",
+                  "tauri/migrations"
+                ]
+              },
+              {
+                "group": "Security",
+                "pages": [
+                  "tauri/security-overview",
+                  "tauri/capabilities-and-permissions",
+                  "tauri/scope-and-policy"
                 ]
               }
             ]

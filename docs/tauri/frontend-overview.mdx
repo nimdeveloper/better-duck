@@ -1,0 +1,139 @@
+---
+title: "Frontend Overview"
+description: "The @better-duck/tauri Database class: load/close lifecycle, connection strings, the full method map, error handling, and the DuckDB-to-JSON value mapping."
+---
+
+The frontend package `@better-duck/tauri` exposes a single default export — the `Database` class.
+Each method wraps one plugin command via `invoke('plugin:better-duck-tauri|<command>', …)`, so the
+class is a typed, ergonomic front for the [command set](/tauri/overview).
+
+## Lifecycle
+
+A `Database` is a handle to one loaded connection. You obtain it with the static `load`, and release
+it with `close`.
+
+```ts
+import Database from '@better-duck/tauri'
+
+const db = await Database.load('duckdb:analytics.db')
+// … use db …
+await db.close() // resolves to whether a connection existed
+```
+
+- `Database.load(path)` invokes `load` and returns a `Database` whose `path` is the connection
+  string you passed. `path` is the identifier sent as `db` to every subsequent command.
+- `db.close()` invokes `close`, dropping the registered connection, and resolves to a `boolean`
+  (whether one was open).
+
+<Note>
+  `load` is also where **migrations run** for a registered connection string, through the crash-safe
+  backup protocol on disk. See [Migrations](/tauri/migrations).
+</Note>
+
+### Connection strings
+
+The `path` you pass to `Database.load` is resolved on the Rust side by stripping a leading
+`duckdb:` prefix:
+
+| String | Opens |
+|---|---|
+| `duckdb:analytics.db` | On-disk file `analytics.db` (created if absent) |
+| `duckdb::memory:` | A private in-memory database |
+| `""` (empty) | Also in-memory |
+| `analytics.db` (bare path) | On-disk file — the prefix is optional |
+
+<Warning>
+  The connection string is the key the plugin stores the handle under, and the value a
+  [`load` scope entry](/tauri/scope-and-policy) and the `allow_connection` policy match against
+  **exactly**. Keep it stable across the app, and match the exact string in your capability scope.
+</Warning>
+
+## The method map
+
+| JS method | Command | Returns | Reference |
+|---|---|---|---|
+| `Database.load(path)` | `load` | `Database` | this page |
+| `db.close()` | `close` | `boolean` | this page |
+| `db.select(sql, values?)` | `select` | `T[]` | [Query & execute](/tauri/query-and-execute) |
+| `db.execute(sql, values?)` | `execute` | `ExecuteResult` | [Query & execute](/tauri/query-and-execute) |
+| `db.tables()` | `tables` | `T[]` | [Schema introspection](/tauri/schema-introspection) |
+| `db.columns(table)` | `columns` | `T[]` | [Schema introspection](/tauri/schema-introspection) |
+| `db.explain(sql)` | `explain` | `T[]` | [Schema introspection](/tauri/schema-introspection) |
+| `db.import(table, src, fmt)` | `import` | `ExecuteResult` | [Import & export](/tauri/import-export) |
+| `db.importParquet` / `importCsv` / `importJson` | `import` | `ExecuteResult` | [Import & export](/tauri/import-export) |
+| `db.export(sql, path, fmt)` | `export` | `ExecuteResult` | [Import & export](/tauri/import-export) |
+| `db.exportParquet` / `exportCsv` | `export` | `ExecuteResult` | [Import & export](/tauri/import-export) |
+| `db.appendRows(table, rows)` | `append_rows` | `ExecuteResult` | [Append rows](/tauri/append-rows) |
+| `db.stream(sql, onBatch, values?, chunk?)` | `stream` | `number` | [Streaming](/tauri/streaming) |
+| `db.interrupt()` | `interrupt` | `boolean` | [Streaming](/tauri/streaming) |
+| `db.queryArrow(sql, values?)` | `query_arrow` | `ArrayBuffer` | [Arrow IPC](/tauri/arrow) |
+| `db.loadExtension(name)` | `load_extension` | `void` | [Maintenance](/tauri/maintenance) |
+| `db.checkpoint(force?)` | `checkpoint` | `void` | [Maintenance](/tauri/maintenance) |
+| `db.revert()` | `revert` | `number \| null` | [Maintenance](/tauri/maintenance) |
+
+Every command takes `db: this.path` as its first argument automatically; you only pass the
+operation-specific arguments.
+
+## Error handling
+
+The plugin's Rust `Error` serializes to the webview as a **plain string**, so the `invoke` promise
+rejects with that string. There are four underlying kinds:
+
+| Rust variant | Message prefix | Meaning |
+|---|---|---|
+| `UnknownConnection` | `unknown connection: …` | No connection loaded for that string — did you `load` first? |
+| `Denied` | `denied by policy: …` | Blocked by the [`Policy`](/tauri/scope-and-policy) or a capability scope. |
+| `Backend` | `backend error: …` | DuckDB (or a task-join) failure — SQL errors land here. |
+| `Tauri` | (transparent) | A Tauri runtime error. |
+
+```ts
+try {
+  await db.execute('INSERT INTO t VALUES ($1)', [1])
+} catch (e) {
+  // e is a string, e.g. "denied by policy: read-only mode: write operation rejected"
+  console.error(e)
+}
+```
+
+## Value mapping
+
+### Parameters (JS → DuckDB)
+
+`values` bind as positional `$1, $2, …`:
+
+| JS value | DuckDB type |
+|---|---|
+| `null` | `NULL` |
+| `boolean` | `BOOLEAN` |
+| integer `number` | `BIGINT` (or `UBIGINT` if it exceeds `i64`) |
+| non-integer `number` | `DOUBLE` |
+| `string` | `VARCHAR` |
+| array | `LIST` |
+| object | `STRUCT` |
+
+### Results (DuckDB → JS)
+
+Rows come back as JSON objects keyed by column name. Most types map directly; precision-sensitive
+ones are preserved as strings so they survive JS `number` limits:
+
+| DuckDB type | JSON |
+|---|---|
+| integers / floats | `number` |
+| `HUGEINT` / `UHUGEINT` / `DECIMAL` / `UUID` / `BIT` / `BIGNUM` | `string` (exact) |
+| `BLOB` | array of byte values |
+| `LIST` / `ARRAY` / `STRUCT` / `MAP` / `UNION` / `ENUM` | structured JSON |
+| `DATE` / `TIME` / `TIMESTAMP*` | ISO-8601 string |
+
+<Tip>
+  Type the result row shape with the method generic: `await db.select<{ id: number; name: string }>(…)`
+  returns `{ id, name }[]`.
+</Tip>
+
+For the full DuckDB type system you query through this plugin, see
+[Queries & values](/core/iterating-results).
+
+## See also
+
+- [Query & execute](/tauri/query-and-execute) — the core read/write pair.
+- [Capabilities & permissions](/tauri/capabilities-and-permissions) — only `load`/`close`/`select`
+  are granted by default; everything else is opt-in.

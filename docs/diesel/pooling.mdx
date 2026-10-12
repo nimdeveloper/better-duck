@@ -1,0 +1,104 @@
+---
+title: "Pooling"
+description: "Connection pooling for better-duck-diesel with r2d2 under feature = r2d2: SharedDuckDbConnectionManager for a consistent in-memory database, Diesel's generic ConnectionManager, R2D2Connection health checks, and per-connection setup via on_connect."
+---
+
+With `feature = "r2d2"`, `DuckDbConnection` works with [`r2d2`](https://docs.rs/r2d2) pooling. There are
+two managers — pick based on whether pooled connections must observe the **same** data. Verified against
+`crates/better-duck-diesel/src/pool.rs`.
+
+## Choosing a manager
+
+<Tabs>
+  <Tab title="SharedDuckDbConnectionManager (recommended for :memory:)">
+    `better_duck_diesel::pool::SharedDuckDbConnectionManager` shares one
+    `better_duck_core::database::Database` across the pool, so even an in-memory pool observes **one
+    consistent database**.
+
+    ```rust
+    use better_duck_diesel::pool::SharedDuckDbConnectionManager;
+    use diesel::r2d2::Pool;
+
+    let manager = SharedDuckDbConnectionManager::memory()?;          // shared in-memory
+    // or ::file("app.duckdb")? / ::new(existing_database)
+    let pool = Pool::builder().max_size(4).build(manager)?;
+    let mut conn = pool.get()?;                                      // a DuckDbConnection
+    ```
+
+    Constructors: `::new(Database)`, `::memory() -> Result<_>`, `::file(path) -> Result<_>`;
+    `.database()` returns the shared `Database`.
+  </Tab>
+  <Tab title="Diesel's generic manager">
+    `diesel::r2d2::ConnectionManager<DuckDbConnection>` opens a fresh database per pooled connection.
+    Fine for **file-backed** databases where every connection points at the same file.
+
+    ```rust
+    use diesel::r2d2::{ConnectionManager, Pool};
+    use better_duck_diesel::DuckDbConnection;
+
+    let manager = ConnectionManager::<DuckDbConnection>::new("app.duckdb");
+    let pool = Pool::builder().max_size(4).build(manager)?;
+    ```
+
+    <Warning>
+    For a `:memory:` pool, this means **each connection is its own independent, empty database** — writes
+    through one connection are invisible to the others. Use `SharedDuckDbConnectionManager` for in-memory
+    pools.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Health checks
+
+`DuckDbConnection` implements `R2D2Connection`:
+
+- `.ping()` runs `SELECT 1` to validate a connection.
+- `.is_broken()` checks the transaction manager.
+
+r2d2 uses these automatically (`test_on_check_out`, `connection_customizer`, etc.).
+
+## Per-connection setup with `on_connect`
+
+UDF registration and `LOAD`ing extensions live on a single DuckDB connection, not the shared database, so
+they must run on **every** pooled connection. `SharedDuckDbConnectionManager` provides an `on_connect`
+hook for exactly this:
+
+```rust
+let manager = SharedDuckDbConnectionManager::memory()?
+    .on_connect(|conn| conn.inner_mut().load_extension("json")); // runs per new connection
+```
+
+The closure receives `&mut DuckDbConnection` and returns `better_duck_core::error::Result<()>`; an `Err`
+fails opening that connection. Use it to:
+
+- `register` your [`#[duckdb_*]` UDFs](/diesel/calling-udfs) so every connection can call them in the DSL.
+- `LOAD` extensions — e.g. [spatial `ensure_loaded`](/diesel/spatial) or JSON.
+
+<Warning>
+Because registration and extension loading are **per-connection**, forgetting `on_connect` yields a pool
+where only some connections have your UDFs/extensions — queries then fail intermittently depending on
+which connection `pool.get()` hands you.
+</Warning>
+
+## Core pooling and async
+
+Below the ORM, `better-duck-core` has its own `pool` and `async` features (`AsyncPool`, `AsyncDatabase`).
+If you need async DB calls, reach them through the core connection — the Diesel surface is synchronous.
+See [Core async & pooling](/core/async).
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Calling your own UDFs" href="/diesel/calling-udfs">
+    Register per connection in `on_connect`.
+  </Card>
+  <Card title="Spatial" href="/diesel/spatial">
+    `ensure_loaded` in `on_connect`.
+  </Card>
+  <Card title="Installation & setup" href="/diesel/installation-and-setup">
+    `inner_mut()` and sharing a `Database`.
+  </Card>
+  <Card title="Core async & pooling" href="/core/async">
+    The async facade below the ORM.
+  </Card>
+</CardGroup>

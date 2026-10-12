@@ -1,0 +1,69 @@
+---
+title: "Arrow IPC"
+description: "Return a read query's result as Arrow IPC stream bytes with query_arrow, gated behind the plugin's arrow Cargo feature, and decode it in the webview with apache-arrow."
+---
+
+With the plugin's `arrow` Cargo feature enabled, `query_arrow` returns a read query's result as
+Arrow IPC **stream** bytes — a compact, columnar, zero-JSON-parse transfer that decodes directly
+into an Arrow table in the webview.
+
+<Info>
+  `query_arrow` requires the [`arrow` feature](/tauri/installation#feature-flags). Without it the
+  command returns `backend error: the \`arrow\` feature is not enabled`.
+</Info>
+
+## Enable the feature
+
+```toml
+# src-tauri/Cargo.toml
+better-duck-tauri = { version = "0.1.0-beta.8", features = ["backend-core", "arrow"] }
+```
+
+The feature pulls in arrow-rs and `better-duck-core/arrow`, and compiles the `query_arrow` command
+in.
+
+## queryArrow
+
+```ts
+import { tableFromIPC } from 'apache-arrow'
+
+const buf = await db.queryArrow('SELECT * FROM sales WHERE region = $1', ['eu'])
+const table = tableFromIPC(new Uint8Array(buf))
+console.log(table.numRows, table.schema.fields.map((f) => f.name))
+```
+
+- Signature: `queryArrow(query: string, values?: unknown[]): Promise<ArrayBuffer>`.
+- `values` bind positionally, like [`select`](/tauri/query-and-execute).
+- Resolves to an `ArrayBuffer` of Arrow IPC stream bytes; decode with `apache-arrow`'s
+  `tableFromIPC`.
+
+## How it works
+
+Server-side the backend runs the query through `better-duck-core`'s Arrow C Data Interface export,
+then serializes each exported record batch with arrow-rs's `StreamWriter`. The command returns the
+raw bytes via `tauri::ipc::Response`, so the webview receives the response body directly as an
+`ArrayBuffer` rather than a JSON-encoded array.
+
+<Tip>
+  Prefer `queryArrow` over `select` when the result is wide or numeric and the frontend already uses
+  Arrow (or feeds a charting / dataframe library). It avoids the DuckDB → JSON → JS round-trip and
+  preserves exact numeric types that JSON would stringify.
+</Tip>
+
+## Policy and permissions
+
+- `query_arrow` is a read; it passes through the
+  [`deny_risky_statements`](/tauri/scope-and-policy) leading-keyword filter.
+- Permission: `better-duck-tauri:allow-query-arrow` (not in the default set).
+
+<Warning>
+  Like [`select`](/tauri/security-overview), `query_arrow` forwards arbitrary read SQL, which in
+  DuckDB can reach the filesystem through table functions. Treat it as filesystem-read-capable and
+  constrain it the same way (read-only, connection allow-list).
+</Warning>
+
+## See also
+
+- [Streaming](/tauri/streaming) — chunked JSON delivery for progressive rendering.
+- [Arrow & Polars](/core/arrow) — the core driver's Arrow export this builds on.
+- [Feature flags](/guide/feature-flags) — the `arrow` feature across the workspace.

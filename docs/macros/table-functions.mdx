@@ -1,0 +1,104 @@
+---
+title: "Table Functions"
+description: "#[duckdb_table_function]: iterator-returning functions for a FROM clause, with column naming, named parameters, projection pushdown, and shared extra info."
+---
+
+<Info>Requires `feature = "udf"`. See the [UDF overview](/macros/udf-overview) for shared semantics.</Info>
+
+`#[duckdb_table_function]` turns a Rust function into a DuckDB table function — used in a `FROM`
+clause. It returns `impl Iterator<Item = T> + Send`: `T` for one column, or a tuple `(A, B, …)` for
+several. DuckDB pulls rows in chunks, so the iterator is driven lazily and may be scanned across
+several calls.
+
+```rust
+use better_duck_core::{connection::Connection, duckdb_table_function};
+
+#[duckdb_table_function(name = "series", columns("n"))]
+fn series(start: i64, stop: i64) -> impl Iterator<Item = i64> + Send { start..stop }
+
+#[duckdb_table_function(columns("idx", "word"))]
+fn words(text: String) -> impl Iterator<Item = (i64, String)> + Send {
+    text.split_whitespace().map(String::from).enumerate()
+        .map(|(i, w)| (i as i64, w)).collect::<Vec<_>>().into_iter()
+}
+```
+
+<Warning>
+  The return type **must** be `impl Iterator<Item = T> + Send` (optionally wrapped in
+  `Result<_, E>`). Missing the `Send` bound, or returning something other than an `impl Iterator`,
+  is a compile error. The `Send` bound is required because DuckDB may scan across worker threads.
+</Warning>
+
+## Options
+
+| Option | Meaning |
+|---|---|
+| `name = "sql_name"` | SQL function name (defaults to the Rust fn name) |
+| `crate = ::path` | retarget the generated `::better_duck_core` path |
+| `columns("a", "b")` | result column names. Must match the row's column count (tuple arity), or it is a compile error. Default: the fn name for one column, else `column_0`, `column_1`, … |
+| `named_params("a", "b")` | register the listed fn parameters as SQL *named* (keyword) params; a non-`Option` field becomes required, an `Option<T>` field optional |
+| `projection_pushdown` | declare that the body honors `duck_projection!` to skip unneeded columns |
+| `extra_info(Type, init_expr)` | shared registration-time context, read via `duck_extra_info!(Type)` |
+
+<Note>
+  `schema = "…"` is intentionally **rejected** — DuckDB's C API cannot register a function into a
+  schema. Register it, then move it with SQL.
+</Note>
+
+## Named parameters
+
+A parameter listed in `named_params` is bound as `name := …` in SQL. A non-`Option` named parameter
+is required; an `Option<T>` one is optional:
+
+```rust
+use better_duck_core::{duck_projection, duckdb_table_function};
+
+#[duckdb_table_function(columns("n"), named_params("step"), projection_pushdown)]
+fn stepped(start: i64, step: i64) -> impl Iterator<Item = i64> + Send {
+    let _wanted = duck_projection!();        // Vec<usize> of needed column indices
+    (0..5).map(move |i| start + i * step)
+}
+// SELECT n FROM stepped(10, step := 2)
+```
+
+## Projection pushdown and extra info — body macros
+
+Inside the body:
+
+- `duck_projection!() -> Vec<usize>` — the 0-based column indices the current query needs (empty if
+  no pushdown was requested; only meaningful under `projection_pushdown`).
+- `duck_extra_info!(Type) -> Type` — a `Clone` of the registered extra-info value.
+
+Both panic if called in the wrong context, but that panic is contained by the callback machinery
+and surfaces as a normal query error, never UB. See
+[helper macros](/macros/helper-macros#duck_projection-and-duck_extra_info).
+
+## The `VTab` trait
+
+The macro implements `better_duck_core::udf::VTab`. Implement it by hand for stateful scans:
+
+<Accordion title="VTab (and VTabLocalInit) by hand">
+  ```rust
+  // type BindData: Send + Sync;   — produced once by bind(), shared read-only
+  // type InitData: Send + Sync;   — produced once by init(), shared across workers
+  // fn parameters() -> Result<Vec<LogicalType>> { Ok(vec![]) }
+  // fn named_parameters() -> Result<Vec<(String, LogicalType)>> { Ok(vec![]) }
+  // fn supports_projection_pushdown() -> bool { false }
+  // fn bind(&BindInfo) -> UdfResult<Self::BindData>;
+  // fn init(&InitInfo<Self>) -> UdfResult<Self::InitData>;
+  // fn func(&TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> UdfResult<()>;
+  ```
+
+  `bind` defines the output schema via `BindInfo::add_result_column` and may `set_cardinality`;
+  `init` produces per-query state and may `set_max_threads` and read `column_indices` (projection);
+  `func` writes up to `output.capacity()` rows then calls `output.set_len(k)`, signalling
+  completion with `set_len(0)`. Register with `conn.register_table_function::<T>(name)`,
+  `register_table_function_ext::<T>(name)` (adds a per-worker `VTabLocalInit::local_init`), or
+  `register_table_function_with_extra_info::<T, E>(name, extra)`.
+</Accordion>
+
+## See also
+
+- [UDF overview](/macros/udf-overview) — shared semantics and the panic caveat.
+- [Scalar functions](/macros/scalar-functions) · [Aggregate functions](/macros/aggregate-functions).
+- [Data chunks](/core/data-chunks) / [vectors](/core/vectors) — writing output in a hand-written `func`.

@@ -1,0 +1,158 @@
+---
+title: "Prepared Statements"
+description: "Reuse compiled statements with Statement and CachedStatement, step queries incrementally with pending execution, run multi-statement batches, and read statement metadata."
+---
+
+Preparing a statement once and executing it many times avoids re-parsing. `better-duck-core`
+offers two wrappers with different lifetimes, plus incremental ("pending") execution and
+multi-statement batches.
+
+<Note>
+  There is **no `Connection::prepare`**. The entry point is `conn.db().prepare(sql)` (which returns
+  a borrowing [`Statement`](#statement-borrows-the-connection)) or
+  [`CachedStatement::prepare(conn.db(), sql)`](#cachedstatement-owns-its-connection) for a
+  `'static` one. `conn.db()` returns the underlying raw connection the statement is prepared on.
+</Note>
+
+## Statement — borrows the connection
+
+`conn.db().prepare(sql)` returns a `Statement<'a>` that **borrows** `conn`. `bind` auto-increments
+the positional index; `bind_at` targets a specific 1-based index; `clear_bindings` resets for
+reuse.
+
+```rust
+let mut stmt = conn.db().prepare("SELECT v FROM nums WHERE v >= $1 AND v <= $2")?;
+let _n = stmt.bind_parameter_count();
+
+stmt.bind(&mut 10i32)?;                 // fills $1
+stmt.bind(&mut 20i32)?;                 // fills $2
+let n = stmt.execute()?.count();
+
+stmt.clear_bindings()?;                 // reuse with explicit indices
+stmt.bind_at(&mut 20i32, 1)?;
+stmt.bind_at(&mut 40i32, 2)?;
+let n = stmt.execute()?.count();
+```
+
+| Method | Purpose |
+|---|---|
+| `bind<T: AppendAble>(&mut T)` | Bind the next positional parameter (auto-incrementing) |
+| `bind_at<T: AppendAble>(&mut T, idx)` | Bind the 1-based `idx` |
+| `execute() -> Result<DuckResult>` | Run; reusable after `clear_bindings` |
+| `clear_bindings()` | Reset bindings and the auto-increment counter to 1 |
+| `bind_parameter_count() -> usize` | Number of parameters |
+
+## CachedStatement — owns its connection
+
+A `CachedStatement` holds its **own** handle to the connection, so it does not borrow `conn`, is
+`'static`, and is freely reusable (this is the type Diesel's statement cache stores). Binds are
+**1-based**; `bind_named` targets `$name`; `reset_bindings` clears for the next run.
+
+```rust
+use better_duck_core::CachedStatement;
+
+let mut stmt = CachedStatement::prepare(conn.db(), "INSERT INTO t VALUES ($1)")?;
+let _count = stmt.parameter_count();
+
+stmt.bind(1, &mut 100i32)?;
+stmt.execute()?;
+stmt.reset_bindings()?;
+stmt.bind(1, &mut 200i32)?;
+stmt.execute()?;
+
+// Named parameters, and a RETURNING / SELECT that yields rows:
+let mut named = CachedStatement::prepare(conn.db(), "SELECT $x + $y AS s")?;
+named.bind_named("x", &mut 3i32)?;
+named.bind_named("y", &mut 4i32)?;
+let row = named.execute()?.next().expect("row")?;
+```
+
+<Warning>
+  A `CachedStatement` must only ever be executed on the connection it was prepared on — DuckDB
+  scopes transactions to a connection, so running it elsewhere would execute outside the caller's
+  `BEGIN`/`ROLLBACK`. The wrapper enforces this by retaining that exact connection, so the rule is
+  a type invariant, not something you must track.
+</Warning>
+
+### Statement metadata
+
+Both wrappers expose introspection (`CachedStatement` shown; `Statement` has the same via its raw
+helpers):
+
+- `statement_type() -> StatementType` — see below.
+- `parameter_count() -> u64`, `parameter_name(index) -> Option<String>`,
+  `parameter_index(name) -> Result<u64>`, `parameter_type` / `parameter_logical_type`.
+- `column_count() -> u64`, `column_name(index)`, `column_type` / `column_logical_type`.
+
+`StatementType` (`better_duck_core::StatementType`) is `#[non_exhaustive]` and mirrors
+`duckdb_statement_type` — `Select`, `Insert`, `Update`, `Delete`, `Create`, `Drop`, `Alter`,
+`Explain`, `Prepare`, `Execute`, `Transaction`, `Copy`, `Pragma`, `Call`, `Attach`, `Detach`,
+`Multi`, …, and `Unknown(raw)` for a kind this build doesn't recognise. Match with a `_` arm.
+
+## Multi-statement batches — ExtractedStatements
+
+`conn.extract_statements(sql)` parses a `;`-separated batch into
+`better_duck_core::ExtractedStatements`; DuckDB does the parsing, so a semicolon inside a string
+literal is not a split. Prepare a given index **at most once**; an out-of-range index is rejected.
+
+```rust
+let batch = conn.extract_statements("SELECT 1 AS a; SELECT 'two' AS b; SELECT 3 AS c")?;
+for i in 0..batch.len() {
+    let mut stmt = batch.prepare(i)?;             // returns a CachedStatement
+    let row = stmt.execute()?.next().expect("row")?;
+}
+```
+
+- `len() -> u64` — statements parsed; `is_empty()` is effectively always `false` (a zero-statement
+  extract is an error at extraction time).
+- `prepare(index) -> Result<CachedStatement>` — prepare the statement at `index`.
+
+A parse failure surfaces as [`Error::Engine`](/core/errors) carrying DuckDB's message; an interior
+NUL as `Error::NulError`.
+
+## Incremental (task-at-a-time) execution
+
+`CachedStatement::pending()` returns a `PendingResult` that runs the query **one task at a time** —
+useful for cooperative scheduling or progress reporting. `into_pending()` yields an `OwnedPending`
+that is `Send + 'static` (it owns the statement, so it carries no borrow — this is what the
+[async facade](/core/async) steps across `spawn_blocking` dispatches).
+
+```rust
+use better_duck_core::{CachedStatement, PendingState};
+
+let stmt = CachedStatement::prepare(conn.db(), "SELECT count(*) AS n FROM range(50000)")?;
+let mut pending = stmt.pending()?;
+loop {
+    let state = pending.execute_task();
+    if matches!(state, PendingState::Ready | PendingState::Error | PendingState::NoTasksAvailable) {
+        break;
+    }
+}
+let row = pending.execute()?.next().expect("row")?;   // finalize regardless
+```
+
+`PendingState` (`better_duck_core::PendingState`) is `#[non_exhaustive]`:
+
+| Variant | Meaning |
+|---|---|
+| `Ready` | The result is ready — call `execute()` |
+| `NotReady` | More tasks remain — call `execute_task()` again |
+| `Error` | Execution failed — `error()` has the message |
+| `NoTasksAvailable` | No tasks right now (e.g. waiting on another thread) |
+| `Unknown(raw)` | A state this build doesn't recognise |
+
+<Tip>
+  Step until `Ready`, `Error`, or `NoTasksAvailable` — the remaining work may be owned by
+  background workers, so stepping alone would not necessarily reach `Ready`. `execute()` finalizes
+  the query either way. `PendingResult::check_state()` reads the current state without stepping;
+  `is_finished()` on a state uses DuckDB's own definition.
+</Tip>
+
+Both `PendingResult` and `OwnedPending` expose `execute_task()`, `error() -> Option<String>`, and
+`execute(self) -> Result<DuckResult>`.
+
+## See also
+
+- [Positional parameters](/core/positional-parameters) · [Named parameters](/core/named-parameters).
+- [Iterating results](/core/iterating-results) — consuming the `DuckResult` these return.
+- [Async](/core/async#execute_pending) — `execute_pending` is the async form of pending execution.

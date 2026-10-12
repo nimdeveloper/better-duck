@@ -1,53 +1,70 @@
 ---
 title: "Transactions"
-description: "Run transactions with the closure helper, the RAII guard, or raw verbs — and why there are no savepoints."
+description: "Run transactions with the closure helper, the RAII guard, or raw verbs — plus the transaction! macro, and why there are no savepoints."
 ---
 
 DuckDB has **no** dedicated transaction entry point in its C API, so `better-duck-core` drives
 transactions with plain SQL (`BEGIN TRANSACTION` / `COMMIT` / `ROLLBACK`) through
-`Connection::execute_batch`. Two ergonomic styles are offered on `Connection`, plus raw verbs.
+[`execute_batch`](/core/executing-sql#execute_batch-fire-and-forget). Three ergonomic styles are
+offered on [`Connection`](/core/opening-connections), each a different trade-off.
 
 ## Closure scope (recommended)
 
-`Connection::transaction` runs a closure inside a transaction: `BEGIN`, then `COMMIT` on `Ok` or
-`ROLLBACK` on `Err` (the original error is preserved; a rollback failure never masks it).
+`transaction<T, F: FnOnce(&mut Connection) -> Result<T>>(&mut self, f) -> Result<T>` runs a closure
+inside a transaction: `BEGIN`, then `COMMIT` on `Ok` or `ROLLBACK` on `Err`.
 
 ```rust
 conn.transaction(|c| {
     c.execute_batch("INSERT INTO t VALUES (1)")?;
     c.execute_with("INSERT INTO t VALUES ($1)", &mut [&mut 2_i32])?;
-    Ok(())                       // Err here would roll everything back
+    Ok(())                           // returning Err here rolls everything back
 })?;
 ```
 
-Signature:
-`transaction<T, F: FnOnce(&mut Connection) -> Result<T>>(&mut self, f: F) -> Result<T>`.
+The original error is preserved — a rollback failure never masks it.
 
 ## RAII guard
 
-`Connection::begin_transaction` returns a `Transaction<'_>` (`better_duck_core::Transaction`) guard
-that **derefs to the `Connection`** and rolls back on drop unless committed — this is what makes
-the `?`-early-return path safe.
+`begin_transaction(&mut self) -> Result<Transaction<'_>>` returns a `better_duck_core::Transaction`
+guard that **derefs to the `Connection`** and rolls back on drop unless committed. This is what
+makes the `?`-early-return path safe without a closure.
 
 ```rust
 let mut tx = conn.begin_transaction()?;
-tx.execute_batch("INSERT INTO t VALUES (1)")?;   // runs through the Deref to Connection
+tx.execute_batch("INSERT INTO t VALUES (1)")?;   // runs through Deref to Connection
 tx.commit()?;                                     // or tx.rollback()?; or just drop to roll back
 ```
 
-- `Transaction::commit(self) -> Result<()>` and `rollback(self) -> Result<()>` consume the guard.
+- `commit(self) -> Result<()>` and `rollback(self) -> Result<()>` consume the guard.
 - Dropping the guard without either does a best-effort rollback.
 
 ## Low-level verbs
 
-`Connection::begin()`, `commit()`, and `rollback()` issue the raw statements directly if you need
-manual control.
+`begin()`, `commit()`, and `rollback()` on `Connection` issue the raw statements directly when you
+need manual control.
 
 <Warning>
-  A transaction must **not** span an `.await` point. On the [async facade](/core/async-and-pooling)
-  run the whole unit inside `with_connection` / `AsyncPool::with` so `BEGIN`/`COMMIT` stay on one
-  blocking dispatch.
+  A transaction must **not** span an `.await` point. On the [async facade](/core/async) run the
+  whole unit inside `with_connection` (or `AsyncPool::with`) so `BEGIN`/`COMMIT` stay on one
+  blocking dispatch. See [async transactions](/core/async#running-a-transaction).
 </Warning>
+
+## The `transaction!` macro
+
+With the `derive` feature, `transaction!(conn, { … })` is a terser scope that commits on `Ok` and
+rolls back on `Err` or panic. It works for both the core `Connection` and a Diesel
+`DuckDbConnection` (both expose `transaction(|c| -> Result<_>)`):
+
+```rust
+use better_duck_core::transaction;
+
+transaction!(conn, {
+    conn.execute_batch("INSERT INTO t VALUES (1)")?;
+    Ok(())
+})?;
+```
+
+See [helper macros](/macros/helper-macros#transaction).
 
 ## No savepoints
 
@@ -56,9 +73,8 @@ manual control.
   / `ROLLBACK TO`. There is deliberately no savepoint API.
 </Note>
 
-## The `transaction!` macro
+## See also
 
-With the `derive` feature, `transaction!(conn, { … })` is a terser scope that commits on `Ok` and
-rolls back on `Err` or panic. It works for both the core `Connection` and a Diesel
-`DuckDbConnection` (both expose `transaction(|c| -> Result<_>)`) — see
-[helper macros](/macros/derives#helper-macros).
+- [Executing SQL](/core/executing-sql) — the statements you group in a transaction.
+- [Async](/core/async) · [Pooling](/core/pooling) — running transactions off the executor.
+- [Helper macros](/macros/helper-macros) — `transaction!`.

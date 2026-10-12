@@ -1,0 +1,109 @@
+---
+title: "Aggregates"
+description: "DuckDB aggregate functions as typed Diesel DSL — general (string_agg, array_agg, arg_max/min, product, any_value, bool_and/or), statistical, approximate quantiles, bitwise, and JSON aggregates — beyond Diesel's built-in count/sum/avg/min/max."
+---
+
+DuckDB's aggregate functions, exposed as free functions (defined with `#[aggregate]`) in
+`better_duck_diesel::dsl::*`. Use them in a grouped or aggregating `.select`.
+
+```rust
+use diesel::prelude::*;
+use better_duck_diesel::dsl::*;
+
+let m: Option<f64> = products::table.select(median(products::price)).first(&mut conn)?;
+```
+
+<Note>
+Diesel core already ships `count`/`sum`/`avg`/`min`/`max` (in `diesel::dsl`) — this crate adds only what
+core lacks. Most aggregates return `Nullable<…>` because an empty group yields `NULL`; load into an
+`Option`.
+</Note>
+
+<Warning>
+Watch DuckDB's result widening on the **core** aggregates: `SUM` over an `INTEGER` column widens to
+`HUGEINT`, which the `BigInt` adapter rejects. Sum a `DOUBLE` column, or `CAST` the result. See
+[Select → counting](/diesel/select#counting-and-aggregating).
+</Warning>
+
+## General
+
+| Aggregate | Signature | Returns |
+|---|---|---|
+| `bool_and(x)` | `Bool` | `Nullable<Bool>` |
+| `bool_or(x)` | `Bool` | `Nullable<Bool>` |
+| `string_agg(x, sep)` | `Text, Text` | `Nullable<Text>` |
+| `arg_max(arg, val)` | `Text, Double` | `Nullable<Text>` |
+| `arg_min(arg, val)` | `Text, Double` | `Nullable<Text>` |
+| `product(x)` | `Double` | `Nullable<Double>` |
+| `any_value(x)` | `Text` | `Nullable<Text>` |
+| `array_agg(x)` | `Text` | `DuckList` |
+
+```rust
+let names: Option<String> = products::table
+    .select(string_agg(products::name, ", "))
+    .first(&mut conn)?;
+```
+
+<Warning>
+`array_agg` returns a `DuckList`, which the typed loader cannot read — route it through
+`diesel::sql_query` + `QueryableByName`. See
+[Type mapping](/diesel/type-mapping#duckdb-specific-sql-types).
+</Warning>
+
+## Statistical
+
+`Double -> Nullable<Double>` unless noted:
+
+<AccordionGroup>
+  <Accordion title="Dispersion & shape">
+    `stddev_samp`, `stddev_pop`, `var_samp`, `var_pop`, `median`, `skewness`, `kurtosis`, `entropy`,
+    `mad`, `mode`.
+  </Accordion>
+  <Accordion title="Bivariate & regression">
+    `corr(y, x)`, `covar_samp(y, x)`, `covar_pop(y, x)`, `regr_slope(y, x)`, `regr_intercept(y, x)`,
+    `regr_r2(y, x)`, `regr_count(y, x)` (→`Nullable<BigInt>`).
+  </Accordion>
+</AccordionGroup>
+
+## Approximate & quantiles
+
+| Aggregate | Signature | Returns |
+|---|---|---|
+| `approx_count_distinct(x)` | `Text` | `BigInt` |
+| `approx_quantile(x, pos)` | `Double, Float` | `Nullable<Double>` |
+| `reservoir_quantile(x, q)` | `Double, Double` | `Nullable<Double>` |
+| `quantile_cont(x, pos)` | `Double, Double` | `Nullable<Double>` |
+| `quantile_disc(x, pos)` | `Double, Double` | `Nullable<Double>` |
+
+## Bitwise
+
+`BigInt -> Nullable<BigInt>`: `bit_and(x)`, `bit_or(x)`, `bit_xor(x)`.
+
+## JSON
+
+`json_group_array(x: Text)` (→`Text`) aggregates values into a JSON array; `json_group_object(key, value)`
+(both `Text`, →`Text`) aggregates key/value pairs into a JSON object. See
+[JSON functions](/diesel/json-functions) for the scalar side.
+
+## Custom aggregate UDFs
+
+Your own aggregates registered with `#[duckdb_aggregate]` are callable the same way once declared with
+`define_sql_function!` + `#[aggregate]`. See [Calling your own UDFs](/diesel/calling-udfs) and the
+[UDF macros](/macros/udf-overview#duckdb_aggregate).
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Select" href="/diesel/select">
+    Grouped selects and `GROUP BY`.
+  </Card>
+  <Card title="JSON functions" href="/diesel/json-functions">
+    Scalar JSON helpers.
+  </Card>
+  <Card title="Calling your own UDFs" href="/diesel/calling-udfs">
+    Register custom aggregates.
+  </Card>
+  <Card title="Type mapping" href="/diesel/type-mapping">
+    Reading `DuckList` aggregate results.
+  </Card>
+</CardGroup>

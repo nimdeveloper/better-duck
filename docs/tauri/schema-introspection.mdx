@@ -1,0 +1,79 @@
+---
+title: "Schema Introspection"
+description: "List the tables in the main schema, inspect a table's columns, and read a query's EXPLAIN plan — three read-only commands backed by information_schema."
+---
+
+Three read commands let the webview inspect schema and query plans without hand-writing
+`information_schema` queries: `tables`, `columns`, and `explain`. All three return arrays of JSON
+row objects.
+
+## tables
+
+List the tables in the `main` schema, ordered by name.
+
+```ts
+const tables = await db.tables<{ table_name: string }>()
+// [{ table_name: 'events' }, { table_name: 'users' }]
+```
+
+- Signature: `tables<T = Record<string, unknown>>(): Promise<T[]>`.
+- Backed by:
+
+  ```sql
+  SELECT table_name FROM information_schema.tables
+  WHERE table_schema = 'main' ORDER BY table_name
+  ```
+
+## columns
+
+List a table's columns with their type and nullability, in ordinal order.
+
+```ts
+const cols = await db.columns<{
+  column_name: string
+  data_type: string
+  is_nullable: string
+}>('events')
+// [{ column_name: 'id', data_type: 'INTEGER', is_nullable: 'YES' }, …]
+```
+
+- Signature: `columns<T = Record<string, unknown>>(table: string): Promise<T[]>`.
+- Backed by (the table name is passed as a **bound parameter**, not interpolated):
+
+  ```sql
+  SELECT column_name, data_type, is_nullable FROM information_schema.columns
+  WHERE table_name = $1 ORDER BY ordinal_position
+  ```
+
+<Note>
+  `is_nullable` is the SQL-standard `'YES'`/`'NO'` string from `information_schema`, not a boolean.
+</Note>
+
+## explain
+
+Return the query plan rows for a statement (DuckDB `EXPLAIN`).
+
+```ts
+const plan = await db.explain('SELECT * FROM events WHERE id > 1')
+// rows describing the physical plan; render plan.length / the plan text
+```
+
+- Signature: `explain<T = Record<string, unknown>>(query: string): Promise<T[]>`.
+- The backend runs `EXPLAIN <query>` and returns the resulting rows.
+
+<Warning>
+  `explain` passes `query` through the [`deny_risky_statements`](/tauri/scope-and-policy) filter (on
+  the leading keyword), so with that policy enabled you cannot `explain` an `ATTACH`/`COPY`/… form.
+  It does **not** require write permission.
+</Warning>
+
+## Permissions
+
+Each has its own permission: `better-duck-tauri:allow-tables`, `allow-columns`, `allow-explain`.
+None are in the default set, so grant the ones your UI needs. See
+[Capabilities & permissions](/tauri/capabilities-and-permissions).
+
+## See also
+
+- [Query & execute](/tauri/query-and-execute) — run the queries you discover here.
+- [Connections, Database & Config](/core/opening-connections) — the `main` schema and catalog model.

@@ -1,174 +1,78 @@
 ---
 title: "DuckDB Essentials"
-description: "DuckDB's SQL dialect, type mapping, extensions, and engine behavior as seen through the driver."
+description: "An orientation to DuckDB through the better-duck driver — the dialect, the type system, extensions, and engine behaviors — with pointers to the focused deep-dive pages."
 ---
 
-DuckDB is an in-process OLAP SQL engine. better-duck embeds it and talks to its C API. This page
-covers the engine behaviors that matter when you drive DuckDB from Rust — the dialect, how types
-arrive as `DuckValue`, how extensions load, and the quirks of transactions, the appender, parameters,
-and replacement scans.
+DuckDB is an in-process OLAP SQL engine. better-duck embeds it (compiled straight into your binary —
+see [Architecture](/guide/architecture)) and talks to its C API. This page is a short orientation to
+the engine behaviors that matter when you drive DuckDB from Rust, with links to the focused pages
+that cover each in depth.
 
-## SQL dialect — the parts that surprise people
+<CardGroup cols={2}>
+  <Card title="SQL dialect & statements" icon="code" href="/guide/sql-dialect">
+    The PostgreSQL-like dialect and analytics extras, batch vs single statements, parameters, and
+    transactions.
+  </Card>
+  <Card title="Type system" icon="table-cells" href="/guide/type-system">
+    Every DuckDB type as a `DuckValue`, NULL and validity, the lossless `TypeInfo`, and
+    feature-dependent read types.
+  </Card>
+  <Card title="Extensions" icon="puzzle-piece" href="/guide/extensions">
+    Bundled at build time (`json` / `parquet` / `icu`) vs loaded at runtime (`spatial` and more).
+  </Card>
+  <Card title="Error handling" icon="triangle-exclamation" href="/guide/error-handling">
+    How failures surface, DuckDB's typed `EngineError`, and the `panic = "abort"` caveat.
+  </Card>
+</CardGroup>
 
-DuckDB's dialect is **PostgreSQL-like**, with analytics extras:
+## The one-page tour
 
-- `QUALIFY`, `GROUP BY ALL`, `SELECT * EXCLUDE (col)`, `SELECT * REPLACE (expr AS col)`,
-  `COLUMNS(...)`, list / struct / map literals, `UNNEST`, window functions, and `PIVOT` / `UNPIVOT`.
-- **Friendly casting**: `CAST(x AS t)` or the shorthand `x::t`. `TRY_CAST` yields `NULL` instead of
-  erroring on a bad cast.
+- **Dialect.** DuckDB's SQL is PostgreSQL-like with analytics extras — `QUALIFY`, `GROUP BY ALL`,
+  `SELECT * EXCLUDE (...)`, `COLUMNS(...)`, list/struct/map literals, `UNNEST`, `PIVOT`, and friendly
+  casting (`x::t`, `TRY_CAST`). Full tour on [SQL dialect](/guide/sql-dialect).
+- **Statements.** [`execute_batch`](/guide/sql-dialect#batch-vs-single-statements) runs many
+  `;`-separated statements (DuckDB does the parsing); a single `execute` prepares and runs one.
+  `SELECT` / `RETURNING` yield rows, DML reports a `changes()` count, DDL changes nothing.
+- **Parameters.** Positional (`$1`, `?`) via `execute_with`, named (`$name`) via
+  `execute_with_named`. See [parameters](/guide/sql-dialect#parameters-positional-and-named).
+- **Types.** Values arrive as [`DuckValue`](/guide/type-system), covering every integer width,
+  `DECIMAL`, `UUID`, `BIT`, `BIGNUM`, temporals, and the composite `LIST` / `ARRAY` / `STRUCT` /
+  `MAP` / `UNION` / `ENUM`. The read type for temporals/decimals/UUID depends on
+  [feature flags](/guide/feature-flags).
+- **NULL.** First-class — `DuckValue::Null`, a per-column validity bitmask in
+  [columnar access](/core/columnar-overview), and `Option<T>` round-tripping.
+- **Extensions.** Either [bundled at build time](/guide/extensions#bundled-at-build-time)
+  (no runtime install) or [loaded at runtime](/guide/extensions#loaded-at-runtime) via the extension
+  API.
+- **Transactions.** Driven as SQL (`BEGIN` / `COMMIT` / `ROLLBACK`) — **no savepoints**. See
+  [transactions](/core/transactions).
 
-```sql
-SELECT * EXCLUDE (internal_id)
-FROM events
-QUALIFY row_number() OVER (PARTITION BY label ORDER BY score DESC) = 1;
-```
-
-## Statements: batch vs single
-
-- `execute_batch` runs multiple `;`-separated statements. DuckDB performs the split (NUL-safe,
-  comment- and dollar-quote-aware) — it is **not** a Rust-side string split. Use it for DDL and
-  simple DML.
-- A single `execute` prepares and runs **one** statement.
-
-What a statement returns depends on its kind:
-
-- **`SELECT` / `RETURNING`** → rows (iterate the `DuckResult`).
-- **`INSERT` / `UPDATE` / `DELETE`** → a changed-row count via `changes()`.
-- **DDL** → `changes()` is `0`, no rows.
-
-<Tip>
-  If `execute` "returns results" where you expected a changed-row count (or vice versa), check the
-  statement kind — `SELECT` / `RETURNING` yield rows, DML reports a count.
-</Tip>
-
-## Parameters: positional and named
-
-DuckDB parameters are **positional** (`$1`, `$2`, … or `?`) or **named** (`$name`). better-duck binds
-positional parameters with `execute_with` and named ones with `execute_with_named`:
-
-```rust
-// Positional — &mut [&mut dyn AppendAble]
-let mut id = 3_i32;
-let mut name = String::from("c");
-conn.execute_with("INSERT INTO t VALUES ($1, $2)", &mut [&mut id, &mut name])?;
-
-// Named — &mut [(&str, &mut dyn AppendAble)]; order is irrelevant, binding is by $name
-conn.execute_with_named(
-    "INSERT INTO t VALUES ($id, $name)",
-    &mut [
-        ("name", &mut name as &mut dyn better_duck_core::AppendAble),
-        ("id",   &mut id   as &mut dyn better_duck_core::AppendAble),
-    ],
-)?;
-```
-
-A named parameter not present in the SQL yields `Error::InvalidParameterName`. See
-[Queries, Results & Values](/core/queries-and-values) for the convenience `insert` form and the
-`params!` macro.
-
-## Type system → driver values
-
-DuckDB values arrive as `better_duck_core::types::value::DuckValue`. The core mappings:
-
-| DuckDB type | `DuckValue` / Rust | Notes |
-| --- | --- | --- |
-| `BOOLEAN` | `Boolean` / `bool` | |
-| `TINYINT` … `BIGINT` | `TinyInt` / `SmallInt` / `Int` / `BigInt` (`i8`..`i64`) | |
-| `UTINYINT` … `UBIGINT` | `UTinyInt` .. `UBigInt` (`u8`..`u64`) | |
-| `HUGEINT` / `UHUGEINT` | `HugeInt` (`i128`) / `UHugeInt` (`u128`) | 128-bit via DuckDB hugeint |
-| `FLOAT` / `DOUBLE` | `Float` (`f32`) / `Double` (`f64`) | |
-| `DECIMAL(w,s)` | `rust_decimal::Decimal` | feature [`decimal`](/guide/feature-flags); preserves width/scale |
-| `VARCHAR` | `Text(String)` | |
-| `BLOB` / `BIT` | `Blob` / bit types | `GEOMETRY` physically arrives as its WKB `Blob` |
-| `DATE` / `TIME` / `TIMESTAMP[TZ]` / `INTERVAL` | `chrono` types | feature [`chrono`](/guide/feature-flags) (or `time`) |
-| `UUID` | `uuid::Uuid` | feature [`uuid`](/guide/feature-flags) (or native `DuckUuid`) |
-| `LIST` / `ARRAY` / `STRUCT` / `MAP` / `UNION` / `ENUM` | nested `DuckValue` / derives | see the `DuckEnum` / `DuckStruct` derives |
-| `NULL` | `DuckValue::Null` | validity tracked per row / vector |
-
-<Note>
-  `TableDescription` (core) reads a table's column names, types, and `DEFAULT` flags **without** a
-  query. The lossless `TypeInfo` descriptor preserves `DECIMAL` width/scale, `ENUM` dictionaries, and
-  nesting. See [Queries, Results & Values](/core/queries-and-values).
-</Note>
-
-### NULL and validity
-
-`NULL` is first-class: a value is `DuckValue::Null`, and in columnar access a column carries a
-validity bitmask. `TRY_CAST` and `Option<T>` parameters / returns propagate `NULL` explicitly, so you
-can round-trip missing data without sentinels.
-
-## Extensions
-
-There are two ways extensions reach a connection:
-
-- **Bundled at build time** via core features: [`json`](/guide/feature-flags),
-  [`parquet`](/guide/feature-flags), [`icu`](/guide/feature-flags). These compile the extension into
-  the static library — there is **no** runtime `INSTALL` / `LOAD`.
-- **Loaded at runtime** via core's extension API (`INSTALL` / `LOAD`), e.g. **spatial** for geometry:
-
-  ```rust
-  conn.ensure_extension("json")?;                 // load, installing first if needed
-  let loaded = conn.is_extension_loaded("json")?; // query duckdb_extensions()
-  ```
-
-Writing your own loadable extension in Rust uses `#[duckdb_entrypoint]` (feature
-[`loadable-extension`](/guide/feature-flags), experimental).
-
-## Transactions
-
-DuckDB has **no** dedicated C-API transaction entry point; better-duck drives `BEGIN` / `COMMIT` /
-`ROLLBACK` via SQL.
+## Two engine behaviors worth memorizing
 
 <Warning>
-  Savepoints (`SAVEPOINT` / `RELEASE` / `ROLLBACK TO`) are **not** supported.
+  **Row mode vs chunk mode — do not mix.** A [`DuckResult`](/core/iterating-results) is consumed
+  **either** row-by-row (`next` / `exists` / `count` / `materialize`) **or** chunk-by-chunk
+  (`fetch_chunk`, feature [`columnar`](/guide/feature-flags)) — never both. Mixing them yields
+  `Error::MixedIterationMode`. See [columnar access](/core/columnar-overview).
 </Warning>
-
-Use `Connection::transaction` (a closure that commits on `Ok` and rolls back on `Err` or panic) or
-`begin_transaction` (an RAII guard). With the [`derive`](/guide/feature-flags) feature, the
-`transaction!(conn, { … })` macro wraps the same scope ergonomically and works for both the core
-`Connection` and a Diesel `DuckDbConnection`.
-
-## Appender semantics
-
-The `Appender` is the fast bulk-insert path (DuckDB's `duckdb_appender_*`). It buffers rows and
-flushes on `save()` / `finish()`:
-
-- A failed append or flush **invalidates** the appender — after that, only error inspection and
-  destroy are legal.
-- Column defaults can be filled with `append_default_row` / `set_chunk_default`.
 
 <Warning>
-  **Row mode vs chunk mode — do not mix.** A `DuckResult` is consumed **either** row-by-row
-  (`next` / `exists` / `count` / `materialize`) **or** chunk-by-chunk (`fetch_chunk`, feature
-  [`columnar`](/guide/feature-flags)) — never both. Calling one mode after the other yields
-  `Error::MixedIterationMode`.
+  **A failed appender flush is unrecoverable.** DuckDB invalidates the [`Appender`](/core/appender)
+  on a failed flush and the buffered data is lost; the appender poisons and refuses further calls. See
+  [error handling](/guide/error-handling#appender-poisoning).
 </Warning>
 
-See the [appender](/core/appender) reference for details.
+## DuckDB version
 
-## Replacement scans
-
-A bare identifier in a `FROM` clause can resolve to a **registered source** rather than a catalog
-table — for example an Arrow or Polars view, or a Rust replacement scan. This is how
-`query_polars` / `register_arrow` surface in-memory data to SQL without copying it into a table.
-
-## Diagnosing engine errors
-
-better-duck surfaces DuckDB's typed error classification as
-`Error::Engine(EngineError { kind, message })`, where `kind` mirrors DuckDB's `duckdb_error_type`. A
-failed `prepare` / `query` carries DuckDB's own message, so engine-level problems come through with
-their original diagnostics.
-
-## Versioning
-
-DuckDB ships an every-other-version LTS cadence from 1.4 (1.4 LTS, 1.5 current, …). better-duck pins
-a specific vendored DuckDB in `better-duck-sys`; `better_duck_core::library_version()` returns the
-linked version string at runtime.
+better-duck pins a specific vendored DuckDB in `better-duck-sys`;
+[`better_duck_core::library_version()`](/core/opening-connections#library-version) returns the linked version
+string at runtime (e.g. `"v1.5.5"`). See
+[Versioning & compatibility](/guide/versioning-and-compatibility).
 
 ## Related
 
 <CardGroup cols={2}>
-  <Card title="Queries, Results & Values" icon="table" href="/core/queries-and-values">
+  <Card title="Queries, Results & Values" icon="table" href="/core/iterating-results">
     The `DuckValue` type, parameter binding, and result metadata in depth.
   </Card>
   <Card title="Appender" icon="bolt" href="/core/appender">

@@ -1,20 +1,22 @@
 ---
 title: "Feature Flags"
-description: "Every Cargo feature of better-duck-core and when to enable it."
+description: "Every Cargo feature of better-duck-core — grouped, with what each enables, its implications, and recommended presets."
 ---
 
 `better-duck-core` keeps its dependency tree lean by putting almost everything behind a Cargo
-feature. This page lists **every** feature the core crate defines, what each turns on, and when you'd
-reach for it.
+feature. This page lists **every** feature the core crate defines, grouped by purpose, with what each
+turns on, which other features it implies, and when you'd reach for it.
 
-The default feature set is:
+## Defaults and opting out
+
+The default feature set is `["chrono", "decimal"]`:
 
 ```toml
 [dependencies]
-better-duck-core = "0.1.0-beta.8"   # enables default = ["chrono", "decimal"]
+better-duck-core = "0.1.0-beta.8"   # => default = ["chrono", "decimal"]
 ```
 
-To opt out of the defaults and pick features à la carte:
+Opt out of the defaults and pick features à la carte with `default-features = false`:
 
 ```toml
 [dependencies]
@@ -22,75 +24,128 @@ better-duck-core = { version = "0.1.0-beta.8", default-features = false, feature
 ```
 
 <Warning>
-  Remember to pin the exact pre-release version — Cargo's default version match excludes
-  pre-releases. See [Installation](/guide/installation).
+  Pin the exact pre-release version — Cargo's default match excludes pre-releases. See
+  [Installation](/guide/installation) and [Versioning](/guide/versioning-and-compatibility).
 </Warning>
 
 ## Date, time & numeric types
 
+These change which Rust type a temporal / numeric column reads as — see
+[Type system](/guide/type-system#feature-flags-that-change-the-read-type).
+
 | Feature | Default | What it enables | When to use |
 | --- | --- | --- | --- |
-| `chrono` | ✓ | `chrono` date/time conversions for `DATE`, `TIME`, `TIMESTAMP`, `TIMESTAMPTZ`, and `INTERVAL`. | Keep it on if you want `chrono` types. Turn it off (via `default-features = false`) to use the native `DuckDate` / `DuckTime` / … structs and `std::time` types instead. |
-| `decimal` | ✓ | `rust_decimal::Decimal` support for `DECIMAL` columns. | Keep it on for exact decimal arithmetic. Without it, `DECIMAL` surfaces as the native `DuckDecimal`. |
-| `time` | — | Bind and append `time` crate values (`Date`, `Time`, `PrimitiveDateTime`, `OffsetDateTime`, `Duration`) as DuckDB temporals. Coexists with `chrono`; independent of the `DuckValue` read type. | You already use the `time` crate and want to bind its values directly. |
-| `uuid` | — | Convert between the native `DuckUuid` and the `uuid` crate's `Uuid`. | You want `uuid::Uuid` interop instead of the native `DuckUuid`. |
+| `chrono` | ✓ | `chrono` conversions for `DATE`, `TIME`, `TIMESTAMP`, `TIMESTAMPTZ`, `INTERVAL`. | Keep on for `chrono` types. Disable (via `default-features = false`) for the native `DuckDate` / `DuckTime` / `SystemTime` structs. |
+| `decimal` | ✓ | `rust_decimal::Decimal` for `DECIMAL` columns. | Keep on for exact decimal arithmetic. Without it, `DECIMAL` surfaces as the native `DuckDecimal`. |
+| `time` | — | Bind/append `time`-crate values (`Date`, `Time`, `PrimitiveDateTime`, `OffsetDateTime`, `Duration`). | You already use the `time` crate and want to bind its values directly. |
+| `uuid` | — | Convert between the native `DuckUuid` and `uuid::Uuid`. | You want `uuid::Uuid` interop instead of the native type. |
 
 <Note>
-  `chrono` and the native date/time path are mutually exclusive for the **read** type: only one set
-  of `DuckValue` temporal conversions is compiled at a time. The `time` feature is an independent
-  **bind/append** path that coexists with either.
+  `chrono` and the native date/time path are **mutually exclusive for the read type** — only one set
+  of `DuckValue` temporal conversions compiles at a time. `time` is an independent **bind/append**
+  path that coexists with either.
 </Note>
 
 ## Bundled DuckDB extensions
 
 These compile the extension straight into the embedded static library — there is **no** runtime
-`INSTALL` / `LOAD` needed.
+`INSTALL` / `LOAD`. See [Extensions](/guide/extensions) for bundled-vs-runtime guidance.
 
 | Feature | Default | What it enables | When to use |
 | --- | --- | --- | --- |
-| `json` | — | Bundles DuckDB's JSON extension into the static lib. | You use DuckDB's JSON functions and want them available offline, with no runtime install step. |
-| `parquet` | — | Bundles DuckDB's Parquet extension into the static lib. | You read or write Parquet files. |
-| `icu` | — | Bundles DuckDB's ICU extension (timezones / collations). Requires a DuckDB archive re-vendored with ICU sources. | You need full timezone and collation support. |
+| `json` | — | Bundles DuckDB's JSON extension. | JSON functions available offline, no runtime install. |
+| `parquet` | — | Bundles DuckDB's Parquet extension. | You read or write Parquet files. |
+| `icu` | — | Bundles DuckDB's ICU extension (timezones / collations). **Requires a DuckDB archive re-vendored with ICU sources.** | You need full timezone and collation support. |
+
+<Warning>
+  Each bundled extension recompiles a DuckDB variant, so these features make the build noticeably
+  slower. See [Installation](/guide/installation).
+</Warning>
 
 ## Data interop
 
-| Feature | Default | What it enables | When to use |
-| --- | --- | --- | --- |
-| `arrow` | — | Export query results via the Arrow C Data Interface. **No new dependency** — it uses the ABI structs directly, and consumers reinterpret the handles as arrow-rs FFI structs. | You want to hand results to an Arrow-based pipeline without paying for an Arrow dependency. |
-| `polars` | — | Polars `DataFrame` interop, bridged through the Arrow C Data Interface. **Implies `arrow`**, and pulls in `polars` + `polars-arrow`. | You want query results as a Polars `DataFrame`, or want to query a `DataFrame` back. |
-| `columnar` | — | Columnar data-chunk read/write: `fetch_chunk`, zero-copy `as_slice` column reads, and build-and-bulk-insert. Reuses the vector / data-chunk machinery without the proc-macro dependency. | You need to read large results fast or access columns zero-copy. |
+| Feature | Default | What it enables | Implies | When to use |
+| --- | --- | --- | --- | --- |
+| `arrow` | — | Export results via the Arrow C Data Interface. **No new dependency** — the crate defines the ABI structs directly. | — | Hand results to an Arrow pipeline with no Arrow dependency cost. |
+| `polars` | — | Polars `DataFrame` interop, bridged through the Arrow C Data Interface. Pulls in `polars` + `polars-arrow`. | `arrow` | You want results as a Polars `DataFrame`, or to query a `DataFrame` back. |
+| `columnar` | — | Columnar chunk read/write: `fetch_chunk`, zero-copy `as_slice`, build-and-bulk-insert. | — | Read large results fast, or access columns zero-copy. |
 
 <Note>
   Enabling `udf` turns the `columnar` APIs on too — they share the same vector / data-chunk
-  machinery. You only need `columnar` explicitly when you want those APIs **without** the proc-macro
-  dependency that `udf` pulls in.
+  machinery. Enable `columnar` explicitly only when you want those APIs **without** the proc-macro
+  dependency `udf` pulls in. See [columnar access](/core/columnar-overview).
 </Note>
 
 ## Concurrency
 
 | Feature | Default | What it enables | When to use |
 | --- | --- | --- | --- |
-| `async` | — | A Tokio async facade: `AsyncConnection`, `AsyncDatabase`, `AsyncPool`. Each call runs on `spawn_blocking`, so it never blocks the executor. | You're in an async application and don't want blocking DB calls on your runtime threads. |
-| `pool` | — | An `r2d2` connection pool backed by a shared `Database` handle. | You want connection pooling. Combine with `async` to get `AsyncPool`. |
+| `async` | — | A Tokio facade: `AsyncConnection`, `AsyncDatabase`, `AsyncPool`. Each call runs on `spawn_blocking`, so it never blocks the executor. | Async apps that must not block runtime threads on DB calls. |
+| `pool` | — | An `r2d2` pool backed by a shared `Database` handle. | You want connection pooling. Combine with `async` for `AsyncPool`. |
+
+See [async & pooling](/core/async). `async` + `pool` together unlock `AsyncPool`.
 
 ## Macros: UDFs & derives
 
-| Feature | Default | What it enables | When to use |
-| --- | --- | --- | --- |
-| `udf` | — | The `#[duckdb_scalar]` / `#[duckdb_table_function]` / `#[duckdb_aggregate]` / `#[duckdb_cast]` function macros (via `better-duck-macros`). Also turns on the `columnar` APIs. | You want to register plain Rust functions as DuckDB scalar / table / aggregate / cast functions. |
-| `derive` | — | `#[derive(FromRow / ToRow / DuckEnum / DuckStruct)]` plus the `transaction!` and `params!` helper macros. | You want to map Rust structs/enums to rows and DuckDB types, or want the ergonomic transaction / parameter macros. |
-| `derive-diesel` | — | Makes the data derives **additionally** emit `better_duck_diesel` `FromSql` / `ToSql` impls. Implies `derive`. | Turned on for you by `better-duck-diesel/derive` — the emitted code resolves `::better_duck_diesel` in your crate, so core itself gains no Diesel dependency. You rarely enable this by hand. |
+Both come from `better-duck-macros`, reached through core — you never depend on the macros crate
+directly. See [UDFs](/macros/udf-overview) and [data derives](/macros/derives-overview).
+
+| Feature | Default | What it enables | Implies | When to use |
+| --- | --- | --- | --- | --- |
+| `udf` | — | `#[duckdb_scalar]` / `#[duckdb_table_function]` / `#[duckdb_aggregate]` / `#[duckdb_cast]`. | `columnar` | Register plain Rust functions as DuckDB functions. |
+| `derive` | — | `#[derive(FromRow / ToRow / DuckEnum / DuckStruct)]` plus the `transaction!` and `params!` macros. | — | Map structs/enums to rows and types; ergonomic transaction / parameter macros. |
+| `derive-diesel` | — | Makes the data derives **additionally** emit `better_duck_diesel` `FromSql` / `ToSql` impls. | `derive` | Turned on *for* you by `better-duck-diesel/derive`; rarely by hand. Core itself gains no Diesel dependency — the emitted code resolves `::better_duck_diesel` in your crate. |
 
 ## Advanced
 
-| Feature | Default | What it enables | When to use |
-| --- | --- | --- | --- |
-| `loadable-extension` | — | **Experimental.** Build for a loadable `.duckdb_extension`: links no DuckDB and routes every FFI call through the host's API table. Implies `udf`, and pairs with the `#[duckdb_entrypoint]` macro. | You're writing a DuckDB extension in Rust that is loaded into a host DuckDB rather than embedding its own. |
+| Feature | Default | What it enables | Implies | When to use |
+| --- | --- | --- | --- | --- |
+| `loadable-extension` | — | **Experimental.** Build for a loadable `.duckdb_extension`: links no DuckDB and routes every FFI call through the host's API table. Pairs with `#[duckdb_entrypoint]`. | `udf` | Writing a DuckDB extension in Rust loaded into a host DuckDB. |
 
 <Warning>
-  `loadable-extension` is experimental and changes the linking model (no DuckDB is linked in — every
-  call goes through the host's API table). Don't enable it for a normal embedded application.
+  `loadable-extension` changes the [linking model](/guide/architecture#the-loadable-extension-inversion)
+  — no DuckDB is linked in. Don't enable it for a normal embedded application.
 </Warning>
+
+## Feature implications at a glance
+
+A few features turn others on automatically. Enabling the left turns on everything to its right:
+
+| You enable | Also enabled |
+| --- | --- |
+| `polars` | `arrow` |
+| `udf` | `columnar` |
+| `derive-diesel` | `derive` |
+| `loadable-extension` | `udf` → `columnar` |
+
+## Recommended presets
+
+<Tabs>
+  <Tab title="Lean embedded">
+    ```toml
+    better-duck-core = "0.1.0-beta.8"  # defaults: chrono + decimal
+    ```
+    The smallest useful footprint — row-oriented access with `chrono`/`rust_decimal` types.
+  </Tab>
+  <Tab title="Analytics / fast reads">
+    ```toml
+    better-duck-core = { version = "0.1.0-beta.8", features = ["parquet", "columnar"] }
+    ```
+    Bundled Parquet plus zero-copy columnar reads for large results.
+  </Tab>
+  <Tab title="Async service">
+    ```toml
+    better-duck-core = { version = "0.1.0-beta.8", features = ["async", "pool"] }
+    ```
+    `AsyncConnection` + `AsyncPool` for a Tokio application.
+  </Tab>
+  <Tab title="UDFs + mapping">
+    ```toml
+    better-duck-core = { version = "0.1.0-beta.8", features = ["udf", "derive"] }
+    ```
+    Register Rust functions (`udf`, which also enables `columnar`) and map structs/enums (`derive`).
+  </Tab>
+</Tabs>
 
 ## Related
 
@@ -98,7 +153,13 @@ These compile the extension straight into the embedded static library — there 
   <Card title="Choosing an API" icon="signs-post" href="/guide/choosing-an-api">
     A decision tree for which features and crates fit your task.
   </Card>
-  <Card title="Core crate" icon="rust" href="/core/connections">
+  <Card title="Architecture" icon="sitemap" href="/guide/architecture">
+    How features flow down to the vendored DuckDB in `-sys`.
+  </Card>
+  <Card title="Type system" icon="table-cells" href="/guide/type-system">
+    How `chrono` / `decimal` / `uuid` change the read type.
+  </Card>
+  <Card title="Core crate" icon="rust" href="/core/opening-connections">
     The APIs these features unlock.
   </Card>
 </CardGroup>

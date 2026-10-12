@@ -1,0 +1,111 @@
+---
+title: "Executing SQL"
+description: "Run statements with execute_batch, execute, and insert; read affected-row counts; split multi-statement batches; and inspect the catalog without a query."
+---
+
+Every statement runs through a [`Connection`](/core/opening-connections) (`&mut self`). This page
+covers the executors; [results](/core/iterating-results) and
+[parameters](/core/positional-parameters) have their own pages.
+
+Each executor is `#[must_use]` — a returned [`DuckResult`](/core/iterating-results) carries both an
+affected-row count and a row iterator, so don't discard it.
+
+## execute_batch — fire-and-forget
+
+```rust
+conn.execute_batch(
+    "CREATE TABLE t (id INTEGER, name VARCHAR); INSERT INTO t VALUES (1, 'a')",
+)?;
+```
+
+`execute_batch(sql) -> Result<()>` runs one or more `;`-separated statements and **discards** every
+result. Ideal for DDL and simple DML. DuckDB does the statement splitting (NUL-safe, comment- and
+dollar-quote-aware) — it is not a Rust-side `split(';')`, so a semicolon inside a string literal is
+not a false split.
+
+## execute — one statement, a result
+
+```rust
+let n = conn.execute("INSERT INTO t VALUES (2, 'b')")?.changes();   // affected rows
+let result = conn.execute("SELECT id, name FROM t")?;               // iterate rows
+```
+
+`execute(sql) -> Result<DuckResult>` prepares and runs a **single** statement and returns a
+[`DuckResult`](/core/iterating-results). It works for every statement kind:
+
+| Statement | What you read |
+|---|---|
+| `SELECT` / `… RETURNING` | iterate rows (the `Iterator` impl) |
+| `INSERT` / `UPDATE` / `DELETE` | `result.changes()` — affected-row count |
+| DDL (`CREATE`, `DROP`, …) | `changes()` is `0`, no rows |
+
+For parameterized SQL use [`execute_with`](/core/positional-parameters) /
+[`execute_with_named`](/core/named-parameters).
+
+## insert — a homogeneous bind-and-run
+
+```rust
+conn.execute_batch("CREATE TABLE t (a INTEGER, b INTEGER)")?;
+conn.insert::<i32, _>("INSERT INTO t VALUES ($1, $2)", [10, 20])?;
+```
+
+`insert<T: AppendAble, I: IntoIterator<Item = T>>(sql, values) -> Result<()>` binds a
+**homogeneous** iterator as consecutive positional parameters and executes once.
+
+<Warning>
+  `insert` **errors if no rows changed** — a statement that changes nothing (e.g. a bare `SELECT`)
+  is treated as a failed insert and returns
+  `Error::DuckDBFailure(_, Some("Failed to insert values"))`. For heterogeneous binds, or when a
+  zero-change result is valid, use [`execute_with`](/core/positional-parameters) instead.
+</Warning>
+
+## Multi-statement batches you run individually
+
+`extract_statements(sql) -> Result<ExtractedStatements>` parses a `;`-separated batch (again, DuckDB
+parses — no Rust-side split) into statements you prepare and run one at a time. See
+[prepared statements](/core/prepared-statements#multi-statement-batches-extractedstatements).
+
+```rust
+let batch = conn.extract_statements("SELECT 1 AS a; SELECT 2 AS b")?;
+assert_eq!(batch.len(), 2);
+let mut second = batch.prepare(1)?;
+let row = second.execute()?.next().expect("row")?;
+```
+
+## Reading the catalog without a query
+
+`table_description(schema, table)` and `table_description_ext(catalog, schema, table)` return a
+[`TableDescription`](/core/iterating-results#tabledescription) describing a table's columns —
+names, lossless types, and `DEFAULT` flags — **without issuing a query**.
+
+```rust
+let desc = conn.table_description("main", "t")?;
+for i in 0..desc.column_count() {
+    let name = desc.column_name(i);          // Option<String>
+    let ty = desc.column_type(i);            // Option<TypeInfo>
+}
+```
+
+`table_names(sql, qualified) -> Result<Vec<String>>` reports the tables a query reads, using
+DuckDB's own parser.
+
+<Warning>
+  `table_names` requires **syntactically valid** SQL. On a parse error, DuckDB's
+  `duckdb_get_table_names` throws a C++ exception that unwinds across the FFI boundary and **aborts
+  the process** — an upstream C-API defect this wrapper cannot intercept. Only pass SQL you know
+  parses. (An interior NUL is still caught safely as [`Error::NulError`](/core/errors).)
+</Warning>
+
+## Registering a custom type name
+
+`register_logical_type(&LogicalType)` registers an aliased
+[`LogicalType`](/core/composite-types#logicaltype-and-typeinfo) in the connection's catalog so its
+alias becomes usable as a SQL type name. Set the alias with `LogicalType::set_alias` first; a type
+with no alias is rejected.
+
+## See also
+
+- [Iterating results](/core/iterating-results) — the `DuckResult` iterator and `DuckRow`.
+- [Result sets](/core/result-sets) — materialize to a thread-safe `ResultSet`.
+- [Positional parameters](/core/positional-parameters) · [Named parameters](/core/named-parameters).
+- [Transactions](/core/transactions) — group statements atomically.

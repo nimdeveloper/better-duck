@@ -1,0 +1,121 @@
+---
+title: "Async"
+description: "The Tokio async facade — AsyncConnection and AsyncDatabase — dispatching to spawn_blocking, materializing results, stepping queries incrementally, and cancel-on-drop."
+---
+
+<Info>
+  Requires `feature = "async"`. `AsyncConnection` and `AsyncDatabase` re-export at the crate root.
+</Info>
+
+The async facade wraps a [`Connection`](/core/opening-connections) so DuckDB never blocks the
+async executor: every call dispatches to `tokio::task::spawn_blocking`. Because a borrowing
+[`DuckResult`](/core/iterating-results) is not `Send`, the async methods **materialize** — they
+return an owned [`ResultSet`](/core/result-sets).
+
+```rust
+use better_duck_core::AsyncConnection;
+use better_duck_core::types::value::DuckValue;
+
+let conn = AsyncConnection::open_in_memory().await?;      // or ::open(path).await?
+conn.execute_batch("CREATE TABLE t (id INTEGER)").await?;
+let set = conn.execute("SELECT id FROM t").await?;        // ResultSet
+
+// Parameters are passed by value as Vec<DuckValue> (not &mut dyn, which isn't Send):
+let set = conn
+    .execute_with("SELECT id FROM t WHERE id = $1", vec![DuckValue::Int(2)])
+    .await?;
+```
+
+`AsyncConnection` is `Clone + Send + Sync`; clones share one connection serialized by an internal
+mutex.
+
+<Warning>
+  These methods panic if called **outside a Tokio runtime** — the same contract as
+  `tokio::task::spawn_blocking`.
+</Warning>
+
+## Methods
+
+<ParamField path="open(path).await / open_in_memory().await -> Result<AsyncConnection>">
+  Open on a blocking thread.
+</ParamField>
+<ParamField path="execute_batch(sql).await -> Result<()>">
+  Run `;`-separated statements, discarding results.
+</ParamField>
+<ParamField path="execute(sql).await -> Result<ResultSet>">
+  Run one statement, materialize the result.
+</ParamField>
+<ParamField path="execute_with(sql, Vec<DuckValue>).await -> Result<ResultSet>">
+  Positional-parameterized execute. Binds are owned `DuckValue`s so they are `Send`.
+</ParamField>
+<ParamField path="with_connection(|&mut Connection| -> Result<T>).await -> Result<T>">
+  The **primitive** every other method builds on — run anything (a transaction, a prepared
+  statement) on the blocking thread.
+</ParamField>
+<ParamField path="execute_pending(sql).await -> Result<ResultSet>">
+  Step the query one DuckDB task per dispatch, yielding to the runtime between tasks — see below.
+</ParamField>
+<ParamField path="with_appender(table, schema, |&mut Appender| …).await -> Result<T>">
+  Run a closure against a bulk-insert [`Appender`](/core/appender); the appender holds raw FFI
+  pointers, so it never leaves the closure.
+</ParamField>
+<ParamField path="new(conn) / try_into_inner()">
+  Wrap an existing `Connection`; recover it if this is the last clone (`Err(self)` otherwise).
+</ParamField>
+<ParamField path="query_control() -> QueryControl / interrupt() -> bool / progress() -> Option<QueryProgress>">
+  Mutex-free control — works *while* a query holds the connection mutex on a blocking thread.
+</ParamField>
+
+## Running a transaction
+
+A transaction must not span an `.await`. Keep the whole unit inside `with_connection`, which runs
+on one blocking dispatch:
+
+```rust
+conn.with_connection(|c| {
+    c.transaction(|c| {
+        c.execute_batch("INSERT INTO t VALUES (1)")?;
+        c.execute_batch("INSERT INTO t VALUES (2)")?;
+        Ok(())
+    })
+}).await?;
+```
+
+## execute_pending
+
+`execute_pending` is the async form of [pending execution](/core/prepared-statements#incremental-task-at-a-time-execution):
+rather than run the whole query in one blocking call, each `execute_task` runs on its own blocking
+dispatch, so a long query neither monopolizes a blocking thread nor blocks cancellation.
+
+## Cancellation (cancel-on-drop)
+
+<Note>
+  The query futures request interruption of the native query if the future is dropped. Because
+  `spawn_blocking` tasks cannot be aborted, the drop *signals* DuckDB to interrupt and lets the
+  blocking task wind down — it does not stop native work instantly. The connection becomes usable
+  again once that task releases the mutex. `query_control()` / `interrupt()` / `progress()` go
+  through a **mutex-free** control source, so they work *while* a query holds the connection mutex
+  on a blocking thread. [Generation scoping](/core/opening-connections#interrupting-a-running-query)
+  makes a late interrupt safe — a finished query's control is stale.
+</Note>
+
+## AsyncDatabase
+
+`AsyncDatabase` mirrors [`Database`](/core/sharing-a-database) for sharing one database across async
+connections:
+
+```rust
+use better_duck_core::AsyncDatabase;
+
+let db = AsyncDatabase::open_in_memory().await?;
+let conn = db.connect().await?;              // AsyncConnection
+```
+
+`from_database(db)` / `database()` bridge to and from a sync `Database`. Like `AsyncConnection`,
+these methods panic outside a Tokio runtime.
+
+## See also
+
+- [Pooling](/core/pooling) — and `AsyncPool`, which combines both features.
+- [Result sets](/core/result-sets) — what every async query returns.
+- [Transactions](/core/transactions) — the `.await`-boundary rule.

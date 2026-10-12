@@ -1,0 +1,96 @@
+---
+title: "Backends"
+description: "Choose between backend-core and backend-diesel: the DuckBackend trait both implement, how connections and migrations differ, on_connect hook timing, and when to pick each."
+---
+
+The plugin builds on exactly one backend, selected by a Cargo feature. Both expose the **identical**
+webview command API — the choice is purely about the Rust side (migrations, pooling, how
+connections are managed). Building with neither feature is a `compile_error!`.
+
+## The two backends
+
+| | `backend-core` *(default)* | `backend-diesel` |
+|---|---|---|
+| Built on | [`better-duck-core`](/core/opening-connections) | [`better-duck-diesel`](/diesel/overview) |
+| Entry point | `core::init()` / `core::Builder` | `diesel::init()` / `diesel::Builder` |
+| Migrations | inline engine, `Vec<Migration>` | Diesel `embed_migrations!` (`EmbeddedMigrations`) |
+| Connection model | registry of shared `Database` handles; a short-lived `Connection` per operation | r2d2 pool of `DuckDbConnection` per connection string |
+| Dependency weight | lighter | pulls diesel, diesel_migrations, r2d2 |
+
+Both engines implement the `DuckBackend` trait; commands are written against the trait and
+dispatched through managed state, which is why your JS never changes when you switch.
+
+## The `DuckBackend` trait
+
+Every command delegates to one trait method. The trait is the contract that keeps the two engines
+interchangeable:
+
+```rust
+pub trait DuckBackend: Send + Sync + 'static {
+    fn load(&self, conn_str: &str) -> Result<()>;
+    fn close(&self, conn_str: &str) -> Result<bool>;
+    fn select(&self, conn_str: &str, sql: &str, params: Vec<Value>) -> Result<Vec<Row>>;
+    fn execute(&self, conn_str: &str, sql: &str, params: Vec<Value>) -> Result<ExecuteResult>;
+    fn load_extension(&self, conn_str: &str, name: &str) -> Result<()>;
+    fn import(&self, conn_str: &str, table: &str, source: &str, format: DataFormat) -> Result<ExecuteResult>;
+    fn export(&self, conn_str: &str, query: &str, path: &str, format: DataFormat) -> Result<ExecuteResult>;
+    fn append_rows(&self, conn_str: &str, table: &str, rows: Vec<Map<String, Value>>) -> Result<ExecuteResult>;
+    fn list_tables(&self, conn_str: &str) -> Result<Vec<Row>>;
+    fn list_columns(&self, conn_str: &str, table: &str) -> Result<Vec<Row>>;
+    fn explain(&self, conn_str: &str, sql: &str) -> Result<Vec<Row>>;
+    fn select_stream(&self, conn_str: &str, sql: &str, params: Vec<Value>, chunk_size: usize,
+                     on_batch: &mut dyn FnMut(Vec<Row>) -> Result<()>) -> Result<u64>;
+    fn checkpoint(&self, conn_str: &str, force: bool) -> Result<()>;
+    fn checkpoint_all(&self, force: bool);
+    fn interrupt(&self, conn_str: &str) -> bool;
+    fn revert(&self, conn_str: &str) -> Result<Option<i64>>;
+    #[cfg(feature = "arrow")]
+    fn query_arrow(&self, conn_str: &str, sql: &str, params: Vec<Value>) -> Result<Vec<u8>>;
+}
+```
+
+`Row` is `serde_json::Map<String, Value>` (a JSON object); `ExecuteResult` is `{ rowsAffected }`.
+
+### Connection-string resolution
+
+Both engines resolve the webview's connection string the same way: strip a leading `duckdb:`
+prefix, then map an empty string or `:memory:` to an in-memory database, otherwise treat it as a
+filesystem path.
+
+## How the engines differ
+
+### Dynamic SQL on the Diesel backend
+
+The plugin forwards arbitrary statements plus JSON params, whose result shape is only known at
+runtime. Diesel's compile-time `QueryableByName` cannot express that, so the Diesel engine runs
+dynamic-column SQL on the pooled connection's **underlying core `Connection`** via `inner_mut()`,
+reusing the same `DuckValue` ⇄ JSON materialization as the core engine. The two backends therefore
+return byte-identical row shapes.
+
+### `on_connect` hook timing
+
+<Warning>
+  The timing of [`on_connect` hooks](/tauri/registration) differs between backends:
+
+  - **Core**: hooks run on **every checked-out connection** (each operation opens a short-lived
+    connection).
+  - **Diesel**: hooks are attached to the r2d2 manager and run **once per physical connection** —
+    r2d2 reuses connections across checkouts, and re-registering a UDF on an already-initialized
+    connection would fail.
+
+  Write hooks to be safe under their backend's timing (idempotent registration, or rely on the
+  once-per-connection diesel guarantee).
+</Warning>
+
+## Choosing
+
+- Default to **`backend-core`**: a lighter dependency tree and the inline migration engine. This is
+  what the [example app](/tauri/overview) uses.
+- Use **`backend-diesel`** when the app already uses [`better-duck-diesel`](/diesel/overview)
+  (shared schema / DSL / `embed_migrations!`) and wants a connection pool.
+
+## See also
+
+- [Checkpointing](/tauri/checkpointing) — WAL-flush strategies, identical across backends.
+- [Migrations](/tauri/migrations) — the one place the two builders' APIs differ.
+- [Async & pooling](/core/async) — the pooling model the diesel backend builds on.

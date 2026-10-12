@@ -1,0 +1,104 @@
+---
+title: "Import & Export"
+description: "Create tables from Parquet/CSV/JSON files and copy query results back out, with the DataFormat enum, the typed helper methods, and the path-scope constraints that gate file access."
+---
+
+`import` and `export` move data between DuckDB tables and columnar files. `import` creates a table
+from a data file (or glob); `export` copies a query's result to a file. Both are gated by the
+[path scope and `allow_path` policy](/tauri/scope-and-policy) because they touch the filesystem.
+
+## DataFormat
+
+Both commands take a format of `'parquet' | 'csv' | 'json'`:
+
+```ts
+type DataFormat = 'parquet' | 'csv' | 'json'
+```
+
+## import
+
+Create `table` from a data file by reading it through DuckDB's auto-reader for the format.
+
+```ts
+await db.import('sales', 'data/2026-*.parquet', 'parquet')
+```
+
+- Signature: `import(table: string, source: string, format: DataFormat): Promise<ExecuteResult>`.
+- `source` may be a path or a glob. The backend runs
+  `CREATE TABLE <table> AS SELECT * FROM <reader>(<source>)`, where the reader is:
+
+  | Format | Reader |
+  |---|---|
+  | `parquet` | `read_parquet` |
+  | `csv` | `read_csv_auto` (schema auto-detected) |
+  | `json` | `read_json_auto` (schema auto-detected) |
+
+- `ExecuteResult.rowsAffected` is the number of rows inserted.
+
+### Typed helpers
+
+```ts
+await db.importParquet('sales', 'data/2026-*.parquet')
+await db.importCsv('t', 'in.csv')
+await db.importJson('t', 'in.json')
+```
+
+These are thin wrappers that call `import` with the format fixed.
+
+## export
+
+Copy a query's result to a file.
+
+```ts
+await db.export('SELECT * FROM sales WHERE region = $1', 'out.parquet', 'parquet')
+```
+
+<Warning>
+  `export`'s `query` argument does **not** accept bound parameters — it is embedded into a
+  `COPY (<query>) TO <path> (FORMAT …)` statement. Inline literal predicates, and never
+  concatenate untrusted webview input into `query`.
+</Warning>
+
+- Signature: `export(query: string, path: string, format: DataFormat): Promise<ExecuteResult>`.
+- The backend runs `COPY (<query>) TO '<path>' (FORMAT <PARQUET|CSV|JSON>)`.
+
+### Typed helpers
+
+```ts
+await db.exportParquet('SELECT * FROM sales', 'out.parquet')
+await db.exportCsv('SELECT * FROM sales', 'out.csv')
+```
+
+(There is no `exportJson` helper; call `export(query, path, 'json')` directly.)
+
+## Safety and gotchas
+
+<Note>
+  **The `table` name is validated** as a bare SQL identifier (ASCII alphanumeric + `_`); anything
+  else is rejected with `backend error: invalid table identifier: …`. The `source`/`path` strings
+  are quoted as SQL literals, and the **path** is checked against the path scope and
+  `allow_path` policy.
+</Note>
+
+- **`import` is a write** (`CREATE TABLE`), so it is rejected under `read_only(true)`. `export` is a
+  read of the source table but still writes a file, so it is **not** blocked by `read_only` — it is
+  gated only by the path checks and the statement filter.
+- **Path scope applies to the file argument**: `import`'s `source` and `export`'s `path`. If a
+  capability declares `path` allow entries, the value must match a whole-component prefix (and `..`
+  traversal is rejected). The `allow_path` policy applies the same constraint at init time. See
+  [Scope & Policy](/tauri/scope-and-policy).
+- **Relative paths** resolve against the app's working directory. In the
+  [example app](/tauri/overview) the capability scopes both to `data/`.
+
+```json
+{
+  "identifier": "better-duck-tauri:allow-import",
+  "allow": [{ "path": "data/" }]
+}
+```
+
+## See also
+
+- [Append rows](/tauri/append-rows) — insert in-memory rows without a file.
+- [Scope & Policy](/tauri/scope-and-policy) — the path allow-list that gates both commands.
+- [Arrow & Polars](/core/arrow) — the columnar interchange underneath.

@@ -1,0 +1,99 @@
+---
+title: "Security Overview"
+description: "The webview is untrusted and DuckDB SQL can reach the filesystem and network. Understand the threat model, the two independent gates the plugin enforces, and the critical select caveat."
+---
+
+<Warning>
+  **The webview is untrusted.** Anything running in it — your own code, a dependency, injected
+  content — can call any command the capability grants. And DuckDB SQL can reach the **filesystem
+  and network** through table functions, `ATTACH`, extensions, and `COPY`. Design the plugin's
+  permissions and policy as if the webview were hostile.
+</Warning>
+
+## The threat model
+
+DuckDB is not a sandbox. A single `select` can read arbitrary files; `load_extension` can pull a
+network extension; `export` and `COPY` can write files. The plugin's job is to stand between the
+untrusted webview and that reach, and it does so with **two independent gates**, both checked
+*before* the backend touches DuckDB:
+
+<CardGroup cols={2}>
+  <Card title="Capabilities & permissions" icon="key" href="/tauri/capabilities-and-permissions">
+    *Which commands* the webview may invoke at all. Granted per-window in capability files.
+  </Card>
+  <Card title="Scope + Policy" icon="shield-halved" href="/tauri/scope-and-policy">
+    *Which values* those commands may use — connections, paths, statements, extensions. A
+    declarative per-capability scope plus a mandatory init-time Rust `Policy`.
+  </Card>
+</CardGroup>
+
+A command runs only if **both** gates pass: the capability must grant it, and the scope + policy
+must allow the specific connection string / path / statement / extension involved.
+
+## Defense in depth
+
+Neither gate alone is sufficient; they cover different axes:
+
+- **Permissions** stop a command from being callable, but say nothing about its arguments.
+- **Scope** (capability-declared) narrows connection strings and paths per window, declaratively.
+- **`Policy`** (Rust, init-time) is the mandatory floor — it applies to *every* operation
+  regardless of capabilities, and covers read-only mode, connection allow-lists, path allow-lists,
+  the risky-statement filter, and network-extension gating.
+
+## The `select` caveat — read this
+
+<Warning>
+  `select` is in the [default permission set](/tauri/capabilities-and-permissions), but DuckDB
+  `SELECT` can still reach the filesystem through table functions (`read_csv_auto`, `read_parquet`,
+  `glob`, …). The [`deny_risky_statements`](/tauri/scope-and-policy) filter only inspects the
+  **leading keyword**, so a read like `SELECT * FROM read_csv_auto('/etc/passwd')` passes it.
+</Warning>
+
+Treat `select` (and [`query_arrow`](/tauri/arrow) and [`stream`](/tauri/streaming), which also
+forward arbitrary read SQL) as **filesystem-read-capable**. For an untrusted webview, defend in
+depth:
+
+- `read_only(true)` plus an `allow_connection(…)` allow-list, and/or
+- a capability scope that pins `connection`,
+- keep `allow_network(false)` so network extensions cannot load.
+
+<Info>
+  A fully sandboxed read-only mode (disabling DuckDB external file access) is a planned follow-up.
+  Until then, the layered policy above is the recommended containment.
+</Info>
+
+## How denials surface
+
+Both gates reject before the backend runs. A policy or scope denial surfaces to the webview as the
+plugin error string `denied by policy: …`, which rejects the `invoke` promise. A capability that
+doesn't grant a command fails at the Tauri IPC layer before the plugin is even reached.
+
+## Safe-defaults checklist
+
+<Steps>
+  <Step title="Start from the read-only default">
+    Begin with `better-duck-tauri:default` (`load` + `close` + `select`); add `allow-execute` only
+    where writes are truly needed.
+  </Step>
+  <Step title="Run read-only where possible">
+    `read_only(true)` for any connection the webview only reads.
+  </Step>
+  <Step title="Pin connections">
+    `allow_connection(…)` plus a scope `connection` entry to pin which databases open.
+  </Step>
+  <Step title="Pin paths">
+    `allow_path(…)` plus a scope `path` entry for import/export directories.
+  </Step>
+  <Step title="Block risky statements">
+    `deny_risky_statements(true)` to reject `ATTACH` / `INSTALL` / `COPY` / … via `select` / `execute`.
+  </Step>
+  <Step title="Keep the network closed">
+    Leave `allow_network(false)` unless a feature genuinely needs `httpfs` / `aws` / `azure`.
+  </Step>
+</Steps>
+
+## See also
+
+- [Capabilities & permissions](/tauri/capabilities-and-permissions) — the first gate, with exact
+  identifiers.
+- [Scope & Policy](/tauri/scope-and-policy) — the second gate, in full.

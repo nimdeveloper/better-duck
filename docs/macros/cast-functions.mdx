@@ -1,0 +1,66 @@
+---
+title: "Cast Functions"
+description: "#[duckdb_cast]: a custom CAST / TRY_CAST between two types, with implicit-cost control and the VCast trait behind it."
+---
+
+<Info>Requires `feature = "udf"`. See the [UDF overview](/macros/udf-overview) for shared semantics.</Info>
+
+`#[duckdb_cast]` is applied to a one-argument `fn(source) -> target` (or `-> Result<target, E>`).
+The source and target logical types are inferred from the signature. Casts are **unnamed**, so
+there is no `name` option.
+
+```rust
+use better_duck_core::duckdb_cast;
+
+#[duckdb_cast]
+fn parse_to_int(s: &str) -> Result<i32, std::num::ParseIntError> { s.trim().parse() }
+```
+
+Register with `parse_to_int::register(&mut conn)?`. Then:
+
+```sql
+CAST('42' AS INTEGER)       -- 42
+TRY_CAST('oops' AS INTEGER) -- NULL (a per-row conversion error becomes NULL)
+CAST('oops' AS INTEGER)     -- query error (a normal CAST fails the query)
+```
+
+<Tip>
+  The same body serves both `CAST` and `TRY_CAST`. Under `TRY_CAST`, a conversion error (an `Err`
+  return) sets that output row to `NULL`; under a normal `CAST`, it fails the query with the error's
+  message.
+</Tip>
+
+## Options
+
+| Option | Meaning |
+|---|---|
+| `crate = ::path` | retarget the generated `::better_duck_core` path |
+| `implicit_cost = <int>` | the binder's implicit-cast cost: lower = preferred; **negative = explicit-only**. Defaults to `-1` (explicit `CAST` only). |
+
+A lower non-negative `implicit_cost` makes DuckDB more willing to apply the cast implicitly (without
+an explicit `CAST`). `implicit_cost` must be an integer literal (optionally negative).
+
+## The `VCast` trait
+
+The macro implements `better_duck_core::udf::VCast`:
+
+<Accordion title="VCast by hand">
+  ```rust
+  // type Shared: Send + Sync + 'static;   — registration-time shared state (use ())
+  // fn source_type() -> Result<LogicalType>;
+  // fn target_type() -> Result<LogicalType>;
+  // fn implicit_cast_cost() -> i64 { -1 }
+  // fn cast_row(shared, input: &VectorRef, output: &mut VectorMut, row: usize) -> UdfResult<()>;
+  ```
+
+  Register with `conn.register_cast_function::<C>()` or
+  `register_cast_function_with_state::<C>(shared)`. The same `cast_row` body serves `CAST` (a
+  conversion error fails the query) and `TRY_CAST` (a conversion error yields `NULL` for that row).
+  Work over [`VectorRef`](/core/vectors) / [`VectorMut`](/core/vectors).
+</Accordion>
+
+## See also
+
+- [UDF overview](/macros/udf-overview) — shared semantics and the panic caveat.
+- [Composite types](/core/composite-types#logicaltype-and-typeinfo) — `LogicalType` for a
+  hand-written cast.

@@ -1,0 +1,99 @@
+---
+title: "Installation"
+description: "Add the Rust plugin crate with the right backend feature, pin the pre-release version, and install the @better-duck/tauri JS package."
+---
+
+Setting up the plugin has two halves: the Rust crate on the Tauri (backend) side, and the
+`@better-duck/tauri` npm package on the frontend. They are versioned together.
+
+## Rust crate
+
+Add `better-duck-tauri` to your app's `src-tauri/Cargo.toml` and pick **exactly one** backend
+feature.
+
+<CodeGroup>
+```toml backend-core (default)
+[dependencies]
+better-duck-tauri = { version = "0.1.0-beta.8", features = ["backend-core"] }
+```
+
+```toml backend-diesel
+[dependencies]
+better-duck-tauri = { version = "0.1.0-beta.8", default-features = false, features = ["backend-diesel"] }
+```
+
+```toml with Arrow IPC
+[dependencies]
+better-duck-tauri = { version = "0.1.0-beta.8", features = ["backend-core", "arrow"] }
+```
+</CodeGroup>
+
+<Warning>
+  **Pin the exact pre-release version.** Cargo's default version requirement excludes `-beta.N`
+  pre-releases, so `"0.1"` will not resolve to `0.1.0-beta.8`. Write the full version string.
+</Warning>
+
+### Feature flags
+
+| Feature | Default | Pulls in | Effect |
+|---|---|---|---|
+| `backend-core` | yes | `better-duck-core` | Inline migration engine; `core::init()` / `core::Builder`. |
+| `backend-diesel` | no | `better-duck-diesel`, `diesel`, `diesel_migrations`, `r2d2` | r2d2 pool + Diesel `embed_migrations!`; `diesel::init()` / `diesel::Builder`. |
+| `arrow` | no | `arrow` (arrow-rs), `better-duck-core/arrow` | Adds the `query_arrow` command returning Arrow IPC bytes. |
+
+<Note>
+  A backend feature is **mandatory**. Building with neither `backend-core` nor `backend-diesel`
+  triggers a `compile_error!`:
+
+  ```text
+  better-duck-tauri needs a backend feature: `backend-core` (default) or `backend-diesel`
+  ```
+
+  Because `backend-core` is a default feature, selecting `backend-diesel` on its own means also
+  setting `default-features = false` as shown above (otherwise both backends compile in; the diesel
+  entry points simply shadow the choice — keep the dependency tree lean by disabling the default).
+</Note>
+
+When should you choose each backend? See [Backends](/tauri/backends) for the full comparison, and
+[Feature flags](/guide/feature-flags) for how these line up with the rest of the workspace.
+
+## JS/TS package
+
+The frontend package is published as `@better-duck/tauri`. It peer-depends on `@tauri-apps/api ^2`.
+
+```bash
+npm install @better-duck/tauri
+# yarn add @better-duck/tauri
+# pnpm add @better-duck/tauri
+```
+
+The default export is the [`Database`](/tauri/frontend-overview) class:
+
+```ts
+import Database from '@better-duck/tauri'
+```
+
+The package is a thin wrapper over `invoke('plugin:better-duck-tauri|<command>', …)` and ships its
+own TypeScript types (`ExecuteResult`, `DataFormat`), so no `@types` package is needed.
+
+## Build-time wiring
+
+Two things must be in place for the plugin's permissions to work; both are standard Tauri plugin
+mechanics covered in [Registration](/tauri/registration):
+
+<Steps>
+  <Step title="A build script that runs tauri-build">
+    Your app's `src-tauri/build.rs` must call `tauri_build::build();` so the capability and
+    permission files resolve at compile time.
+  </Step>
+  <Step title="A capability file granting commands">
+    Add a `src-tauri/capabilities/*.json` capability that lists the `better-duck-tauri:*`
+    permissions the webview may use — see [Capabilities & permissions](/tauri/capabilities-and-permissions).
+  </Step>
+</Steps>
+
+## See also
+
+- [Registration](/tauri/registration) — register the plugin and configure the builder.
+- [Capabilities & permissions](/tauri/capabilities-and-permissions) — grant command access.
+- [Backends](/tauri/backends) — `backend-core` vs `backend-diesel`.

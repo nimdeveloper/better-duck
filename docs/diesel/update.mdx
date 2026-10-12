@@ -1,0 +1,101 @@
+---
+title: "Update"
+description: "Update DuckDB rows through Diesel: diesel::update with a filtered target, setting single or multiple columns, updating from an AsChangeset struct, and returning changed values."
+---
+
+Modifying rows with `diesel::update`. Portable Diesel on the DuckDB backend.
+
+## Updating columns
+
+`diesel::update(target).set(...)` where `target` is a filtered table. Set one column, or a tuple of
+columns:
+
+```rust
+use diesel::prelude::*;
+
+// single column
+diesel::update(products::table.filter(products::id.eq(1)))
+    .set(products::price.eq(11.99))
+    .execute(&mut conn)?;
+
+// several columns
+diesel::update(products::table.filter(products::id.eq(1)))
+    .set((products::name.eq("widget-mk2"), products::price.eq(12.5)))
+    .execute(&mut conn)?;
+```
+
+`.execute` returns the number of rows changed.
+
+<Warning>
+`diesel::update(products::table)` with **no `.filter`** updates **every row**. Always scope the target
+with `.filter(...)` unless a table-wide update is truly intended.
+</Warning>
+
+## Expressions in SET
+
+The right-hand side can reference columns and DuckDB scalar functions, not just literals:
+
+```rust
+use better_duck_diesel::dsl::*;
+
+diesel::update(products::table.filter(products::id.eq(1)))
+    .set(products::name.eq(upper(products::name)))  // UPDATE … SET name = upper(name)
+    .execute(&mut conn)?;
+```
+
+See the [DSL overview](/diesel/dsl-overview) for the function library.
+
+## Updating from a struct
+
+A `#[derive(AsChangeset)]` struct turns into the `SET` clause. `Option` fields that are `None` are
+**omitted** from the clause — a convenient partial-update pattern:
+
+```rust
+#[derive(AsChangeset)]
+#[diesel(table_name = products)]
+struct ProductPatch<'a> {
+    name: Option<&'a str>,   // None -> not touched
+    price: Option<f64>,
+}
+
+diesel::update(products::table.filter(products::id.eq(1)))
+    .set(&ProductPatch { name: None, price: Some(19.99) })  // only price is updated
+    .execute(&mut conn)?;
+```
+
+See [Schema](/diesel/schema#mapping-rows-to-structs) for deriving `AsChangeset`.
+
+<Note>
+To treat a `None` as "set this column to NULL" rather than "leave it alone", add
+`#[diesel(treat_none_as_null = true)]` to the `AsChangeset` struct — this is Diesel's own attribute.
+</Note>
+
+## Returning updated values
+
+Chain `.returning(...)` with `get_result`/`get_results` to read columns back after the update:
+
+```rust
+let new_price: f64 = diesel::update(products::table.filter(products::id.eq(1)))
+    .set(products::price.eq(11.99))
+    .returning(products::price)
+    .get_result(&mut conn)?;
+```
+
+See [RETURNING](/diesel/returning).
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Delete" href="/diesel/delete">
+    Remove rows.
+  </Card>
+  <Card title="Upsert" href="/diesel/upsert">
+    Insert-or-update in one statement.
+  </Card>
+  <Card title="RETURNING" href="/diesel/returning">
+    Read values back from an update.
+  </Card>
+  <Card title="DSL overview" href="/diesel/dsl-overview">
+    Functions usable in a SET expression.
+  </Card>
+</CardGroup>

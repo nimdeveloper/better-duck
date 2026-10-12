@@ -1,0 +1,122 @@
+---
+title: "Extensions"
+description: "Two ways DuckDB extensions reach a connection — bundled at build time (json, parquet, icu) with no runtime install, or loaded at runtime (spatial and more) through the extension API."
+---
+
+DuckDB's functionality is extended by first-party extensions: JSON, Parquet, ICU (timezones and
+collations), spatial, and more. With better-duck an extension reaches a connection in one of **two**
+ways, and which one you pick is the central decision of this page.
+
+| | Bundled at build time | Loaded at runtime |
+|---|---|---|
+| How | A [Cargo feature](/guide/feature-flags) compiles it into the static lib | `INSTALL` / `LOAD` through the [extension API](/core/errors) |
+| Runtime `INSTALL`/`LOAD`? | **No** | **Yes** |
+| Needs network / filesystem? | No (offline-ready) | Yes, on first install |
+| Build cost | Recompiles a DuckDB variant (slower build) | None |
+| Covers | `json`, `parquet`, `icu` | `spatial` and any other DuckDB extension |
+
+## Bundled at build time
+
+The core features `json`, `parquet`, and `icu` compile that extension **into the embedded static
+library** (forwarded to [`better-duck-sys`](/guide/architecture#how-features-flow-down-to-the-sys-crate)). The
+extension is then available with **no runtime `INSTALL` / `LOAD`** — the right choice for offline and
+embedded builds (Tauri, iOS) where downloading an extension at runtime isn't an option.
+
+```toml
+[dependencies]
+better-duck-core = { version = "0.1.0-beta.8", features = ["json", "parquet"] }
+```
+
+```rust
+// With feature = "json", the JSON type and json_* functions work out of the box — no LOAD:
+let row = conn
+    .execute(r#"SELECT json_extract('{"a":1,"b":[2,3]}', '$.a')::INTEGER AS a"#)?
+    .next()
+    .expect("row")?;
+assert_eq!(row.get("a"), Some(&better_duck_core::types::value::DuckValue::Int(1)));
+```
+
+| Feature | Bundles | Notes |
+|---|---|---|
+| `json` | DuckDB's JSON extension | The `JSON` type and `json_*` functions, available offline. |
+| `parquet` | DuckDB's Parquet extension | `read_parquet(...)`, `COPY … TO '…' (FORMAT PARQUET)`. |
+| `icu` | DuckDB's ICU extension | Full timezone and collation support. **Requires a DuckDB archive re-vendored with ICU sources.** |
+
+<Tip>
+  Bundling an extension recompiles a DuckDB variant, so builds that enable `json` / `parquet` / `icu`
+  take noticeably longer than a plain build. See [Installation](/guide/installation) for build-time
+  guidance.
+</Tip>
+
+## Loaded at runtime
+
+Extensions without a bundling feature — most notably **spatial** — load at runtime. The
+[`Connection`](/core/opening-connections) extension methods drive `INSTALL` / `LOAD` and read
+`duckdb_extensions()`, so your code can **check for and force-load** an extension up front rather
+than failing later with an opaque SQL error.
+
+```rust
+conn.ensure_extension("spatial")?;                 // no-op if loaded; else LOAD; else INSTALL + LOAD
+let loaded: bool = conn.is_extension_loaded("spatial")?;
+
+// lower-level, if you want the steps explicitly:
+conn.install_extension("spatial")?;                // INSTALL (downloads if absent)
+conn.load_extension("spatial")?;                   // LOAD into this connection
+```
+
+- `ensure_extension(name)` — a no-op if already loaded, otherwise `LOAD`, otherwise `INSTALL` + `LOAD`.
+- `install_extension(name)` → `INSTALL name`.
+- `load_extension(name)` → `LOAD name`.
+- `is_extension_loaded(name) -> Result<bool>` — queries `duckdb_extensions()`; an unknown extension
+  reports `false` (no row), not an error.
+
+<Note>
+  Extension names must be bare identifiers (`[A-Za-z0-9_]+`); anything else is rejected up front, so
+  the name can be embedded in SQL safely.
+</Note>
+
+<Warning>
+  Runtime loading needs network / filesystem access and the `enable_external_access`
+  [`Config`](/core/opening-connections#config) flag (default **on**). In a locked-down or offline deployment,
+  **bundle** the extensions you need instead.
+</Warning>
+
+### Spatial through the Diesel backend
+
+If you use the [Diesel backend](/diesel/overview), its `spatial` feature gates a module whose
+`ensure_loaded` wraps the runtime load for the `ST_*` DSL functions. The feature carries no extra
+Rust dependencies — the `ST_*` functions are plain SQL and `ensure_loaded` installs/loads at runtime
+(so it needs network access unless the extension is already present). See the
+[Diesel SQL DSL](/diesel/dsl-overview).
+
+## Pointing in-memory data at SQL
+
+Not an "extension" in the DuckDB sense, but worth knowing alongside them: the
+[`arrow`](/core/arrow) and [`polars`](/core/arrow) features let you register
+in-memory Arrow streams and Polars `DataFrame`s as queryable sources via
+[replacement scans](/guide/sql-dialect#replacement-scans) — no extension and no copy into a table.
+
+## Writing your own extension
+
+Writing a loadable `.duckdb_extension` **in Rust** uses the experimental
+[`loadable-extension`](/guide/feature-flags) feature and the
+[`#[duckdb_entrypoint]`](/macros/udf-overview) macro. This is distinct from *using* the extensions above:
+it changes the whole [linking model](/guide/architecture#the-loadable-extension-inversion) (no DuckDB
+is linked in; every call routes through the host's API table) and is not for a normal embedded app.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Errors & Extensions" icon="plug" href="/core/errors">
+    The full extension-management API reference.
+  </Card>
+  <Card title="Feature flags" icon="toggle-on" href="/guide/feature-flags">
+    `json`, `parquet`, `icu`, and every other core feature.
+  </Card>
+  <Card title="SQL dialect & statements" icon="code" href="/guide/sql-dialect">
+    The dialect those extensions plug into.
+  </Card>
+  <Card title="Arrow & Polars interop" icon="arrows-left-right" href="/core/arrow">
+    Register in-memory data as a queryable source.
+  </Card>
+</CardGroup>

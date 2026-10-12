@@ -1,0 +1,70 @@
+---
+title: "Spatial (ST_* Functions)"
+description: "DuckDB spatial GEOMETRY functions as typed Diesel DSL under feature = spatial: ensure_loaded to install/load the extension, and ST_Point/ST_GeomFromText/ST_AsText/ST_Distance/ST_Area over WKB-encoded geometry."
+---
+
+With `feature = "spatial"`, the crate exposes DuckDB's spatial `ST_*` functions as typed Diesel DSL.
+Unlike the rest of the DSL, these are **not** in the `dsl::*` prelude — import them from
+`better_duck_diesel::spatial::*`. GEOMETRY values travel as WKB, so geometry arguments and results are
+typed `Binary`.
+
+```rust
+use better_duck_diesel::spatial::{ensure_loaded, st_point, st_as_text, st_distance};
+use diesel::prelude::*;
+
+ensure_loaded(&mut conn)?; // INSTALL + LOAD the spatial extension on demand
+let wkt: String = diesel::select(st_as_text(st_point(1.0, 2.0))).get_result(&mut conn)?; // "POINT (1 2)"
+```
+
+## Loading the extension
+
+`ensure_loaded(conn)` installs and loads DuckDB's spatial extension at runtime. Call it once per
+connection before using any `ST_*` function.
+
+<Warning>
+`ensure_loaded` returns `Err` when the extension cannot be made available — most often **offline**,
+because the install step needs network access unless the extension is already present. Handle the error
+gracefully (the crate's own spatial tests *skip* rather than fail in that case). In a pool, run it from
+the [`on_connect` hook](/diesel/pooling#per-connection-setup-with-on_connect) so every connection is
+ready.
+</Warning>
+
+## Functions
+
+| Function | Signature | Returns |
+|---|---|---|
+| `st_point(x, y)` | `Double, Double` | `Binary` (geometry/WKB) |
+| `st_geom_from_text(wkt)` | `Text` | `Binary` |
+| `st_as_text(geom)` | `Binary` | `Text` |
+| `st_distance(a, b)` | `Binary, Binary` | `Double` |
+| `st_area(geom)` | `Binary` | `Double` |
+
+```rust
+use better_duck_diesel::spatial::{st_geom_from_text, st_area};
+
+let a: f64 = diesel::select(
+    st_area(st_geom_from_text("POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))"))
+).get_result(&mut conn)?; // 1.0
+```
+
+<Note>
+`feature = "spatial"` carries **no** extra Rust dependencies — it only gates this module. The `ST_*`
+functions are plain SQL and the geometry round-trips as WKB `Binary`.
+</Note>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Feature flags" href="/diesel/overview#feature-flags">
+    What `spatial` enables.
+  </Card>
+  <Card title="Pooling" href="/diesel/pooling">
+    `ensure_loaded` per pooled connection.
+  </Card>
+  <Card title="Extensions (core)" href="/core/errors">
+    Loading DuckDB extensions at the driver level.
+  </Card>
+  <Card title="DSL overview" href="/diesel/dsl-overview">
+    The non-spatial DSL.
+  </Card>
+</CardGroup>

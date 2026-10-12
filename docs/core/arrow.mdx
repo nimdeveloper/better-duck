@@ -1,0 +1,75 @@
+---
+title: "Arrow Interop"
+description: "Export query results via the Arrow C Data Interface with zero added dependencies, and register a caller-owned Arrow stream as a queryable DuckDB view."
+---
+
+<Info>
+  Requires `feature = "arrow"`. **No Arrow library is pulled in** — the crate defines the C Data
+  Interface ABI structs directly, so a consumer with `arrow-rs` reinterprets the handles.
+</Info>
+
+The `arrow` feature bridges DuckDB results to the Arrow ecosystem through the **Arrow C Data
+Interface**, keeping the dependency surface minimal.
+
+## Exporting a result
+
+```rust
+let arrow = conn.query_arrow("SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4", &mut [])?;
+let cols = arrow.schema().n_children();     // 2 columns
+let rows = arrow.row_count();               // 2 rows
+```
+
+`query_arrow(sql, binds) -> Result<ArrowResult>` runs SQL and exports the result. `binds` is the
+same `&mut [&mut dyn AppendAble]` as [`execute_with`](/core/positional-parameters).
+
+### ArrowResult
+
+| Method | Returns |
+|---|---|
+| `schema()` | `&ArrowSchemaHandle` — the Arrow schema |
+| `arrays()` | `&[ArrowArrayHandle]` — one array per data chunk |
+| `row_count()` | `i64` — total rows across all chunks |
+| `into_parts()` | `(ArrowSchemaHandle, Vec<ArrowArrayHandle>, Vec<DataChunk>)` |
+
+<Warning>
+  `into_parts` returns the source [`DataChunk`](/core/data-chunks)s too: keep them alive until the
+  arrays have been consumed/released, since an array may reference chunk-owned data.
+</Warning>
+
+### Handing the data to arrow-rs
+
+Both handle types expose pointers whose layout is identical to arrow-rs's FFI structs:
+
+- `ArrowSchemaHandle`: `n_children()`, `as_ptr()` / `as_mut_ptr()` (reinterpret as
+  `FFI_ArrowSchema`), and `unsafe export_to(dest)` to move the schema into a caller allocation
+  (transferring the `release` responsibility).
+- `ArrowArrayHandle`: `len()` / `is_empty()`, `as_ptr()` / `as_mut_ptr()` (as `FFI_ArrowArray`),
+  and `unsafe export_to(dest)`.
+
+Handles call their `release` callback on drop, so a plain read via `as_ptr` leaves ownership with
+the handle; use `export_to` only when the consumer takes ownership.
+
+## Registering an Arrow stream as a view
+
+```rust
+// SAFETY: `stream` outlives the returned ArrowView and is not touched meanwhile.
+let view = unsafe { conn.register_arrow("my_view", stream_ptr)? };
+conn.execute_batch("CREATE TABLE t AS SELECT * FROM my_view")?;
+drop(view);                                 // view dropped → DuckDB view removed
+```
+
+`unsafe register_arrow(view_name, stream: *mut c_void) -> Result<ArrowView>` registers a
+caller-owned `ArrowArrayStream` pointer as a queryable DuckDB view and returns an `ArrowView` guard
+that drops the view when it falls out of scope. A consumer with `arrow-rs` exports a
+`RecordBatchReader` to an `FFI_ArrowArrayStream` and passes its address.
+
+<Warning>
+  **Safety contract:** the stream must stay valid and untouched until the returned `ArrowView`
+  guard drops. DuckDB takes over reading (and eventually releasing) it.
+</Warning>
+
+## See also
+
+- [Polars interop](/core/polars) — a higher-level `DataFrame` bridge over the same interface.
+- [Positional parameters](/core/positional-parameters) — the `binds` argument.
+- [Feature flags](/guide/feature-flags) — `arrow` and `polars`.

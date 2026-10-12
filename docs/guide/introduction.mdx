@@ -53,6 +53,11 @@ ORM, `better-duck-diesel`); the rest are pulled in automatically or used only in
   "the core crate" means `better-duck-core`.
 </Note>
 
+<Tip>
+  For the full crate map, the FFI safety model, and how DuckDB is compiled and bundled, see
+  [Architecture](/guide/architecture).
+</Tip>
+
 ## Supported platforms
 
 | Platform | Status |
@@ -65,7 +70,9 @@ ORM, `better-duck-diesel`); the rest are pulled in automatically or used only in
 | iOS Simulator x86_64 | CI cross-build |
 
 The minimum supported Rust version (**MSRV**) is **1.96**. better-duck is licensed under either
-**MIT** or **Apache-2.0**, at your option.
+**MIT** or **Apache-2.0**, at your option. See
+[Versioning & compatibility](/guide/versioning-and-compatibility) for the beta policy and upgrade
+guidance.
 
 ## Where to next
 
@@ -76,20 +83,20 @@ The minimum supported Rust version (**MSRV**) is **1.96**. better-duck is licens
   <Card title="Quickstart" icon="rocket" href="/guide/quickstart">
     Open a connection, create a table, insert data, and read rows end-to-end.
   </Card>
+  <Card title="Architecture" icon="sitemap" href="/guide/architecture">
+    The crate family, the FFI safety model, and bundled DuckDB.
+  </Card>
   <Card title="Feature flags" icon="toggle-on" href="/guide/feature-flags">
     Every Cargo feature of `better-duck-core` and when to enable it.
   </Card>
   <Card title="Choosing an API" icon="signs-post" href="/guide/choosing-an-api">
     Core vs the Diesel backend vs the Tauri plugin, with a feature-flag decision tree.
   </Card>
-  <Card title="Core crate" icon="rust" href="/core/connections">
+  <Card title="Core crate" icon="rust" href="/core/opening-connections">
     The driver API: connections, queries, values, appender, pooling, async.
   </Card>
-  <Card title="Diesel backend" icon="layer-group" href="/diesel/setup-and-crud">
+  <Card title="Diesel backend" icon="layer-group" href="/diesel/installation-and-setup">
     The Diesel 2.3 ORM backend for DuckDB.
-  </Card>
-  <Card title="Tauri plugin" icon="window" href="/tauri/overview">
-    Embedded DuckDB inside a Tauri v2 webview.
   </Card>
   <Card title="DuckDB essentials" icon="database" href="/guide/duckdb-essentials">
     The dialect, type system, extensions, and engine behavior through the driver.

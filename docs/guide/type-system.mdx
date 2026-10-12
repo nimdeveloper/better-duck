@@ -1,0 +1,168 @@
+---
+title: "Type System"
+description: "How DuckDB's full type system maps to driver values: every DuckValue variant and its Rust type, NULL and validity, the lossless TypeInfo descriptor, and which features change the read type."
+---
+
+DuckDB has a rich type system — every integer width, exact `DECIMAL`, `UUID`, `BIT`, `BIGNUM`,
+temporals, and the composite `LIST` / `ARRAY` / `STRUCT` / `MAP` / `UNION` / `ENUM` types.
+better-duck covers all of it behind one Rust enum, `DuckValue`. This page is the complete mapping,
+how `NULL` is represented, and how a few [feature flags](/guide/feature-flags) change which Rust type
+you read.
+
+Values arrive as `better_duck_core::types::value::DuckValue`. Bind values implement `AppendAble`
+(see [parameters](/guide/sql-dialect#parameters-positional-and-named)); the two are the read and
+write sides of the same type coverage.
+
+## The complete `DuckValue` mapping
+
+<Info>
+  `DuckValue` is `#[non_exhaustive]` — always include a `_` arm when you match on it, so your code
+  keeps compiling as new variants are added. It is `Clone + PartialEq + Eq + Hash` (floats
+  canonicalized, maps hashed order-independently), so a `DuckValue` works as a `HashMap` key.
+</Info>
+
+| DuckDB type | `DuckValue` variant | Inner Rust type |
+|---|---|---|
+| `NULL` | `Null` | — |
+| `BOOLEAN` | `Boolean` | `bool` |
+| `TINYINT` / `SMALLINT` / `INTEGER` / `BIGINT` | `TinyInt` / `SmallInt` / `Int` / `BigInt` | `i8` / `i16` / `i32` / `i64` |
+| `HUGEINT` | `HugeInt` | `i128` |
+| `UTINYINT` / `USMALLINT` / `UINTEGER` / `UBIGINT` | `UTinyInt` / `USmallInt` / `UInt` / `UBigInt` | `u8` / `u16` / `u32` / `u64` |
+| `UHUGEINT` | `UHugeInt` | `u128` |
+| `FLOAT` / `DOUBLE` | `Float` / `Double` | `f32` / `f64` |
+| `DECIMAL(w,s)` | `Decimal` | `rust_decimal::Decimal` *(feature `decimal`)* / native `DuckDecimal` |
+| `VARCHAR` | `Text` | `String` |
+| `BLOB` *(and `GEOMETRY` WKB)* | `Blob` | `types::blob::Blob` (wraps `Vec<u8>`) |
+| `BIT` | `Bit` | `types::bit::DuckBit` |
+| `BIGNUM` | `Bignum` | `types::bignum::DuckBignum` |
+| `UUID` | `Uuid` | `uuid::Uuid` *(feature `uuid`)* / native `DuckUuid` |
+| `DATE` | `Date` | `chrono::NaiveDate` *(chrono)* / `DuckDate` |
+| `TIME` | `Time` | `chrono::NaiveTime` *(chrono)* / `DuckTime` |
+| `TIME_NS` | `TimeNs` | `chrono::NaiveTime` *(chrono)* / `DuckTimeNs` |
+| `TIME_TZ` | `TimeTz` | `date_chrono::TimeTz` *(chrono)* / `date_native::DuckTimeTz` |
+| `TIMESTAMP` | `Timestamp` | `chrono::NaiveDateTime` *(chrono)* / `std::time::SystemTime` |
+| `TIMESTAMP_S` / `_MS` / `_NS` | `TimestampS` / `TimestampMs` / `TimestampNs` | as `Timestamp` |
+| `TIMESTAMPTZ` | `TimestampTz` | `chrono::DateTime<Utc>` *(chrono)* / `SystemTime` |
+| `INTERVAL` | `Interval` | `chrono::Duration` *(chrono)* / `std::time::Duration` |
+| `DATE`/`TIMESTAMP` ±infinity | `TemporalInfinity { kind, sign }` | feature-independent sentinel |
+| `LIST` | `List` | `Vec<DuckValue>` |
+| `ARRAY` | `Array` | `Box<[DuckValue]>` |
+| `STRUCT` | `Struct` | `HashMap<String, DuckValue>` |
+| `MAP` | `Map` | `HashMap<DuckValue, DuckValue>` |
+| `UNION` | `Union` | `types::duck_union::DuckUnion` |
+| `ENUM` | `Enum` | `types::duck_enum::DuckEnum` (dictionary + index) |
+
+```rust
+use better_duck_core::types::value::DuckValue;
+
+let mut result = conn.execute("SELECT id, label FROM events")?;
+let row = result.next().unwrap()?;
+match row.get("label") {
+    Some(DuckValue::Text(s)) => println!("label = {s}"),
+    Some(DuckValue::Null)    => println!("label is NULL"),
+    _ => {}   // required: DuckValue is #[non_exhaustive]
+}
+```
+
+<Info>
+  A column type that read-support does not yet decode surfaces as a `DuckDBConversionError` rather
+  than panicking. As of `0.1.0-beta.8` the DuckDB C API exposes no value accessor for `GEOMETRY`,
+  `VARIANT`, `ANY`, or `INTEGER_LITERAL`, so those are not yet readable as typed values — but
+  `GEOMETRY` physically arrives as its **WKB `Blob`**, which you can decode with a geometry library on
+  the Rust side or convert in SQL.
+</Info>
+
+<Note>
+  **Two beta write-path limitations to know.** Multi-arm `UNION` **writes** currently build a
+  single-member union (reads are unaffected), and a `DECIMAL`'s declared width/scale is read into the
+  value but not yet carried back on write. See
+  [Versioning & compatibility](/guide/versioning-and-compatibility#capabilities-and-known-limitations).
+</Note>
+
+## NULL and validity
+
+`NULL` is first-class, not a sentinel:
+
+- A missing value reads back as `DuckValue::Null`.
+- In [columnar access](/core/columnar-overview) a column carries a **validity bitmask** — packed `u64` words
+  where bit `r % 64` of word `r / 64` set means row `r` is valid. DuckDB elides the mask entirely for
+  a column with no NULLs, so `validity()` returns `None` in that case.
+- `TRY_CAST` and `Option<T>` parameters / returns propagate `NULL` explicitly, so you can round-trip
+  missing data without magic values.
+
+<Warning>
+  In columnar reads, `VectorRef::as_slice` does **not** mask NULL rows — the slice contains whatever
+  bytes back the NULL cell. Pair `as_slice` with `validity()` / `is_null(row)` whenever NULLs are
+  possible. See [columnar access](/core/columnar-overview).
+</Warning>
+
+## Feature flags that change the read type
+
+Two decisions change which Rust type a temporal / numeric column decodes to. They are **read-type**
+choices — the SQL and the `DuckValue` variant are unchanged, only the inner Rust type differs.
+
+| Feature | Default | Affects | On → read type | Off → read type |
+|---|---|---|---|---|
+| `chrono` | ✓ | `DATE` / `TIME` / `TIMESTAMP[TZ]` / `INTERVAL` | `chrono` types | native `DuckDate` / `DuckTime` / `SystemTime` / `std::time::Duration` |
+| `decimal` | ✓ | `DECIMAL(w,s)` | `rust_decimal::Decimal` | native `DuckDecimal` (width + scale preserved) |
+| `uuid` | — | `UUID` | `uuid::Uuid` | native `DuckUuid` |
+
+<Note>
+  `chrono` and the native date/time path are **mutually exclusive for the read type** — only one set
+  of `DuckValue` temporal conversions compiles at a time. The separate [`time`](/guide/feature-flags)
+  feature is an independent **bind/append** path (`time`-crate `Date`, `Time`, `OffsetDateTime`, …)
+  that coexists with either read type. See [feature flags](/guide/feature-flags).
+</Note>
+
+## Inspecting types without reading values
+
+Two APIs let you learn a column's real type — including the detail a coarse type id loses — without
+decoding any rows:
+
+- **`TypeInfo`** (`better_duck_core::types::TypeInfo`) is the **lossless** type descriptor:
+  `TypeInfo::Decimal { width, scale }`, `TypeInfo::List(..)`, `TypeInfo::Scalar(id)`, nested
+  `LIST` / `STRUCT` / `MAP` shapes, and `ENUM` dictionaries all survive. On a result, read it with
+  `column_logical_type(idx)` or `column_schema()`. The coarser `column_type(idx)` returns just the
+  DuckDB type id.
+- **`TableDescription`** (`better_duck_core::TableDescription`) reads a catalog table's column names,
+  types, and `DEFAULT` flags **without issuing a query**:
+
+```rust
+let desc = conn.table_description("main", "events")?;   // (schema, table)
+for i in 0..desc.column_count() {
+    let name = desc.column_name(i);                      // Option<String>
+    let ty   = desc.column_type(i);                      // Option<TypeInfo> (lossless)
+    let has_default = desc.column_has_default(i)?;       // Err on a bad index
+}
+```
+
+See [Queries, Results & Values](/core/iterating-results) for the full metadata surface.
+
+## Mapping Rust types to DuckDB
+
+With the [`derive`](/guide/feature-flags) feature, map your own types instead of matching `DuckValue`
+by hand:
+
+- `#[derive(FromRow)]` / `#[derive(ToRow)]` — read a struct from a row / write a struct as a row or
+  parameters.
+- `#[derive(DuckStruct)]` — a Rust struct ↔ a DuckDB `STRUCT`.
+- `#[derive(DuckEnum)]` — a Rust unit enum ↔ a DuckDB `ENUM` (by label).
+
+See [data derives](/macros/derives-overview) for the full attribute set.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="SQL dialect & statements" icon="code" href="/guide/sql-dialect">
+    Parameter binding and what each statement returns.
+  </Card>
+  <Card title="Queries, Results & Values" icon="table" href="/core/iterating-results">
+    The `DuckValue` type and result metadata in depth.
+  </Card>
+  <Card title="Columnar access" icon="layer-group" href="/core/columnar-overview">
+    Zero-copy column reads and the validity bitmask.
+  </Card>
+  <Card title="Data derives" icon="wand-magic-sparkles" href="/macros/derives-overview">
+    Map Rust structs and enums to rows and types.
+  </Card>
+</CardGroup>

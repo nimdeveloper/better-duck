@@ -1,0 +1,156 @@
+---
+title: "Iterating Results"
+description: "Drive a DuckResult as a lazy row iterator, read DuckRow values, peek and count rows, replay with rewind, and inspect result and column metadata."
+---
+
+`execute` returns a `better_duck_core::DuckResult` — it owns the DuckDB result handle, is a lazy
+`Iterator<Item = Result<DuckRow>>`, and carries the result's metadata. Rows come out as
+`better_duck_core::DuckRow`.
+
+## Iterating
+
+Plain forward iteration decodes each row once and caches nothing:
+
+```rust
+for row in conn.execute("SELECT id, name FROM t ORDER BY id")? {
+    let row = row?;                     // Result<DuckRow>
+    // ... use row ...
+}
+
+// Or drive it manually:
+let mut result = conn.execute("SELECT id FROM t")?;
+while let Some(row) = result.next() {
+    let row = row?;
+}
+```
+
+## Row-oriented helpers
+
+<ParamField path="next() -> Option<Result<DuckRow>>">
+  The `Iterator` method — pulls and decodes the next row.
+</ParamField>
+<ParamField path="current() -> Result<DuckRow>">
+  Re-reads the row at the current cursor position.
+</ParamField>
+<ParamField path="exists() -> Result<bool>">
+  Peeks whether at least one more row exists **without consuming it** — a later `next()` still
+  yields that row. Idempotent.
+</ParamField>
+<ParamField path="count() -> usize">
+  Consumes the result and tallies remaining rows **without** materializing each `DuckRow` (skips
+  per-column conversion). Spans internal chunks correctly.
+</ParamField>
+<ParamField path="materialize() -> Result<ResultSet>">
+  Consumes the result into an owned, thread-safe [`ResultSet`](/core/result-sets).
+</ParamField>
+
+### Replaying with rewind
+
+Rewind is **opt-in** because the default path never clones rows:
+
+```rust
+let mut result = conn.execute("SELECT id FROM t")?;
+result.enable_rewind();                 // call BEFORE consuming the rows you want to replay
+let first_pass: Vec<_> = result.by_ref().collect::<better_duck_core::error::Result<_>>()?;
+result.rewind();                        // replay from the start
+```
+
+`enable_rewind()` makes every row pulled from that point on clone into a cache; `rewind()` then
+replays it. Rows consumed **before** `enable_rewind()` cannot be recovered, and without
+`enable_rewind()` a `rewind()` is a no-op.
+
+<Warning>
+  **Row vs chunk — do not mix.** A `DuckResult` is consumed **either** row-by-row (`next` /
+  `exists` / `count` / `materialize`) **or** chunk-by-chunk (`fetch_chunk`, feature `columnar`),
+  never both — they share one cursor. The first mode used wins; the other then yields
+  [`Error::MixedIterationMode`](/core/errors). See [columnar access](/core/columnar-overview).
+</Warning>
+
+## DuckRow access
+
+A `DuckRow` is one row's values plus its (Arc-shared) column names.
+
+```rust
+use better_duck_core::types::value::DuckValue;
+
+let row = conn.execute("SELECT id, name FROM t")?.next().unwrap()?;
+match row.get("name") {
+    Some(DuckValue::Text(s)) => println!("{s}"),
+    Some(DuckValue::Null) => println!("<null>"),
+    _ => {}
+}
+let id = row.get_idx(0);                // by position
+let n = row.column_count();             // u64
+```
+
+- `get(name: &str) -> Option<&DuckValue>` — by column name, **case-sensitive**, matched by string
+  (first match if names repeat).
+- `get_idx(idx: usize) -> Option<&DuckValue>` — by zero-based index.
+- `column_count() -> u64`.
+
+See [values overview](/core/values-overview) for the full `DuckValue` model.
+
+## Result & column metadata
+
+Available on `DuckResult` **before** consuming any rows:
+
+- `changes() -> u64` — affected rows for DML; `0` for `SELECT`.
+- `column_count() -> u64`.
+- `column_name(idx) -> Result<&str>`, `column_names() -> &[Box<str>]`,
+  `column_idx(name) -> Option<usize>`.
+- `column_type(idx) -> Result<DUCKDB_TYPE>` — the coarse DuckDB type id (kept for migration).
+- `column_logical_type(idx) -> Result<&TypeInfo>` / `column_schema() -> &[TypeInfo]` — the
+  **lossless** descriptor (DECIMAL width/scale, nested LIST/STRUCT/MAP shapes, ENUM labels). See
+  [`TypeInfo`](/core/composite-types#logicaltype-and-typeinfo).
+- `statement_type() -> StatementType`, `result_type() -> ResultType`.
+
+```rust
+let select = conn.execute("SELECT 1 AS a, 'x' AS b, 3.5 AS c")?;
+assert_eq!(select.column_count(), 3);
+assert_eq!(select.column_name(1)?, "b");
+assert_eq!(select.column_idx("c"), Some(2));
+let _schema = select.column_schema();   // &[TypeInfo]
+```
+
+An out-of-range index yields [`Error::InvalidColumnIndex`](/core/errors).
+
+### ResultType
+
+`result_type()` returns `better_duck_core::ResultType`, which is `#[non_exhaustive]` — match with a
+`_` arm:
+
+| Variant | Meaning |
+|---|---|
+| `QueryResult` | Queryable rows (`SELECT`, `RETURNING`) |
+| `ChangedRows` | A changed-row count (`INSERT`/`UPDATE`/`DELETE`) |
+| `Nothing` | No result (many DDL statements) |
+| `Invalid` | `DUCKDB_RESULT_TYPE_INVALID` |
+| `Unknown(raw)` | A kind this build doesn't recognise; the raw value is preserved |
+
+`statement_type()` returns [`StatementType`](/core/prepared-statements#statement-metadata).
+
+## TableDescription
+
+Read a catalog table's columns **without a query** — `better_duck_core::TableDescription`, from a
+`Connection` (`&self`):
+
+```rust
+let desc = conn.table_description("main", "t")?;                   // (schema, table)
+// or: conn.table_description_ext(Some("memory"), "main", "t")?;   // explicit catalog
+let n = desc.column_count();                                       // u64 — the trusted bound
+for i in 0..n {
+    let name: Option<String> = desc.column_name(i);
+    let ty = desc.column_type(i);                                  // Option<TypeInfo>
+    let has_default: bool = desc.column_has_default(i)?;           // Err on a bad index
+}
+let msg = desc.error();                                            // Option<String> (catalog-aware)
+```
+
+A missing table or an interior NUL in a name is an error at creation. Indexed accessors return
+`None` out of range, except `column_has_default`, which errors.
+
+## See also
+
+- [Values overview](/core/values-overview) — every `DuckValue` variant.
+- [Result sets](/core/result-sets) — `materialize()` and `to_structs::<T>()`.
+- [Columnar access](/core/columnar-overview) — `fetch_chunk` and the row-vs-chunk rule.

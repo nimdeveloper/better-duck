@@ -1,0 +1,120 @@
+---
+title: "DuckDB SQL DSL Overview"
+description: "The better_duck_diesel::dsl::* prelude: how DuckDB-only operators, scalar functions, and aggregates are exposed as typed Diesel expressions with no raw SQL, how to call them, and the map of the DSL pages."
+---
+
+`better-duck-diesel` exposes DuckDB-specific SQL as a typed Diesel DSL — operators, scalar functions,
+and aggregates — so you reach DuckDB features that stock Diesel has no equivalent for **without dropping
+to `sql_query`**. Everything is verified against `crates/better-duck-diesel/src/expressions/**`; each
+item emits real DuckDB SQL and the Rust name matches the SQL name except where a `#[sql_name]` override
+is noted on its page.
+
+## Bringing in the prelude
+
+Import the DSL alongside Diesel's own prelude:
+
+```rust
+use diesel::prelude::*;
+use better_duck_diesel::dsl::*;
+```
+
+This adds:
+
+- **Two operator extension traits** — `DuckTextExpressionMethods` and `DuckExpressionMethods` —
+  blanket-implemented for every expression, giving `.ilike()`, `.glob()`, `.is_distinct_from()`, and
+  friends. See [Operators](/diesel/operators).
+- **A library of typed free functions** — string, numeric, date/time, JSON, list/map, and more.
+- **DuckDB aggregates** defined with `#[aggregate]`. See [Aggregates](/diesel/aggregates).
+
+<Warning>
+Do **not** invent functions beyond what these pages document — only the listed items are implemented.
+Calling an unlisted name will not compile.
+</Warning>
+
+<Note>
+Spatial `ST_*` functions are **not** in `dsl::*`. Import them from `better_duck_diesel::spatial::*` under
+`feature = "spatial"` — see [Spatial](/diesel/spatial).
+</Note>
+
+## Calling scalar functions
+
+The free functions are ordinary Diesel expressions. Use them anywhere an expression is accepted — in
+`.select(...)`, `.filter(...)`, an `UPDATE … SET`, or standalone via `diesel::select`:
+
+```rust
+// standalone
+let n: f64 = diesel::select(sqrt(16.0_f64)).get_result(&mut conn)?; // 4.0
+
+// in a projection
+let names: Vec<String> = products::table.select(upper(products::name)).load(&mut conn)?;
+
+// in a predicate
+let hits: Vec<i32> = products::table
+    .filter(length(products::name).gt(3_i64))
+    .select(products::id)
+    .load(&mut conn)?;
+```
+
+Each function's argument and result SQL types are documented on its page; the Rust value types follow
+from those via [Type mapping](/diesel/type-mapping).
+
+## Calling aggregates
+
+Aggregates are free functions too; use them in an aggregating or grouped `.select`:
+
+```rust
+use better_duck_diesel::dsl::*;
+
+let m: Option<f64> = products::table.select(median(products::price)).first(&mut conn)?;
+```
+
+See [Aggregates](/diesel/aggregates). Diesel core already ships `count`/`sum`/`avg`/`min`/`max`; this
+crate adds only what core lacks.
+
+## Binding custom-typed values in an expression
+
+Bare `u64` / `i128` / `DuckUuid` / … cannot be used directly as a DSL expression at a `Duck*` SQL type
+(a third-party coherence limit). Wrap them in a `values::*` newtype and `.into_sql::<SqlType>()`:
+
+```rust
+use better_duck_diesel::values::UBigInt;
+use better_duck_diesel::sql_types::DuckUBigInt;
+use diesel::IntoSql;
+
+let v = UBigInt(u64::MAX);
+let got: UBigInt = diesel::select(v.into_sql::<DuckUBigInt>()).get_result(&mut conn)?;
+```
+
+The full newtype ↔ SQL-type list is on [Type mapping](/diesel/type-mapping#the-values-binding-newtypes).
+
+## The DSL pages
+
+<CardGroup cols={2}>
+  <Card title="Operators" href="/diesel/operators">
+    ILIKE / SIMILAR TO / GLOB / regex / null-safe comparison.
+  </Card>
+  <Card title="String functions" href="/diesel/string-functions">
+    Case, trim, pad, search, similarity, regex, hashing, encoding.
+  </Card>
+  <Card title="Numeric & utility functions" href="/diesel/numeric-functions">
+    Math, trig, conditional, UUID generation, version/typeof.
+  </Card>
+  <Card title="Date & time functions" href="/diesel/datetime-functions">
+    Extract parts, build dates/times, format.
+  </Card>
+  <Card title="JSON functions" href="/diesel/json-functions">
+    Validate, extract, and inspect JSON.
+  </Card>
+  <Card title="List & map functions" href="/diesel/list-and-map-functions">
+    LIST and MAP scalar functions.
+  </Card>
+  <Card title="Aggregates" href="/diesel/aggregates">
+    Statistical, approximate, bitwise, JSON aggregates.
+  </Card>
+  <Card title="Calling your own UDFs" href="/diesel/calling-udfs">
+    Register `#[duckdb_*]` functions and call them typed.
+  </Card>
+  <Card title="Spatial" href="/diesel/spatial">
+    `ST_*` functions behind `feature = "spatial"`.
+  </Card>
+</CardGroup>

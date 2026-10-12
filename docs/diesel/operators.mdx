@@ -1,0 +1,81 @@
+---
+title: "DSL Operators"
+description: "DuckDB-only comparison and text-matching operators as Diesel expression methods: ILIKE, NOT ILIKE, SIMILAR TO, GLOB, POSIX regex (~, !~), prefix (^@), and null-safe IS [NOT] DISTINCT FROM."
+---
+
+Two extension traits add DuckDB's operators that stock Diesel lacks. Both are blanket-implemented for
+every expression and come in through the DSL prelude:
+
+```rust
+use diesel::prelude::*;
+use better_duck_diesel::dsl::*;
+```
+
+## Text matching — `DuckTextExpressionMethods`
+
+The right-hand side binds as `Text`. These are DuckDB's string-matching operators:
+
+| Method | SQL | Meaning |
+|---|---|---|
+| `.ilike(pat)` | `ILIKE` | case-insensitive `LIKE` |
+| `.not_ilike(pat)` | `NOT ILIKE` | negated case-insensitive `LIKE` |
+| `.similar_to(re)` | `SIMILAR TO` | whole-string regex match |
+| `.not_similar_to(re)` | `NOT SIMILAR TO` | negated whole-string regex |
+| `.glob(pat)` | `GLOB` | Unix `*`/`?`/`[…]` glob (case-sensitive) |
+| `.regexp_matches(re)` | `~` | POSIX regex match (operator form) |
+| `.not_regexp_matches(re)` | `!~` | negated POSIX regex |
+| `.starts_with_op(pre)` | `^@` | prefix test |
+
+```rust
+let hits: Vec<i32> = products::table
+    .filter(products::name.ilike("wid%"))
+    .select(products::id)
+    .load(&mut conn)?;
+
+let globbed: Vec<String> = products::table
+    .filter(products::name.glob("w*t"))
+    .select(products::name)
+    .load(&mut conn)?;
+```
+
+<Note>
+`.regexp_matches()` (an operator method producing the `~` operator) and the free function
+`regexp_matches(s, pat)` (which emits the `regexp_matches(...)` call — see
+[String functions](/diesel/string-functions#regex)) are distinct items that happen to share a name.
+Pick the method for operator-style predicates, the function to call the SQL function.
+</Note>
+
+## Null-safe comparison — `DuckExpressionMethods`
+
+| Method | SQL | Meaning |
+|---|---|---|
+| `.is_distinct_from(x)` | `IS DISTINCT FROM` | null-safe `<>` (two NULLs compare equal) |
+| `.is_not_distinct_from(x)` | `IS NOT DISTINCT FROM` | null-safe `=` |
+
+```rust
+let changed: Vec<i32> = items::table
+    .filter(items::new_val.is_distinct_from(items::old_val)) // treats NULLs sanely
+    .select(items::id)
+    .load(&mut conn)?;
+```
+
+Unlike `=`/`<>`, these never yield `NULL`: `NULL IS NOT DISTINCT FROM NULL` is `true`, and
+`1 IS DISTINCT FROM NULL` is `true`. Use them when either side can be `NULL` and you want set-style
+equality.
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="String functions" href="/diesel/string-functions">
+    Function forms of regex and matching.
+  </Card>
+  <Card title="Select" href="/diesel/select">
+    Where predicates are used.
+  </Card>
+  <Card title="DSL overview" href="/diesel/dsl-overview">
+    The prelude and the rest of the DSL.
+  </Card>
+  <Card title="Delete" href="/diesel/delete">
+    Operators in a delete filter.
+  </Card>
+</CardGroup>

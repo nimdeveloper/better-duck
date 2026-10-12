@@ -1,0 +1,84 @@
+---
+title: "Aggregate Functions"
+description: "#[duckdb_aggregate]: fold rows into one value with init / update / combine / finalize, type inference, special_handling, and the VAggregate trait and function sets."
+---
+
+<Info>Requires `feature = "udf"`. See the [UDF overview](/macros/udf-overview) for shared semantics.</Info>
+
+`#[duckdb_aggregate]` is applied to an **inline `mod { … }`** (not `mod name;`) defining four free
+functions. It generates a `VAggregate` impl plus a `register(&mut Connection)`.
+
+```rust
+use better_duck_core::duckdb_aggregate;
+
+#[duckdb_aggregate(name = "int_sum")]
+mod int_sum {
+    fn init() -> i64 { 0 }
+    fn update(state: &mut i64, value: i32) { *state += i64::from(value); }
+    fn combine(acc: &mut i64, other: &i64) { *acc += *other; }
+    fn finalize(state: &i64) -> i64 { *state }
+}
+```
+
+Register with `int_sum::register(&mut conn)?`, then `SELECT int_sum(x) FROM t`.
+
+## The four functions
+
+<ParamField path="init() -> State">
+  The fresh per-group accumulator. `State` is **inferred from this return type**.
+</ParamField>
+<ParamField path="update(state: &mut State, ...values)">
+  Fold one row into `state`. The value parameter types are inferred from the arguments **after** the
+  leading `&mut state` (so DuckDB's argument types come from here). May return `Result<(), E>` to
+  fail the query.
+</ParamField>
+<ParamField path="combine(target: &mut State, source: &State)">
+  Merge partial states — DuckDB uses this for parallel/partial aggregation.
+</ParamField>
+<ParamField path="finalize(state: &State) -> T">
+  Produce the result; the return type `T` (or `Result<T, E>`) is the function's result type.
+</ParamField>
+
+<Warning>
+  All four must be present. `init` and `finalize` must return a value; `update` must take
+  `&mut state` as its first argument. A missing function, or `mod name;` instead of an inline
+  module, is a compile error.
+</Warning>
+
+## Options
+
+| Option | Meaning |
+|---|---|
+| `name = "…"` | SQL function name (defaults to the module name) |
+| `crate = ::path` | retarget the generated `::better_duck_core` path |
+| `special_handling` | still invoke `update` for `NULL` inputs (off by default — DuckDB skips NULL-argument rows) |
+
+## The `VAggregate` trait
+
+The macro implements `better_duck_core::udf::VAggregate`:
+
+<Accordion title="VAggregate by hand, and function sets">
+  ```rust
+  // type State: Send + Sync + 'static;    — the per-group accumulator
+  // type Shared: Send + Sync + 'static;   — registration-time shared state (() from the macro)
+  // fn parameters() -> Result<Vec<LogicalType>>;
+  // fn return_type() -> Result<LogicalType>;
+  // fn init(shared: &Shared) -> State;
+  // fn update(state: &mut State, shared: &Shared, input: &DataChunkHandle, row: usize) -> UdfResult<()>;
+  // fn combine(target: &mut State, source: &State);
+  // fn finalize(state: &State, shared: &Shared, output: &mut VectorMut, row: usize) -> UdfResult<()>;
+  // fn special_handling() -> bool { false }
+  ```
+
+  Register with `conn.register_aggregate_function::<A>(name)` or
+  `register_aggregate_function_with_state::<A>(name, shared)`. To group several overloads of
+  **different** Rust types under one SQL name (DuckDB dispatches on argument types), use
+  `conn.register_aggregate_function_set(name, |b| { b.add::<A>()?; b.add::<B>()?; Ok(()) })` — the
+  closure receives an `AggregateSetBuilder` with `add::<A>()` / `add_with_state::<A>(shared)`.
+</Accordion>
+
+## See also
+
+- [UDF overview](/macros/udf-overview) — shared semantics and the panic caveat.
+- [Scalar functions](/macros/scalar-functions) · [Table functions](/macros/table-functions).
+- [Vectors](/core/vectors) — the output view a hand-written `finalize` writes to.

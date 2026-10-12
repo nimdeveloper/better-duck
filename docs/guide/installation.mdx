@@ -1,15 +1,16 @@
 ---
 title: "Installation"
-description: "Add the better-duck crates and pin the exact beta version."
+description: "Add the better-duck crates, pin the exact beta version, and understand bundled-DuckDB build times and toolchain requirements."
 ---
 
 better-duck is distributed on crates.io. Add `better-duck-core` for the driver, and
-`better-duck-diesel` if you want the Diesel ORM backend.
+`better-duck-diesel` if you want the [Diesel ORM backend](/diesel/overview). DuckDB itself is
+compiled and embedded — there is no system package to install.
 
 <Warning>
-  better-duck is currently a **pre-release** (`0.1.0-beta.8`). Cargo's default version requirement
-  **excludes pre-release versions**: a requirement like `"0.1"` will *not* match `0.1.0-beta.8`. You
-  must pin the exact version string, as shown below.
+  better-duck is a **pre-release** (`0.1.0-beta.8`). Cargo's default version requirement **excludes
+  pre-release versions**: a requirement like `"0.1"` will *not* match `0.1.0-beta.8`. You must pin the
+  exact version string, as shown below. See [Versioning & compatibility](/guide/versioning-and-compatibility).
 </Warning>
 
 ## Add the crates
@@ -18,7 +19,7 @@ better-duck is distributed on crates.io. Add `better-duck-core` for the driver, 
   <Tab title="Cargo.toml">
     ```toml
     [dependencies]
-    # DuckDB client
+    # DuckDB client (published on crates.io as `better-duck`)
     better-duck-core = "0.1.0-beta.8"
 
     # Optional: Diesel ORM backend
@@ -36,39 +37,73 @@ better-duck is distributed on crates.io. Add `better-duck-core` for the driver, 
 
 <Note>
   `better-duck-macros` is pulled in automatically by the [`udf`](/guide/feature-flags) and
-  [`derive`](/guide/feature-flags) feature flags — you don't depend on it directly.
+  [`derive`](/guide/feature-flags) features — you don't depend on it directly. Keep sibling crates on
+  the **same** version.
 </Note>
+
+The default feature set is `["chrono", "decimal"]`. To pick features à la carte, see
+[Feature flags](/guide/feature-flags).
 
 ## Bundled DuckDB — no system library
 
-DuckDB is **compiled from vendored source and embedded** into your binary by `better-duck-sys`. You
-do **not** need to install a DuckDB system package, and there is no shared library to ship alongside
-your application at runtime. This is what makes better-duck "embedded-first" and suitable for Tauri
-desktop apps, iOS cross-builds, and other environments where a system library isn't an option.
+DuckDB is **compiled from vendored source and statically linked** into your binary by
+`better-duck-sys`. You do **not** install a DuckDB system package, and there is no shared library to
+ship at runtime. This is what makes better-duck [embedded-first](/guide/architecture#bundled-duckdb-embedded-first)
+and suitable for Tauri desktop apps, iOS cross-builds, and other environments where a system library
+isn't an option.
 
 <Tip>
   Because DuckDB is compiled from source, your **first** build (and any clean rebuild) is slower than
-  a typical crate — it is compiling the DuckDB engine. Subsequent incremental builds reuse the
-  compiled artifact. Builds that bundle an extension variant (for example the `json` + `parquet`
-  features) recompile a DuckDB variant and can take noticeably longer.
+  a typical crate — it is compiling the DuckDB engine itself. Subsequent incremental builds reuse the
+  compiled artifact. Builds that bundle an [extension](/guide/extensions) (for example `json` +
+  `parquet`) recompile a DuckDB variant and take noticeably longer.
 </Tip>
 
 ## Toolchain requirements
 
 <Info>
-  The minimum supported Rust version (**MSRV**) is **1.96**. Make sure your toolchain is at least
-  that version (`rustc --version`).
+  The minimum supported Rust version (**MSRV**) is **1.96**. Check with `rustc --version`; update with
+  `rustup update`. A C/C++ toolchain is also required to compile the vendored DuckDB (the one your
+  platform already uses for native crates — e.g. the MSVC build tools on Windows, Xcode command-line
+  tools on macOS, `gcc`/`clang` on Linux).
 </Info>
 
 better-duck is licensed under either **MIT** or **Apache-2.0**, at your option.
 
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="`cargo add better-duck-core` resolves to nothing / `0.1` doesn't match">
+    Cargo excludes pre-releases from a default requirement. Pin the **exact** string
+    `"0.1.0-beta.8"` (or pass `--version 0.1.0-beta.8` to `cargo add`).
+  </Accordion>
+  <Accordion title="The first build takes minutes">
+    Expected — the first build compiles the DuckDB engine from source. Incremental builds reuse the
+    artifact. Enabling an [extension feature](/guide/extensions) recompiles a variant and adds time.
+  </Accordion>
+  <Accordion title="A linker or C compiler error on first build">
+    DuckDB is compiled from C/C++ source, so a working native toolchain is required. Install your
+    platform's standard build tools (see [Toolchain requirements](#toolchain-requirements)) and rebuild.
+  </Accordion>
+  <Accordion title="Which DuckDB version am I running?">
+    Call [`better_duck_core::library_version()`](/core/opening-connections#library-version) at runtime — it
+    returns the linked DuckDB version string. There is no system DuckDB to match.
+  </Accordion>
+</AccordionGroup>
+
 ## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Feature flags" icon="toggle-on" href="/guide/feature-flags">
-    Turn on `chrono`, `arrow`, `udf`, `derive`, `async`, and more.
-  </Card>
   <Card title="Quickstart" icon="rocket" href="/guide/quickstart">
     A minimal end-to-end example.
+  </Card>
+  <Card title="Feature flags" icon="toggle-on" href="/guide/feature-flags">
+    Turn on `arrow`, `udf`, `derive`, `async`, extensions, and more.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/guide/architecture">
+    The crate family and the bundled-DuckDB model.
+  </Card>
+  <Card title="Versioning & compatibility" icon="code-branch" href="/guide/versioning-and-compatibility">
+    Beta policy, MSRV, platforms, and upgrading.
   </Card>
 </CardGroup>

@@ -1,0 +1,93 @@
+---
+title: "Numeric & Utility Functions"
+description: "DuckDB numeric, trigonometric, and bitwise scalar functions as typed Diesel DSL, plus conditional null-handling (nullif/ifnull), UUID generators, and utility functions (version, typeof)."
+---
+
+DuckDB's math and trigonometry functions, plus the handful of general-purpose scalars that don't belong
+to any other category — conditional null-handling, UUID generation, and runtime utilities. All are free
+functions in `better_duck_diesel::dsl::*`.
+
+```rust
+use diesel::prelude::*;
+use better_duck_diesel::dsl::*;
+
+let n: f64 = diesel::select(sqrt(16.0_f64)).get_result(&mut conn)?; // 4.0
+```
+
+## Math and trigonometry
+
+`Double -> Double` unless noted:
+
+<AccordionGroup>
+  <Accordion title="Arithmetic & powers">
+    `abs<T>(x)` (generic, preserves the argument type), `sqrt`, `cbrt`, `pow(base, exponent)`, `exp`,
+    `ln`, `log2`, `log10`, `ceil`, `floor`, `round`, `sign`.
+  </Accordion>
+  <Accordion title="Trigonometry">
+    `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2(y, x)`, `degrees`, `radians`.
+  </Accordion>
+  <Accordion title="Integer math & bitwise">
+    `gcd(a: BigInt, b: BigInt)` (→`BigInt`), `lcm(a: BigInt, b: BigInt)` (→`BigInt`),
+    `mod_(a, b)` (`#[sql_name = "mod"]`, →`BigInt`), `xor(a, b)` (→`BigInt`),
+    `bit_count(x: BigInt)` (→`DuckTinyInt`).
+  </Accordion>
+  <Accordion title="Min / max (generic)">
+    `greatest<T>(a, b)` and `least<T>(a, b)` — generic over `T`, returning the same type.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+`mod_` is spelled with a trailing underscore in Rust and emits `mod(...)` via `#[sql_name = "mod"]`.
+`abs`, `greatest`, and `least` are generic so they preserve the argument's numeric type rather than
+forcing `Double`.
+</Note>
+
+## Conditional / null-handling
+
+Generic over `T`:
+
+| Function | Signature | Returns | Meaning |
+|---|---|---|---|
+| `nullif(a, b)` | `T, T` | `Nullable<T>` | `NULL` when `a = b`, else `a` |
+| `ifnull(a, b)` | `Nullable<T>, T` | `T` | `b` when `a` is `NULL`, else `a` |
+
+```rust
+let safe: f64 = diesel::select(ifnull(products::price.nullable(), 0.0)).first(&mut conn)?;
+```
+
+## UUID generation
+
+All return `DuckUuid` (see [Type mapping](/diesel/type-mapping#duckdb-specific-sql-types)):
+
+`gen_random_uuid()`, `uuidv4()`, `uuidv7()`.
+
+```rust
+use better_duck_diesel::values::Uuid;
+let id: Uuid = diesel::select(uuidv7()).get_result(&mut conn)?;
+```
+
+## Utility
+
+`version()` (→`Text`) returns the DuckDB version string; `type_of<T>(x)`
+(`#[sql_name = "typeof"]`, →`Text`) returns the DuckDB type name of its argument.
+
+```rust
+let v: String = diesel::select(version()).get_result(&mut conn)?;
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="String functions" href="/diesel/string-functions">
+    Text transforms, hashing, encoding.
+  </Card>
+  <Card title="Date & time functions" href="/diesel/datetime-functions">
+    Temporal extraction and construction.
+  </Card>
+  <Card title="Aggregates" href="/diesel/aggregates">
+    Statistical and bitwise aggregates.
+  </Card>
+  <Card title="Type mapping" href="/diesel/type-mapping">
+    What `Double` / `BigInt` / `DuckUuid` load as.
+  </Card>
+</CardGroup>

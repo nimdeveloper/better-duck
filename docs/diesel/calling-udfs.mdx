@@ -1,0 +1,89 @@
+---
+title: "Calling Your Own UDFs"
+description: "Register #[duckdb_*] user-defined functions on the underlying core connection, declare a matching define_sql_function!, and call them as typed Diesel DSL — plus the per-connection registration caveat for pools."
+---
+
+With `feature = "udf"`, you can call your own Rust-authored DuckDB functions from the typed Diesel DSL —
+no raw SQL. The pattern: register a `#[duckdb_*]` function on the underlying core connection, declare a
+matching `define_sql_function!`, then call it as a typed function. Verified in the crate's
+`tests/udf_dsl.rs`.
+
+## The workflow
+
+<Steps>
+  <Step title="Author and register the UDF">
+    Write a `#[duckdb_scalar]` (or aggregate / table) function with
+    [better-duck-core's UDF macros](/macros/udf-overview), then register it on the core connection reached via
+    `conn.inner_mut()`.
+  </Step>
+  <Step title="Declare it to Diesel">
+    Mirror the SQL name and DuckDB argument/result types with Diesel's `define_sql_function!`.
+  </Step>
+  <Step title="Call it typed">
+    Use the generated function in `.select` / `.filter` like any built-in DSL function.
+  </Step>
+</Steps>
+
+```rust
+use better_duck_core::duckdb_scalar;
+use better_duck_diesel::DuckDbConnection;
+use diesel::expression::functions::define_sql_function;
+use diesel::prelude::*;
+use diesel::sql_types::Integer;
+
+#[duckdb_scalar(name = "add_one")]
+fn add_one_impl(x: i32) -> i32 { x + 1 }
+
+define_sql_function! { fn add_one(x: Integer) -> Integer; }
+
+let mut conn = DuckDbConnection::establish(":memory:")?;
+add_one_impl::register(conn.inner_mut())?;  // register on the core connection via inner_mut()
+
+let out: Vec<i32> = nums::table.select(add_one(nums::id)).order(nums::id).load(&mut conn)?;
+```
+
+<Note>
+When the UDF uses `name = "…"`, the generated registration type is named after the **Rust function**
+(`add_one_impl` here), so you call `add_one_impl::register(conn.inner_mut())`. The `define_sql_function!`
+name and signature must match the registered **SQL** name and DuckDB types.
+</Note>
+
+## Aggregate and table UDFs
+
+The same pattern covers aggregate and table functions. Aggregates authored with `#[duckdb_aggregate]`
+are declared with `define_sql_function!` carrying the `#[aggregate]` attribute, then used in a grouped
+`.select` like the built-in [aggregates](/diesel/aggregates). See the
+[UDF macros](/macros/udf-overview) page for authoring `#[duckdb_scalar]` / `#[duckdb_aggregate]` /
+`#[duckdb_table_function]`.
+
+## Per-connection registration
+
+<Warning>
+Registration is **per-connection** — a UDF registered on one `DuckDbConnection` is not visible on
+another. With a pool, register on **every** connection via the `on_connect` hook so each pooled
+connection can call your functions. See
+[Pooling → on_connect](/diesel/pooling#per-connection-setup-with-on_connect).
+</Warning>
+
+## Binding custom-typed arguments
+
+If a UDF takes a DuckDB-specific type (`UBIGINT`, `HUGEINT`, `UUID`, …), wrap literal arguments in the
+matching [`values::*` newtype](/diesel/type-mapping#the-values-binding-newtypes) and
+`.into_sql::<SqlType>()` — bare foreign values can't be used as expressions at a `Duck*` SQL type.
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="UDF macros" href="/macros/udf-overview">
+    Authoring `#[duckdb_scalar]` and friends.
+  </Card>
+  <Card title="Pooling" href="/diesel/pooling">
+    Register per connection with `on_connect`.
+  </Card>
+  <Card title="Aggregates" href="/diesel/aggregates">
+    Built-in aggregates and custom ones.
+  </Card>
+  <Card title="Installation & setup" href="/diesel/installation-and-setup">
+    `inner_mut()` and the core connection.
+  </Card>
+</CardGroup>

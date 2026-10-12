@@ -1,0 +1,109 @@
+---
+title: "UDF Overview"
+description: "Register Rust functions as DuckDB scalar, table, aggregate, and cast functions with the #[duckdb_*] macros — shared semantics, NULL/Result handling, and the panic caveat."
+---
+
+<Info>
+  The UDF macros are enabled by `better-duck-core`'s `feature = "udf"` (which also turns on
+  `columnar`). You never depend on `better-duck-macros` directly — import everything from
+  `better_duck_core::…`. Registration is always on a core
+  [`Connection`](/core/opening-connections); through better-duck-diesel's `udf` feature, register
+  on the underlying connection via `conn.inner_mut()`.
+</Info>
+
+The UDF macros turn an ordinary Rust function into a DuckDB function. Parameter and return types are
+inferred from the signature via `DuckLogicalType` — any type that round-trips through
+[`AppendAble`](/core/values-overview#the-conversion-traits) (every integer width, floats,
+`String` / `&str`, `bool`, …) works. No `unsafe`, no manual vector handling.
+
+<CardGroup cols={2}>
+  <Card title="Scalar functions" href="/macros/scalar-functions">
+    `#[duckdb_scalar]` — one value per row, for a `SELECT` list or `WHERE`.
+  </Card>
+  <Card title="Table functions" href="/macros/table-functions">
+    `#[duckdb_table_function]` — rows and columns for a `FROM` clause.
+  </Card>
+  <Card title="Aggregate functions" href="/macros/aggregate-functions">
+    `#[duckdb_aggregate]` — fold many rows into one value.
+  </Card>
+  <Card title="Cast functions" href="/macros/cast-functions">
+    `#[duckdb_cast]` — a custom `CAST` / `TRY_CAST`.
+  </Card>
+</CardGroup>
+
+Plus [`#[duckdb_entrypoint]`](/macros/entrypoint) for packaging functions into a loadable
+extension.
+
+## The generated `register`
+
+Each function macro generates a `register(&mut Connection)` **associated function** in a module
+named after your function, so you register with `my_fn::register(&mut conn)?`. The annotated
+function also remains an ordinary, directly callable Rust fn.
+
+```rust
+use better_duck_core::{connection::Connection, duckdb_scalar};
+
+#[duckdb_scalar]
+fn repeat_str(s: &str, n: i32) -> String { s.repeat(n.max(0) as usize) }
+
+# fn main() -> better_duck_core::error::Result<()> {
+let mut conn = Connection::open_in_memory()?;
+repeat_str::register(&mut conn)?;              // generated associated fn
+let _ = conn.execute("SELECT repeat_str('ab', 3)")?;   // "ababab"
+# Ok(())
+# }
+```
+
+## Shared semantics
+
+<ParamField path="Option<T> ⇒ NULL">
+  An `Option<T>` parameter or return maps to DuckDB `NULL`. Any `Option<T>` **parameter** also
+  auto-enables `special_handling`, so the function is still invoked for `NULL` inputs (a non-`Option`
+  parameter instead short-circuits NULL rows to a NULL result without calling your body).
+</ParamField>
+<ParamField path="Result<T, E> ⇒ query error">
+  A `Result<T, E>` return fails the query with `E`'s message on `Err`
+  (`E: Into<Box<dyn Error + Send + Sync>>`). Prefer this over panicking.
+</ParamField>
+
+The `duck_bail!("…")` macro is `return Err(format!(…).into())` for a fallible body — see
+[helper macros](/macros/helper-macros#duck_bail).
+
+## The panic caveat
+
+<Warning>
+  Callback panics are caught and reported to DuckDB as a query error **only** when the crate is
+  built with `panic = "unwind"` (the default for `dev` and `test`). Under a `panic = "abort"` build
+  — many `release` profiles — a panicking UDF **aborts the process**: `catch_unwind` cannot catch
+  once unwinding is compiled out. Return `Err` (or `duck_bail!`) from a fallible function rather
+  than panicking; the error path never depends on unwinding.
+</Warning>
+
+## Low-level traits
+
+Every macro compiles down to a trait implementation you can also write by hand and register
+directly:
+
+| Macro | Trait | Direct registration |
+|---|---|---|
+| `#[duckdb_scalar]` | `udf::VScalar` | `conn.register_scalar_function::<T>(name)` |
+| `#[duckdb_table_function]` | `udf::VTab` (+ `VTabLocalInit`) | `conn.register_table_function::<T>(name)` |
+| `#[duckdb_aggregate]` | `udf::VAggregate` | `conn.register_aggregate_function::<T>(name)` |
+| `#[duckdb_cast]` | `udf::VCast` | `conn.register_cast_function::<T>()` |
+
+Each function page documents its trait and the by-hand path. The macros are the recommended surface;
+the traits exist for cases the macros don't cover (multiple overloads, bind-time constant folding,
+per-worker local state).
+
+<Note>
+  Replacement scans (`udf::ReplacementScan`, which rewrite a bare `FROM` identifier into a
+  table-function call) are an **experimental** part of the same `udf` feature but have no attribute
+  macro. Register one per-database with `database.register_replacement_scan::<T>()`.
+</Note>
+
+## See also
+
+- [Columnar overview](/core/columnar-overview) — the `DataChunkHandle` / vector API callbacks use.
+- [Values overview](/core/values-overview) — the type inference that drives parameter/return mapping.
+- [Helper macros](/macros/helper-macros) — `duck_bail!`, `duck_state!`, `duck_projection!`,
+  `duck_extra_info!`.

@@ -1,0 +1,59 @@
+---
+title: "DuckEnum Derive"
+description: "#[derive(DuckEnum)]: map a Rust unit enum to a DuckDB ENUM by label, with per-variant and whole-enum renaming, plus optional Diesel emission."
+---
+
+<Info>Requires `feature = "derive"`. See the [derives overview](/macros/derives-overview) for `rename_all` casings.</Info>
+
+`#[derive(DuckEnum)]` maps a Rust **unit** enum to a DuckDB `ENUM`. It generates three impls:
+`From<T> for DuckValue`, `FromDuckValue for T`, and `AppendAble for T` — so the enum binds, appends,
+and reads back as a real `ENUM` (bound by label, which DuckDB casts to the target `ENUM`).
+
+```rust
+use better_duck_core::DuckEnum;
+
+#[derive(DuckEnum, Debug, PartialEq, Clone, Copy)]
+#[duck_enum(rename_all = "snake_case")]
+enum Priority {
+    Low,
+    #[duck_enum(rename = "HIGH")]
+    High,
+}
+```
+
+- Variants must be **unit** variants (no fields); at least one is required — otherwise a compile
+  error.
+- Reads accept either an `ENUM` value **or** a `VARCHAR` label.
+- The label is resolved from the variant's `rename` → the container `rename_all` → the Rust variant
+  name.
+
+## Attributes
+
+`DuckEnum` uses the dedicated `#[duck_enum(...)]` attribute (not `#[duck(...)]`):
+
+| Scope | Attribute | Meaning |
+|---|---|---|
+| Container | `#[duck_enum(rename_all = "…")]` | Casing applied to every variant label |
+| Container | `#[duck_enum(crate = ::path)]` | Retarget the generated `::better_duck_core` path |
+| Variant | `#[duck_enum(rename = "label")]` | Override one variant's label |
+
+<Note>
+  The `#[derive(DuckEnum)]` **macro** (attribute `#[duck_enum(...)]`) is distinct from the runtime
+  [`DuckEnum` value type](/core/composite-types#enum-duckenum) it maps through — one is a derive,
+  the other is the dictionary-preserving value carried in `DuckValue::Enum`.
+</Note>
+
+## Diesel emission
+
+With better-duck-diesel's `derive` feature on, `#[derive(DuckEnum)]` additionally emits Diesel
+`ToSql` / `FromSql` against `better_duck_diesel::sql_types::DuckEnum` (routing through the
+`DuckDb` backend), so the same type binds and loads through a `DuckDbConnection`. The deriving crate
+must then depend on `better-duck-diesel` — see the [Diesel docs](/diesel/overview). With the feature
+off, nothing extra is emitted.
+
+## See also
+
+- [DuckStruct derive](/macros/duckstruct) · [FromRow / ToRow](/macros/fromrow-torow).
+- [Composite types](/core/composite-types#enum-duckenum) — the runtime `DuckEnum` value and `ENUM`
+  handling.
+- [Derives overview](/macros/derives-overview) — the `rename_all` casings table.

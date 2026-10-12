@@ -1,0 +1,116 @@
+---
+title: "String Functions"
+description: "DuckDB string scalar functions as typed Diesel DSL: case, trim, reverse, repeat, replace, search and position, padding, split/concat, similarity metrics, regex functions, printf-style formatting, hashing, and BLOB/base64/hex encoding."
+---
+
+DuckDB's string scalar functions, exposed as typed free functions in `better_duck_diesel::dsl::*`. Call
+them in `.select`, `.filter`, or `UPDATE … SET`; the SQL type each returns is noted so you know the Rust
+type it loads as (see [Type mapping](/diesel/type-mapping)).
+
+```rust
+use diesel::prelude::*;
+use better_duck_diesel::dsl::*;
+
+let shout: Vec<String> = products::table.select(upper(products::name)).load(&mut conn)?;
+```
+
+<Warning>
+Only the functions listed here are implemented — do not assume an arbitrary DuckDB function is bound.
+</Warning>
+
+## Case, trim, and basic transforms
+
+`Text -> Text` unless noted:
+
+`lower`, `upper`, `trim`, `ltrim`, `rtrim`, `reverse`, `repeat(x, n: Integer)`,
+`replace(s, from, to)`, `length(s)` (→`BigInt`), `md5(x)` (→`Text`),
+`contains(haystack, needle)` (→`Bool`), `starts_with(s, prefix)` (→`Bool`),
+`ends_with(s, suffix)` (→`Bool`).
+
+```rust
+let n: i64 = diesel::select(length("abcde")).get_result(&mut conn)?; // 5
+```
+
+## Search, position, and extraction
+
+`strpos(haystack, needle)` (→`BigInt`), `instr(haystack, needle)` (→`BigInt`),
+`substr(s, start: Integer, length: Integer)` (→`Text`), `split_part(s, sep, index: Integer)` (→`Text`),
+`left(s, n: Integer)` (→`Text`), `right(s, n: Integer)` (→`Text`), `ascii(s)` (→`Integer`),
+`chr(code: Integer)` (→`Text`).
+
+## Padding and joining
+
+`lpad(s, len: Integer, fill)` (→`Text`), `rpad(s, len: Integer, fill)` (→`Text`),
+`concat(a, b)` (→`Text`), `concat_ws(sep, a, b)` (→`Text`).
+
+## Similarity and distance
+
+Edit-distance and similarity metrics:
+
+| Function | Returns |
+|---|---|
+| `levenshtein(a, b)` | `BigInt` |
+| `damerau_levenshtein(a, b)` | `BigInt` |
+| `hamming(a, b)` | `BigInt` |
+| `mismatches(a, b)` | `BigInt` |
+| `jaccard(a, b)` | `Double` |
+| `jaro_similarity(a, b)` | `Double` |
+| `jaro_winkler_similarity(a, b)` | `Double` |
+
+## Regex
+
+Function forms (distinct from the [`~`/`!~` operators](/diesel/operators#text-matching-ducktextexpressionmethods)):
+
+`regexp_matches(s, pattern)` (→`Bool`), `regexp_full_match(s, pattern)` (→`Bool`),
+`regexp_replace(s, pattern, replacement)` (→`Text`), `regexp_extract(s, pattern)` (→`Text`).
+
+```rust
+let digits: Vec<String> = logs::table
+    .select(regexp_extract(logs::line, r"\d+"))
+    .load(&mut conn)?;
+```
+
+## printf-style formatting
+
+`printf(format, arg)` (→`Text`), `format_(format, arg)` (`#[sql_name = "format"]`, →`Text`).
+
+<Note>
+The function is named `format_` in Rust because `format` is a reserved-ish identifier; it emits
+`format(...)` SQL via `#[sql_name = "format"]`.
+</Note>
+
+## Hashing
+
+`md5(x)` (→`Text`, also listed above), `sha1(x)` (→`Text`), `sha256(x)` (→`Text`).
+
+## Encoding — BLOB / base64 / hex
+
+| Function | Signature | Returns |
+|---|---|---|
+| `encode(x)` | `Text` | `Binary` |
+| `decode(b)` | `Binary` | `Text` |
+| `base64(b)` | `Binary` | `Text` |
+| `from_base64(s)` | `Text` | `Binary` |
+| `hex(b)` | `Binary` | `Text` |
+| `unhex(s)` | `Text` | `Binary` |
+
+```rust
+let hexed: String = diesel::select(hex(encode("hi"))).get_result(&mut conn)?;
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Operators" href="/diesel/operators">
+    ILIKE / GLOB / regex operator forms.
+  </Card>
+  <Card title="Numeric & utility" href="/diesel/numeric-functions">
+    Math and conditional functions.
+  </Card>
+  <Card title="Aggregates" href="/diesel/aggregates">
+    `string_agg`, `array_agg`, and more.
+  </Card>
+  <Card title="Type mapping" href="/diesel/type-mapping">
+    What `Text`/`Binary`/`BigInt` load as.
+  </Card>
+</CardGroup>

@@ -1,0 +1,159 @@
+---
+title: "Scope & Policy"
+description: "The value-level security gate: per-capability scope Entry objects (connection/path, deny-first, traversal-safe) and the mandatory init-time Rust Policy — read-only, allow-lists, the risky-statement filter, and network gating."
+---
+
+The second security gate decides *which values* a granted command may use. It has two layers that
+both run before the backend touches DuckDB: declarative **scope entries** attached to a capability,
+and the mandatory init-time Rust **`Policy`**. See [Security overview](/tauri/security-overview) for
+how this fits with permissions.
+
+## Scope entries (per-capability)
+
+A capability can attach a `scope` of `Entry` objects to constrain command arguments. Each `Entry`
+has two optional fields (camelCase in JSON):
+
+```json
+{ "connection": "duckdb:analytics.db", "path": "exports/" }
+```
+
+<ParamField path="connection" type="string">
+  Allow a connection string — checked by `load`. Matches **exactly**.
+</ParamField>
+<ParamField path="path" type="string">
+  Allow a filesystem path prefix — checked by `import`'s `source` and `export`'s `path`. Matches by
+  whole path component and is traversal-safe.
+</ParamField>
+
+These are attached to a permission in the capability file via `allow` / `deny` arrays — see
+[Capabilities & permissions](/tauri/capabilities-and-permissions).
+
+### Enforcement: per-field and deny-first
+
+Enforcement is evaluated **independently per field**:
+
+<Steps>
+  <Step title="Deny wins">
+    A matching **deny** entry for the field always rejects.
+  </Step>
+  <Step title="Allow requires a match">
+    If any **allow** entries exist *for that field*, the value must match one of them.
+  </Step>
+  <Step title="Empty allow is unconstrained">
+    An **empty** allow list for a field means that field is unconstrained *by the capability* — the
+    init-time [`Policy`](#the-rust-policy) remains the mandatory layer.
+  </Step>
+</Steps>
+
+<Warning>
+  **Per-field independence has a consequence:** a capability that declares only `path` entries does
+  **not** restrict `connection`, and vice-versa. If you mean to constrain both, populate **both**
+  fields. Declaring a `path` allow-list does not implicitly lock down which databases open.
+</Warning>
+
+### Matching rules
+
+- **`connection`** matches by exact string equality — `duckdb:app.db` allows only that exact string.
+- **`path`** matches by whole-component prefix and is **traversal-safe**:
+  - a `..` segment anywhere in the value is rejected outright, so `data/` never allows
+    `data/../secret`;
+  - matching is on whole components, so `data` allows `data/x` but **not** `database/x` or
+    `data_secret/y`;
+  - backslashes are treated as separators (Windows paths).
+
+```json
+// Allow one database and one export directory for this window
+"permissions": [
+  { "identifier": "better-duck-tauri:allow-load",
+    "allow": [{ "connection": "duckdb:analytics.db" }] },
+  { "identifier": "better-duck-tauri:allow-import",
+    "allow": [{ "path": "data/" }] },
+  { "identifier": "better-duck-tauri:allow-export",
+    "allow": [{ "path": "data/" }] }
+]
+```
+
+The scope schema is declared in `scope::Entry` and registered from `build.rs`, so capability files
+get validation and autocompletion for these fields.
+
+## The Rust `Policy`
+
+The `Policy` is configured on `core::Builder` / `diesel::Builder` at plugin init and applies to
+**every operation regardless of capabilities** — it is the mandatory floor beneath the per-window
+scope. Its default is fully permissive; opt into each restriction.
+
+| Builder method | Effect |
+|---|---|
+| `read_only(true)` | Opens databases `READ_ONLY` and rejects writes (`execute` / `import` / `append_rows` / `revert`) |
+| `allow_connection(s)` | `load` accepts only these exact connection strings (repeatable) |
+| `allow_path(dir)` | import/export paths must resolve within one of these directories (repeatable; canonicalized, prefix-checked) |
+| `deny_risky_statements(true)` | Rejects risky leading keywords in `select` / `execute` / `export` / `explain` |
+| `allow_network(true)` | Allows loading network extensions (`httpfs` / `aws` / `azure`); **off** by default |
+
+```rust
+use better_duck_tauri::core::Builder;
+
+Builder::new()
+    .read_only(true)
+    .allow_connection("duckdb:analytics.db")
+    .allow_path("/data")
+    .deny_risky_statements(true)
+    .allow_network(false)
+    .build();
+```
+
+### The risky-statement filter
+
+`deny_risky_statements(true)` rejects a statement whose **leading keyword** is one of:
+
+```
+ATTACH  DETACH  INSTALL  LOAD  PRAGMA  COPY  SET  CALL  EXPORT  IMPORT
+```
+
+These reach the filesystem/network, load code, or mutate session/catalog state out of band.
+
+<Warning>
+  This is a **coarse, leading-keyword-only** filter. It does not parse the statement, so a read that
+  reaches disk through a table function — `SELECT * FROM read_csv_auto('/etc/passwd')` — passes it
+  (the leading keyword is `SELECT`). This is why `select` must be contained with `read_only` and a
+  connection allow-list, not this filter alone. See the
+  [select caveat](/tauri/security-overview#the-select-caveat-read-this).
+</Warning>
+
+### Path normalization
+
+`allow_path` canonicalizes both the allowed directories and the candidate path, then checks the
+candidate starts with an allowed directory. For a not-yet-created export target, it falls back to
+canonicalizing the parent directory and rejoining the filename — so writing a new file inside an
+allowed directory still resolves.
+
+### Network-extension gating
+
+`load_extension` is gated by `allow_network`: while it is off (default), the network extensions
+`httpfs`, `aws`, and `azure` are rejected (they enable SQL-driven network egress / SSRF /
+exfiltration). Non-network extensions (`spatial`, `json`, `vss`, …) load regardless.
+
+## How the two layers combine
+
+For a given command invocation:
+
+1. The capability must grant the command (permissions gate).
+2. The capability's scope entries for the relevant field must allow the value (or be empty).
+3. The init-time `Policy` must allow it.
+
+All three must pass. A failure at step 2 or 3 surfaces as `denied by policy: …`.
+
+<Note>
+  Scope and `Policy` are complementary, not redundant. Scope is **declarative and per-window** (an
+  app can grant different windows different connections); `Policy` is **mandatory and global** (it
+  cannot be widened by a capability). Use scope to differentiate windows; use `Policy` as the floor
+  no window can escape.
+</Note>
+
+## See also
+
+- [Capabilities & permissions](/tauri/capabilities-and-permissions) — the command-level gate scope
+  attaches to.
+- [Security overview](/tauri/security-overview) — the threat model and the defense-in-depth
+  checklist.
+- [Registration](/tauri/registration) — where the `Policy` setters live on the builder.

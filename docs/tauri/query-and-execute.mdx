@@ -1,0 +1,106 @@
+---
+title: "Query & Execute"
+description: "Run read queries with select and write/DDL statements with execute, bind positional parameters, read the affected-row count, and understand how statement policy applies."
+---
+
+`select` and `execute` are the two core SQL commands. They split along read vs write: `select`
+returns rows, `execute` returns an affected-row count. Both forward **arbitrary SQL** with
+positional parameter binding.
+
+<Warning>
+  `select` is in the [default permission set](/tauri/capabilities-and-permissions), but `execute` is
+  **not** — writes and raw arbitrary SQL must be granted explicitly
+  (`better-duck-tauri:allow-execute`, or the `better-duck-tauri:allow-raw-sql` umbrella). And
+  because DuckDB `SELECT` can reach the filesystem through table functions, treat `select` itself as
+  filesystem-read-capable — see the [select caveat](/tauri/security-overview).
+</Warning>
+
+## select
+
+Run a read query; resolve to an array of row objects.
+
+```ts
+const rows = await db.select<{ id: number; name: string }>(
+  'SELECT id, name FROM users WHERE id > $1 ORDER BY id',
+  [10],
+)
+// rows: { id: number; name: string }[]
+```
+
+- Signature: `select<T = Record<string, unknown>>(query: string, values?: unknown[]): Promise<T[]>`.
+- `values` defaults to `[]` and binds positionally as `$1, $2, …`.
+- Each row is a JSON object keyed by column name; see the
+  [value mapping](/tauri/frontend-overview#value-mapping).
+
+<Tip>
+  Always parameterize untrusted inputs with `$1, $2, …` rather than string-concatenating them into
+  the SQL. Parameters are bound by the backend, not interpolated.
+</Tip>
+
+## execute
+
+Run a write or DDL statement; resolve to an `ExecuteResult`.
+
+```ts
+await db.execute('CREATE TABLE users (id INTEGER, name VARCHAR)')
+
+const res = await db.execute('INSERT INTO users VALUES ($1, $2)', [1, 'ada'])
+res.rowsAffected // 1
+```
+
+- Signature: `execute(query: string, values?: unknown[]): Promise<ExecuteResult>`.
+- `ExecuteResult` is `{ rowsAffected: number }`. Pure DDL (e.g. `CREATE TABLE`) reports `0`.
+
+```ts
+interface ExecuteResult {
+  rowsAffected: number
+}
+```
+
+## Parameter binding
+
+Both commands bind `values` as consecutive positional parameters. The mapping (JS → DuckDB):
+
+| JS | DuckDB |
+|---|---|
+| `null` → `NULL`, `boolean` → `BOOLEAN` | |
+| integer → `BIGINT` (or `UBIGINT` past `i64`), other number → `DOUBLE` | |
+| `string` → `VARCHAR`, array → `LIST`, object → `STRUCT` | |
+
+```ts
+await db.execute(
+  'INSERT INTO events (id, tags, meta) VALUES ($1, $2, $3)',
+  [7, ['click', 'nav'], { source: 'web' }],
+)
+```
+
+## How statement policy applies
+
+Before the backend runs, `select` and `execute` pass through the init-time
+[`Policy`](/tauri/scope-and-policy):
+
+- `execute` is rejected under `read_only(true)` with `denied by policy: read-only mode: …`.
+- With `deny_risky_statements(true)`, both reject a statement whose **leading keyword** is one of
+  `ATTACH` / `DETACH` / `INSTALL` / `LOAD` / `PRAGMA` / `COPY` / `SET` / `CALL` / `EXPORT` /
+  `IMPORT`.
+
+<Warning>
+  `deny_risky_statements` only inspects the leading keyword. A read like
+  `SELECT * FROM read_csv_auto('/etc/passwd')` passes it, because the leading keyword is `SELECT`.
+  This is the central reason to also pin connections and run read-only for untrusted webviews — see
+  [Security overview](/tauri/security-overview).
+</Warning>
+
+## Concurrency
+
+Each command hops onto a blocking task (`spawn_blocking`) so DuckDB work never blocks the Tauri
+async runtime. The backend holds a cheap, cloneable `Database` handle (core) or an r2d2 pool
+(diesel) and opens a short-lived connection per operation, so independent calls do not serialize on
+each other beyond the registry lock. See [Backends](/tauri/backends).
+
+## See also
+
+- [Streaming](/tauri/streaming) — for large result sets, stream rows in chunks instead of
+  materializing them all.
+- [Append rows](/tauri/append-rows) — a faster path than many `execute('INSERT …')` calls.
+- [Parameters & prepared statements](/core/positional-parameters) — the binding model underneath.

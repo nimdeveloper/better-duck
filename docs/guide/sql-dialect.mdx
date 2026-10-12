@@ -1,0 +1,185 @@
+---
+title: "SQL Dialect & Statements"
+description: "DuckDB's PostgreSQL-like dialect through the driver: batch vs single statements, what each statement kind returns, positional and named parameters, transactions, and replacement scans."
+---
+
+DuckDB is an in-process OLAP SQL engine with a **PostgreSQL-like** dialect and a set of analytics
+extras. This page covers the dialect features worth knowing and — more importantly — how statements,
+parameters, and transactions behave when you drive DuckDB from Rust through
+[`better-duck-core`](/core/opening-connections). For the value types that come back, see
+[Type system](/guide/type-system); for how extensions reach a connection, see
+[Extensions](/guide/extensions).
+
+## The dialect — analytics extras
+
+DuckDB's SQL is close to PostgreSQL, so most of what you know transfers. The pieces that surprise
+people are the analytics-focused additions:
+
+- **Column selection sugar** — `SELECT * EXCLUDE (col)`, `SELECT * REPLACE (expr AS col)`, and
+  `COLUMNS(...)` regex/lambda column selection.
+- **Grouping shortcuts** — `GROUP BY ALL`, `ORDER BY ALL`, and `QUALIFY` to filter on window
+  functions without a subquery.
+- **Rich literals and nesting** — `LIST`, `STRUCT`, and `MAP` literals, `UNNEST`, window functions,
+  and `PIVOT` / `UNPIVOT`.
+- **Friendly casting** — `CAST(x AS t)` or the shorthand `x::t`; `TRY_CAST` yields `NULL` instead of
+  erroring on a bad cast.
+
+```sql
+SELECT * EXCLUDE (internal_id)
+FROM events
+QUALIFY row_number() OVER (PARTITION BY label ORDER BY score DESC) = 1;
+```
+
+<Tip>
+  `TRY_CAST` composes with Rust's `Option<T>`: a `TRY_CAST` that fails produces `NULL`, which reads
+  back as [`DuckValue::Null`](/guide/type-system) or `None` — a clean way to round-trip possibly-bad
+  input without sentinels.
+</Tip>
+
+## Batch vs single statements
+
+The driver draws a sharp line between running *many* statements and preparing *one*.
+
+| Method | Statements | Returns | Use for |
+| --- | --- | --- | --- |
+| `execute_batch(sql)` | Multiple `;`-separated | Nothing (results discarded) | DDL and simple DML |
+| `execute(sql)` | Exactly **one** | A [`DuckResult`](/core/iterating-results) | Any single statement you read from |
+
+```rust
+// Multiple statements — DuckDB performs the split.
+conn.execute_batch("CREATE TABLE t (id INTEGER, name VARCHAR); INSERT INTO t VALUES (1, 'a')")?;
+
+// Exactly one statement, returning a result you iterate.
+let mut result = conn.execute("SELECT id, name FROM t")?;
+```
+
+<Note>
+  The split in `execute_batch` is done by **DuckDB's own parser** — it is NUL-safe and aware of
+  comments and dollar-quoted strings — **not** a Rust-side `split(';')`. A semicolon inside a string
+  literal does not split the batch. The same parser backs
+  [`extract_statements`](/core/positional-parameters), which hands you a batch of individually
+  preparable statements.
+</Note>
+
+### What a statement returns
+
+`execute` works for every statement kind; what you get back depends on the kind:
+
+- **`SELECT` / `RETURNING`** → rows. Iterate the `DuckResult` (it is `Iterator<Item = Result<DuckRow>>`).
+- **`INSERT` / `UPDATE` / `DELETE`** → an affected-row count via `result.changes()`.
+- **DDL** → `changes()` is `0`, with no rows.
+
+<Tip>
+  If `execute` "returns rows" where you expected a count (or vice versa), check the statement kind —
+  `SELECT` / `RETURNING` yield rows, DML reports a count. `result_type()` and `statement_type()`
+  on the result tell you which you got.
+</Tip>
+
+## Parameters: positional and named
+
+DuckDB parameters are **positional** (`$1`, `$2`, … or `?`) or **named** (`$name`). Bind values as
+`&mut dyn AppendAble` — every [`DuckValue`](/guide/type-system) and the primitive Rust types
+(`i32`, `f64`, `&str` / `String`, `bool`, …) implement `AppendAble`.
+
+```rust
+// Positional — &mut [&mut dyn AppendAble]; heterogeneous types are fine.
+let mut id = 3_i32;
+let mut name = String::from("c");
+conn.execute_with("INSERT INTO t VALUES ($1, $2)", &mut [&mut id, &mut name])?;
+
+// Named — &mut [(&str, &mut dyn AppendAble)]; order is irrelevant, binding is by $name.
+conn.execute_with_named(
+    "INSERT INTO t VALUES ($id, $name)",
+    &mut [
+        ("name", &mut name as &mut dyn better_duck_core::AppendAble),
+        ("id",   &mut id   as &mut dyn better_duck_core::AppendAble),
+    ],
+)?;
+```
+
+- A named `$name` that is **not** present in the SQL yields `Error::InvalidParameterName`.
+- A wrong number of positional binds yields `Error::InvalidParameterCount`.
+- Bind an explicit SQL `NULL` with `DuckValue::Null` (or an `Option::None`).
+
+<Tip>
+  With the [`derive`](/guide/feature-flags) feature, the [`params!`](/macros/derives-overview) macro builds
+  the `&mut [&mut dyn AppendAble]` slice for you:
+  `conn.execute_with("INSERT INTO t VALUES ($1, $2)", &mut params![1_i32, "a".to_owned()])?`.
+  For reusable statements and incremental execution, see
+  [Parameters & Prepared Statements](/core/positional-parameters).
+</Tip>
+
+## Transactions
+
+DuckDB has **no** dedicated transaction entry point in its C API, so the driver issues
+`BEGIN TRANSACTION` / `COMMIT` / `ROLLBACK` as SQL. Three ergonomic styles exist on `Connection`:
+
+<CodeGroup>
+```rust Closure (recommended)
+// Commits on Ok, rolls back on Err or panic.
+conn.transaction(|c| {
+    c.execute_batch("INSERT INTO t VALUES (1)")?;
+    c.execute_with("INSERT INTO t VALUES ($1)", &mut [&mut 2_i32])?;
+    Ok(())
+})?;
+```
+
+```rust RAII guard
+// Rolls back on drop unless committed — the ?-early-return path stays safe.
+let mut tx = conn.begin_transaction()?;
+tx.execute_batch("INSERT INTO t VALUES (1)")?;   // derefs to Connection
+tx.commit()?;                                     // or tx.rollback()?; or drop to roll back
+```
+
+```rust transaction! macro (derive feature)
+// Same scope, terser; works for core Connection and Diesel DuckDbConnection alike.
+transaction!(conn, {
+    conn.execute_batch("INSERT INTO t VALUES (1)")?;
+    Ok(())
+})?;
+```
+</CodeGroup>
+
+<Warning>
+  **No savepoints.** DuckDB supports only `BEGIN` / `COMMIT` / `ROLLBACK` / `ABORT` — **not**
+  `SAVEPOINT` / `RELEASE` / `ROLLBACK TO`. There is deliberately no savepoint API.
+</Warning>
+
+<Warning>
+  **A transaction must not span an `.await`.** On the [async facade](/core/async), run the
+  whole unit inside `with_connection` / `AsyncPool::with` so `BEGIN` … `COMMIT` stay on one blocking
+  dispatch. See [transactions](/core/transactions) for the full reference.
+</Warning>
+
+## Replacement scans
+
+A bare identifier in a `FROM` clause can resolve to a **registered source** rather than a catalog
+table — for example an Arrow or Polars view, or a Rust replacement scan. This is how
+[`register_arrow` / `query_polars`](/core/arrow) surface in-memory data to SQL without
+copying it into a table first:
+
+```rust
+// df is a Polars DataFrame registered under the name "sales".
+conn.register_polars("sales", &df)?;
+let total = conn.execute("SELECT sum(amount) AS t FROM sales")?;  // "sales" is the registered source
+```
+
+Writing your own replacement scan is an experimental part of the [`udf`](/guide/feature-flags)
+feature (`better_duck_core::udf::replacement`), with no attribute macro.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Type system" icon="table-cells" href="/guide/type-system">
+    What the values coming back actually are.
+  </Card>
+  <Card title="Extensions" icon="puzzle-piece" href="/guide/extensions">
+    Bundled vs runtime JSON, Parquet, ICU, and spatial.
+  </Card>
+  <Card title="Queries, Results & Values" icon="table" href="/core/iterating-results">
+    The full result-iteration and metadata API.
+  </Card>
+  <Card title="Parameters & Prepared" icon="link" href="/core/positional-parameters">
+    Reusable statements, `CachedStatement`, and incremental execution.
+  </Card>
+</CardGroup>

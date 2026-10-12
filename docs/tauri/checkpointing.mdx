@@ -1,0 +1,112 @@
+---
+title: "Checkpointing"
+description: "DuckDB folds WAL writes into the main file on checkpoint. Configure composable strategies on the builder — threshold, after-writes, interval, on-exit, force, and platform defaults — or checkpoint explicitly from the webview."
+---
+
+DuckDB writes go to a write-ahead log (WAL) and are folded into the main database file on
+*checkpoint*. The plugin lets you configure **composable** checkpoint strategies at init time, in
+addition to the explicit [`checkpoint` command](/tauri/maintenance). The default is fully passive —
+rely on DuckDB's own WAL-size auto-checkpoint.
+
+<Info>
+  `CHECKPOINT` fails while a transaction is active, so background and after-write sweeps can use
+  `FORCE CHECKPOINT` (DuckDB v1.4+ waits for the lock) via [`checkpoint_force`](#checkpoint-force).
+</Info>
+
+## Strategies
+
+All strategies are set on `core::Builder` / `diesel::Builder` and are **additive** — enable any mix.
+
+| Builder method | Strategy | Behavior |
+|---|---|---|
+| `checkpoint_threshold("64MB")` | Automatic | `SET checkpoint_threshold=…` at load (DuckDB's own WAL-size auto-checkpoint) |
+| `checkpoint_after_writes(n)` | AfterWrites | Checkpoint after every `n`-th write operation |
+| `checkpoint_interval(dur)` | Interval | A background thread sweeps **all** loaded connections every `dur` |
+| `checkpoint_on_exit(true)` | OnAppLifecycle | Checkpoint all connections on the Tauri `Exit` event |
+| `checkpoint_force(true)` | — | Use `FORCE CHECKPOINT` for background / after-write sweeps |
+| `checkpoint_platform_defaults()` | per-platform | Mobile → `OnAppLifecycle` + `FORCE CHECKPOINT`; desktop passive |
+
+```rust
+use std::time::Duration;
+use better_duck_tauri::core::Builder;
+
+Builder::new()
+    .checkpoint_interval(Duration::from_secs(300))
+    .checkpoint_on_exit(true)
+    .checkpoint_force(true)
+    .build();
+```
+
+### Automatic (`checkpoint_threshold`)
+
+Sets DuckDB's own `checkpoint_threshold` at `load` time (e.g. `"64MB"`), tuning how large the WAL
+grows before DuckDB auto-checkpoints. The most hands-off strategy.
+
+### AfterWrites (`checkpoint_after_writes`)
+
+Counts write operations (`execute` / `import` / `append_rows` / `revert`) and checkpoints the
+connection after every `n`-th one. Good for bursty writes you want flushed promptly. Uses
+`FORCE CHECKPOINT` when `checkpoint_force(true)` is set.
+
+### Interval (`checkpoint_interval`)
+
+Spawns a background thread at plugin setup that sleeps for the period and then checkpoints **every
+loaded connection** (`checkpoint_all`). Best-effort — failures on an individual connection are
+ignored.
+
+### OnAppLifecycle (`checkpoint_on_exit`)
+
+Hooks the Tauri `RunEvent::Exit` event and checkpoints all connections as the app exits — the
+safety net for data still in the WAL at shutdown.
+
+### `checkpoint_force`
+
+Switches the background / after-write / lifecycle sweeps from `CHECKPOINT` to `FORCE CHECKPOINT`,
+which waits for the lock instead of failing when a transaction is active. The explicit
+[`db.checkpoint(force)`](/tauri/maintenance) command takes its own `force` argument independently.
+
+## Platform defaults
+
+`checkpoint_platform_defaults()` applies a sensible per-platform set:
+
+- **Mobile** (Android / iOS): enables `OnAppLifecycle` + `FORCE CHECKPOINT`, because the OS can
+  suspend or kill the app without a clean process exit, so pending WAL data must be flushed on the
+  lifecycle event.
+- **Desktop**: stays passive (relies on DuckDB's WAL-size auto-checkpoint).
+
+<Note>
+  **Merge semantics make call order irrelevant.** `checkpoint_platform_defaults()` fills only what
+  you have not set: `Option` fields fall back to the defaults, and the `on_exit` / `force` booleans
+  are OR-ed in. A platform default can *enable* a strategy but never *disables* one you turned on,
+  so it is safe to call before or after the other `checkpoint_*` setters.
+</Note>
+
+## Explicit checkpoint from the webview
+
+```ts
+await db.checkpoint()      // CHECKPOINT on this connection
+await db.checkpoint(true)  // FORCE CHECKPOINT
+```
+
+See [Maintenance](/tauri/maintenance). Reach for this at a critical moment — before an export, on
+logout — rather than relying only on a background strategy.
+
+## Picking a strategy
+
+- **Desktop, moderate writes**: `checkpoint_interval(…)` and/or `checkpoint_on_exit(true)`.
+- **Mobile**: `checkpoint_platform_defaults()` (or `checkpoint_on_exit(true).checkpoint_force(true)`).
+- **Bursty writes to flush promptly**: `checkpoint_after_writes(n)`.
+- **WAL-size tuning**: `checkpoint_threshold("…")`.
+- **A critical moment**: `db.checkpoint(true)` from JS.
+
+<Warning>
+  Checkpointing (WAL → main file) is **not** the same as the migration backup protocol
+  (`<db>.bak` / `<db>.migrate-journal`). The latter is an automatic crash-safety net around
+  migrations — see [Migrations](/tauri/migrations). Don't conflate them.
+</Warning>
+
+## See also
+
+- [Maintenance](/tauri/maintenance) — the explicit `checkpoint` command.
+- [Migrations](/tauri/migrations) — the separate, migration-time backup mechanism.
+- [Registration](/tauri/registration) — where the strategy setters live on the builder.

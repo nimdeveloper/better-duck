@@ -1,0 +1,81 @@
+---
+title: "Streaming & Interrupt"
+description: "Stream a large query's rows to the webview in chunks over a Tauri Channel, resolve to the total row count, and cancel the in-flight stream from another call with interrupt."
+---
+
+For result sets too large to materialize at once, `stream` delivers rows to a callback in chunks
+over a Tauri `Channel`, and resolves to the total row count. Its companion `interrupt` cancels the
+single in-flight stream on a connection.
+
+## stream
+
+```ts
+const total = await db.stream<{ id: number }>(
+  'SELECT id FROM huge ORDER BY id',
+  (rows) => render(rows), // called once per chunk
+  [],                     // positional params
+  1000,                   // chunk size (optional)
+)
+// total: number of rows streamed
+```
+
+- Signature:
+
+  ```ts
+  stream<T = Record<string, unknown>>(
+    query: string,
+    onBatch: (rows: T[]) => void,
+    values?: unknown[],
+    chunk?: number,
+  ): Promise<number>
+  ```
+
+- `onBatch` is invoked once per batch of up to `chunk` rows as they are produced.
+- `chunk` defaults to **1024** (the backend clamps it to a minimum of 1).
+- `values` bind positionally, exactly like [`select`](/tauri/query-and-execute).
+- The promise resolves to the **total** number of rows streamed after the last batch.
+
+### How it works
+
+The JS wrapper opens a `Channel<T[]>`, sets its `onmessage` to your `onBatch`, and passes it to the
+`stream` command. On the Rust side the query is iterated lazily and each batch is sent over the
+channel; rows are never all held in memory at once. This makes `stream` the right tool for
+progressive rendering (tables, charts) and for exports larger than the webview heap.
+
+<Tip>
+  Use `stream` when the result could be large or when you want to show rows as they arrive. Use
+  [`select`](/tauri/query-and-execute) when you know the result is small and want a single array.
+</Tip>
+
+## interrupt
+
+Cancel the in-flight streaming query on this connection.
+
+```ts
+const signalled = await db.interrupt() // true if a stream was actually cancelled
+```
+
+- Signature: `interrupt(): Promise<boolean>`.
+- Resolves to whether an interrupt was signalled (i.e. a stream was registered for this connection).
+
+While a stream runs, the backend registers an interrupt handle (`QueryControl`) for that connection
+string; `interrupt` signals it from another command invocation, and the handle is always
+deregistered when the stream ends. A cancelled stream surfaces as a rejected `stream` promise.
+
+<Note>
+  Interrupt targets the **one** in-flight stream per connection string. If no stream is running,
+  `interrupt` resolves to `false`. To run and cancel independent streams concurrently, load separate
+  connections.
+</Note>
+
+## Permissions
+
+`better-duck-tauri:allow-stream` and `better-duck-tauri:allow-interrupt` (neither is in the default
+set). Grant both if your UI offers a cancel button. See
+[Capabilities & permissions](/tauri/capabilities-and-permissions).
+
+## See also
+
+- [Query & execute](/tauri/query-and-execute) — the non-streaming read path.
+- [Arrow IPC](/tauri/arrow) — stream a result as a single Arrow buffer instead of JSON batches.
+- [Async & pooling](/core/async) — the interruptible query model underneath.

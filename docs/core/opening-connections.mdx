@@ -1,0 +1,128 @@
+---
+title: "Opening Connections"
+description: "Open in-memory and on-disk DuckDB connections, clone them, close them, and interrupt a running query — the Connection type's lifecycle."
+---
+
+`better_duck_core::connection::Connection` is the main handle you run SQL through. DuckDB is
+compiled into the crate (vendored via `better-duck-sys`), so there is **no system install** to
+manage — opening a connection is self-contained.
+
+<Note>
+  Pin the exact pre-release version — Cargo's default version requirement excludes `-beta.N`:
+
+  ```toml
+  better-duck-core = "0.1.0-beta.8"   # published on crates.io as `better-duck`
+  ```
+</Note>
+
+## Opening
+
+```rust
+use better_duck_core::connection::Connection;
+
+let mut conn = Connection::open_in_memory()?;        // private in-memory database
+let mut conn = Connection::open("app.duckdb")?;      // on-disk (created if absent)
+```
+
+<ParamField path="open<P: AsRef<Path>>(path) -> Result<Connection>">
+  Opens (or creates) an on-disk database. A path containing an interior NUL byte is rejected as
+  [`Error::NulError`](/core/errors) before touching DuckDB.
+</ParamField>
+<ParamField path="open_in_memory() -> Result<Connection>">
+  Opens a fresh, private in-memory database.
+</ParamField>
+<ParamField path="open_with_flags(path, config) -> Result<Connection>">
+  As `open`, with a [`Config`](/core/configuration).
+</ParamField>
+<ParamField path="open_in_memory_with_flags(config) -> Result<Connection>">
+  As `open_in_memory`, with a [`Config`](/core/configuration).
+</ParamField>
+
+All four constructors are `#[must_use]` — the returned connection should be used or explicitly
+dropped. Each opens its **own** database.
+
+<Warning>
+  **Each `open_in_memory()` creates an isolated database.** Two in-memory connections opened this
+  way do not see each other's tables. To share one database (in-memory included) across several
+  connections, open a [`Database`](/core/sharing-a-database) and `connect()` from it.
+</Warning>
+
+## Thread-safety at a glance
+
+`Connection` is `Send` (safe to move between threads) but **not** `Sync`. All SQL methods take
+`&mut self`, so a single connection is used by one thread at a time. For genuine concurrency use
+[`try_clone`](#cloning-a-connection), a [`Database`](/core/sharing-a-database), the
+[async facade](/core/async), or a [pool](/core/pooling).
+
+## Cloning a connection
+
+```rust
+let mut writer = Connection::open_in_memory()?;
+writer.execute_batch("CREATE TABLE t (id INTEGER)")?;
+let mut reader = writer.try_clone()?;    // same database, independent connection
+```
+
+- `try_clone() -> Result<Connection>` opens a **second, independent** connection to the **same**
+  database (one `duckdb_connect`, no file I/O). Both observe the same data but have separate
+  transaction scopes. Use it to read while an [`Appender`](/core/appender) or a long query holds
+  the original.
+- `database() -> Database` returns a shareable [`Database`](/core/sharing-a-database) handle for the
+  backing database, so you can `connect()` more connections later.
+
+## Closing
+
+A `Connection` closes automatically on drop. For explicit control:
+
+- `close(self) -> Result<()>` (`#[must_use]`) consumes the connection and closes it. It **errors
+  and stays open** if appenders created from it are still alive; the connection then closes once
+  the last appender drops.
+- `is_open(&self) -> bool` always returns `true`: `close` consumes the value, so a `Connection`
+  can only ever name an open connection. It is retained for source compatibility.
+
+<Tip>
+  Child resources (appenders, cached statements, extracted-statement batches) retain the
+  connection internally, so "a child cannot outlive its connection" is a compile-time invariant,
+  not a rule you have to remember.
+</Tip>
+
+## Interrupting a running query
+
+`query_control() -> QueryControl` mints a `QueryControl` (also at `better_duck_core::QueryControl`)
+**before** a query starts. It is `Clone + Send + Sync` and exposes only read/signal operations, so
+another thread can cancel or observe the query without becoming a second concurrent user of the
+connection.
+
+```rust
+let control = conn.query_control();
+assert!(control.is_active());
+// From another thread, while the query runs:
+let signalled: bool = control.interrupt();          // request cancellation
+let progress = control.progress();                  // Option<QueryProgress>
+```
+
+- `interrupt() -> bool` — requests cancellation. Idempotent; returns `true` if the signal reached
+  DuckDB, `false` if skipped as stale. 
+- `progress() -> Option<QueryProgress>` — a snapshot `{ percentage, rows_processed, total_rows_to_process }`;
+  `percentage` is `-1.0` when DuckDB cannot estimate.
+- `is_active() -> bool` — whether the query it was minted for is still current.
+
+<Info>
+  **Generation scoping.** A control captures the connection's query generation when minted. Once
+  that query finishes, the control goes stale — `is_active()` turns `false`, `progress()` returns
+  `None`, and `interrupt()` becomes a no-op — so a delayed cancellation can never hit a later,
+  unrelated query. The [async facade](/core/async) builds cancel-on-drop on exactly this.
+</Info>
+
+## Running inside a loadable extension
+
+`unsafe fn open_from_raw(db: ffi::duckdb_database) -> Result<Connection>` wraps a **borrowed**
+`duckdb_database` owned by a host process — for code running inside a loadable
+`.duckdb_extension`. The returned connection never closes that database. See
+[`#[duckdb_entrypoint]`](/macros/entrypoint) and [loadable extensions](/core/extensions#loadable-extensions-experimental).
+
+## See also
+
+- [Configuration](/core/configuration) — tune the engine at open time with `Config`.
+- [Sharing a database](/core/sharing-a-database) — one database, many connections.
+- [Executing SQL](/core/executing-sql) — run your first statements.
+- [Feature flags](/guide/feature-flags) — `chrono`, `async`, `pool`, `udf`, and more.

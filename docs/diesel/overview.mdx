@@ -4,23 +4,28 @@ description: "What the better-duck-diesel Diesel 2.3 backend for DuckDB is, how 
 ---
 
 `better-duck-diesel` is a third-party [Diesel](https://diesel.rs) 2.3 backend for DuckDB. It plugs the
-[`better-duck-core`](/core/connections) driver into Diesel's typed query builder, so you connect, map a
+[`better-duck-core`](/core/opening-connections) driver into Diesel's typed query builder, so you connect, map a
 schema with `table!`, and build `INSERT`/`SELECT`/`UPDATE`/`DELETE` queries as Rust — while still
 reaching the DuckDB-specific SQL (operators, scalar functions, aggregates, types) that stock Diesel has
 no equivalent for.
 
+DuckDB itself is compiled and embedded through core, so there is no system install and no `libduckdb` to
+link against.
+
 ## What it is
 
-`DuckDbConnection` is a full Diesel `Connection` + `LoadConnection`. That means `.transaction(|c| …)`,
-prepared-statement caching, instrumentation, `r2d2` pooling, and `diesel migration` (it implements
-`MigrationConnection`) all work. `.inner()` / `.inner_mut()` expose the underlying core `Connection` for
-registering UDFs, loading extensions, and running core-only APIs.
+`DuckDbConnection` is a full Diesel `Connection` + `LoadConnection`. That means:
 
-DuckDB is compiled and embedded through core — there is no system install.
+- `conn.transaction(|c| …)` and `begin_test_transaction` work — see [Transactions](/diesel/transactions).
+- Prepared-statement caching and instrumentation work.
+- `r2d2` pooling works — see [Pooling](/diesel/pooling).
+- `diesel migration` works — the connection implements `MigrationConnection`, see [Schema & Migrations](/diesel/schema#migrations).
+- `.inner()` / `.inner_mut()` expose the underlying core `Connection` for registering UDFs, loading
+  extensions, and running core-only APIs — see [Installation & Setup](/diesel/installation-and-setup#reaching-the-core-connection).
 
 <Note>
 This crate's default feature set is `["decimal"]` only. Unlike `better-duck-core`, **`chrono` is NOT on
-by default here** — turn it on for date/time column support.
+by default here** — turn it on for date/time column support. See [Feature flags](#feature-flags) below.
 </Note>
 
 ## 30-second quickstart
@@ -63,7 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See [Setup & CRUD](/diesel/setup-and-crud) for the full connection and query surface.
+See [Installation & Setup](/diesel/installation-and-setup) for the full connection surface and
+[Schema](/diesel/schema) for mapping tables.
 
 ## The two SQL surfaces
 
@@ -80,11 +86,11 @@ use better_duck_diesel::dsl::*;
 
 That prelude adds two operator extension traits (`DuckExpressionMethods`, `DuckTextExpressionMethods`)
 plus a large library of typed free functions and aggregates — all emitting real DuckDB SQL, none
-requiring `sql_query`. See the [DuckDB SQL DSL](/diesel/sql-dsl) page for the verified inventory.
+requiring `sql_query`. See the [DSL overview](/diesel/dsl-overview) for the map of this surface.
 
 <Note>
 Spatial `ST_*` functions are **not** in the `dsl::*` prelude — import them from
-`better_duck_diesel::spatial::*` under `feature = "spatial"`.
+`better_duck_diesel::spatial::*` under `feature = "spatial"`. See [Spatial](/diesel/spatial).
 </Note>
 
 ## Feature flags
@@ -102,10 +108,10 @@ Verified against `crates/better-duck-diesel/Cargo.toml`.
 | `derive` | — | re-export `FromRow`/`ToRow`/`DuckEnum`/`DuckStruct` with Diesel `FromSql`/`ToSql` emission on |
 
 <Warning>
-There is **no `bundled` feature** on this crate (the README's feature table lists one, but `Cargo.toml`
-does not define it). DuckDB is embedded through core regardless. The `spatial` feature carries no extra
-Rust deps — it only gates the module; the `ST_*` functions are plain SQL, and `ensure_loaded`
-installs/loads the extension at runtime (needs network unless already present).
+There is **no `bundled` feature** on this crate (an older README feature table listed one, but
+`Cargo.toml` does not define it). DuckDB is embedded through core regardless. The `spatial` feature
+carries no extra Rust deps — it only gates the module; the `ST_*` functions are plain SQL, and
+`ensure_loaded` installs/loads the extension at runtime (needs network unless already present).
 </Warning>
 
 For the full project-wide feature picture, see [feature flags](/guide/feature-flags).
@@ -115,24 +121,24 @@ For the full project-wide feature picture, see [feature flags](/guide/feature-fl
 Reach for `better-duck-diesel` when you want a typed query builder, schema mapping, migrations, or
 pooling over DuckDB.
 
-Drop to [`better-duck-core`](/core/connections) whenever you need something below the ORM — the appender
+Drop to [`better-duck-core`](/core/opening-connections) whenever you need something below the ORM — the appender
 for bulk insert, columnar chunks, async, Arrow/Polars interop, or raw parameter binding. Those are **not**
 part of the Diesel surface. Because `DuckDbConnection::inner_mut()` hands you the core `Connection`, you
-can mix both in the same program.
+can mix both in the same program. See [Choosing an API](/guide/choosing-an-api).
 
 ## Sibling crates
 
 <CardGroup cols={2}>
-  <Card title="better-duck-core" href="/core/connections">
+  <Card title="better-duck-core" href="/core/opening-connections">
     The raw Rust driver: connections, values, appender, columnar chunks, async.
   </Card>
-  <Card title="UDF & derive macros" href="/macros/udf">
+  <Card title="UDF & derive macros" href="/macros/udf-overview">
     The `#[duckdb_*]` UDF macros and `FromRow`/`DuckEnum`/`DuckStruct` derives.
   </Card>
-  <Card title="DuckDB SQL DSL" href="/diesel/sql-dsl">
+  <Card title="DuckDB SQL DSL" href="/diesel/dsl-overview">
     DuckDB-only operators, scalar functions, aggregates, and spatial.
   </Card>
-  <Card title="Types & Pooling" href="/diesel/types-and-pooling">
-    Type mapping, the `values::*` newtypes, r2d2 pooling, and data derives.
+  <Card title="Type mapping" href="/diesel/type-mapping">
+    Rust ↔ DuckDB type mapping and the `values::*` binding newtypes.
   </Card>
 </CardGroup>

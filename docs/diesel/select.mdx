@@ -1,0 +1,187 @@
+---
+title: "Select & Load"
+description: "Query DuckDB through Diesel: load rows into tuples and structs, select specific columns, filter, order, limit, count, and fetch single rows with first/get_result."
+---
+
+Reading data through `DuckDbConnection`. All of this is Diesel's portable query builder — it works on the
+DuckDB backend with no extra imports. For DuckDB-only predicates and scalar functions in `.filter` /
+`.select`, add the [DSL prelude](/diesel/dsl-overview).
+
+## Loading rows
+
+`.load()` materializes a result set into a `Vec`. The target type is a tuple of the selected columns'
+Rust types, or a `#[derive(Queryable)]` struct:
+
+```rust
+use diesel::prelude::*;
+
+// into tuples
+let rows: Vec<(i32, String, f64)> = products::table.load(&mut conn)?;
+
+// into a Queryable struct (see /diesel/schema#mapping-rows-to-structs)
+let items: Vec<Item> = items::table.select(Item::as_select()).load(&mut conn)?;
+```
+
+## Selecting specific columns
+
+`.select` narrows the projection. A single column loads as its scalar type; a tuple loads as a tuple:
+
+```rust
+let ids: Vec<i32> = products::table
+    .order(products::id)
+    .select(products::id)
+    .load(&mut conn)?;
+
+let pairs: Vec<(i32, String)> = products::table
+    .select((products::id, products::name))
+    .load(&mut conn)?;
+```
+
+<Tip>
+Prefer `.select(T::as_select())` with a `#[derive(Selectable)]` struct over positional `Queryable`
+tuples when a query grows: it binds columns by name, so reordering struct fields can't silently
+mis-map. See [Schema](/diesel/schema#mapping-rows-to-structs).
+</Tip>
+
+## Filtering, ordering, limiting
+
+```rust
+let hits: Vec<(i32, String, f64)> = products::table
+    .filter(products::price.lt(20.0))
+    .filter(products::name.like("w%"))   // chained filters AND together
+    .order(products::name.asc())
+    .limit(10)
+    .load(&mut conn)?;
+```
+
+Portable predicates (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `like`, `between`, `is_null`, `eq_any`, …) and
+`count`/`sum`/`avg`/`min`/`max` are all Diesel's own and need no DuckDB imports.
+
+<Note>
+For DuckDB-only predicates — `ILIKE`, `SIMILAR TO`, `GLOB`, regex operators, `IS DISTINCT FROM` — add
+`use better_duck_diesel::dsl::*;`. See [Operators](/diesel/operators). DuckDB-only scalar functions
+(e.g. `lower`, `date_trunc`) can also appear in `.filter`/`.select` — see the
+[DSL overview](/diesel/dsl-overview).
+</Note>
+
+## Single rows
+
+| Method | Returns | On no rows |
+|---|---|---|
+| `.first(&mut conn)` | the first row | `Err(Error::NotFound)` |
+| `.get_result(&mut conn)` | one row (e.g. after `RETURNING`) | `Err(Error::NotFound)` |
+| `.get_results(&mut conn)` | `Vec` of rows | empty `Vec` |
+| `.optional()` on the above | `Option<T>` | `Ok(None)` |
+
+```rust
+let (id, name): (i32, String) = products::table
+    .select((products::id, products::name))
+    .first(&mut conn)?;
+
+let maybe: Option<i32> = products::table
+    .filter(products::name.eq("absent"))
+    .select(products::id)
+    .first(&mut conn)
+    .optional()?;
+```
+
+## Counting and aggregating
+
+```rust
+let count: i64 = products::table.count().first(&mut conn)?;
+
+let total: Option<f64> = products::table
+    .select(diesel::dsl::sum(products::price))
+    .first(&mut conn)?; // SUM is NULL on an empty table -> None
+```
+
+<Warning>
+Mind DuckDB's aggregate type widening. `SUM`/`AVG` over a `DOUBLE` column widen to `DOUBLE` (load as
+`Option<f64>`), but `SUM` over an `INTEGER` column widens to `HUGEINT`, which the `BigInt` adapter
+**rejects**. Aggregate a `DOUBLE` column, or `CAST` the sum, rather than summing an integer column
+directly into an `i64`.
+</Warning>
+
+DuckDB-specific aggregates (median, stddev, `string_agg`, `array_agg`, …) live in the DSL — see
+[Aggregates](/diesel/aggregates).
+
+## Nullable columns
+
+A `Nullable<T>` column binds `Some(v)`/`None` and loads as `Option<T>` — SQL `NULL` reads back as `None`.
+Selecting a normally-non-null expression `.nullable()` (e.g. an aggregate over an empty set, or the right
+side of a `LEFT JOIN`) is the other common source of `Option`:
+
+```rust
+let none_max: Option<i32> = items::table
+    .filter(items::id.eq(9999))
+    .select(diesel::dsl::max(items::qty))
+    .first(&mut conn)?; // no rows -> None
+```
+
+## Joins
+
+Teach Diesel the relationship with `joinable!` + `allow_tables_to_appear_in_same_query!`, then
+`inner_join` / `left_join`. `inner_join` keeps only matched rows; `left_join` keeps every left row and
+makes the right side `.nullable()`:
+
+```rust
+diesel::joinable!(items -> owners (owner_id));
+diesel::allow_tables_to_appear_in_same_query!(items, owners);
+
+// inner join
+let matched: Vec<(String, String)> = items::table
+    .inner_join(owners::table)
+    .select((items::label, owners::name))
+    .load(&mut conn)?;
+
+// left join with explicit .on(...); unmatched right side is None
+let all: Vec<(String, Option<String>)> = items::table
+    .left_join(owners::table.on(items::owner_id.eq(owners::id.nullable())))
+    .select((items::label, owners::name.nullable()))
+    .load(&mut conn)?;
+```
+
+## Boxed queries & pagination
+
+`.into_boxed()` erases the query type so you can apply `limit`/`offset` decided at runtime — the usual
+pagination pattern:
+
+```rust
+let page: Vec<i32> = items::table
+    .into_boxed()
+    .order(items::id)
+    .offset(offset)
+    .limit(limit)
+    .select(items::id)
+    .load(&mut conn)?;
+```
+
+<Tip>
+To see the SQL a query emits for the DuckDB backend — numbered `$1` placeholders and double-quoted
+identifiers — render it with `diesel::debug_query`:
+
+```rust
+use better_duck_diesel::backend::DuckDb;
+let sql = diesel::debug_query::<DuckDb, _>(&query).to_string();
+```
+
+The `better_duck_diesel::query_builder` module (re-exported as `qb`) also exposes `DuckDbQueryBuilder`
+and the `Comma` / `In` fragment helpers for building SQL fragments by hand.
+</Tip>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Operators" href="/diesel/operators">
+    `ILIKE`, `GLOB`, regex, and null-safe comparison.
+  </Card>
+  <Card title="Aggregates" href="/diesel/aggregates">
+    DuckDB aggregates for grouped selects.
+  </Card>
+  <Card title="Insert" href="/diesel/insert">
+    Write rows back.
+  </Card>
+  <Card title="Type mapping" href="/diesel/type-mapping">
+    Which Rust type each column loads as.
+  </Card>
+</CardGroup>

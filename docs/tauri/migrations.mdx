@@ -1,11 +1,12 @@
 ---
 title: "Migrations"
-description: "Startup schema migrations per connection string: define them for the core or Diesel backend, understand ordering, revert, and the crash-safe backup protocol."
+description: "Startup schema migrations per connection string: define them for the core or Diesel backend, understand ascending-version ordering, revert, and the crash-safe backup-in-place protocol."
 ---
 
 The plugin runs schema migrations **per connection string**, triggered on `Database.load`. Two
 engines, one model: `backend-core` uses an inline, `tauri-plugin-sql`-style engine; `backend-diesel`
-uses Diesel's `embed_migrations!` + `MigrationHarness`.
+uses Diesel's `embed_migrations!` + `MigrationHarness`. Both run under the same crash-safe backup
+protocol on disk.
 
 ## Core backend (`backend-core`)
 
@@ -24,66 +25,53 @@ let migrations = vec![
 Builder::new().add_migrations("duckdb:app.db", migrations).build();
 ```
 
-`Migration` fields:
+### The `Migration` struct
 
-- `version: i64` — the ordering + identity key.
-- `description: String` — recorded alongside the applied version.
-- `sql: String` — may contain multiple `;`-separated statements (run via `execute_batch`).
-- `kind: MigrationKind` — `Up` (schema-forward) or `Down` (revert).
+<ParamField path="version" type="i64">
+  The ordering **and** identity key. `Up` migrations run in ascending order; a `Down` is matched to
+  its `Up` by sharing the same version.
+</ParamField>
+<ParamField path="description" type="String">
+  Human-readable label, recorded alongside the applied version.
+</ParamField>
+<ParamField path="sql" type="String">
+  The SQL to run. May contain multiple `;`-separated statements (run via `execute_batch`).
+</ParamField>
+<ParamField path="kind" type="MigrationKind">
+  `MigrationKind::Up` (schema-forward) or `MigrationKind::Down` (revert).
+</ParamField>
 
-`add_migrations(conn_str, Vec<Migration>)` is repeatable per connection string (entries extend).
+`add_migrations(conn_str, Vec<Migration>)` is repeatable per connection string — later calls extend
+the list.
 
 ### How it runs
 
 On `load`, pending `Up` migrations run in **ascending `version` order**, each inside its own
-transaction (a failing migration rolls that one back and surfaces the error; already-committed
-earlier migrations stay — the backup protocol below is the whole-batch safety net). Applied versions
-are tracked in a `__better_duck_migrations` table (`version BIGINT PRIMARY KEY`, `description`,
-`applied_at`). Re-running is idempotent: already-applied versions are skipped.
+transaction. A failing migration rolls *that one* back and surfaces the error; already-committed
+earlier migrations stay (the [backup protocol](#crash-safe-backup-protocol) is the whole-batch
+safety net). Applied versions are tracked in a `__better_duck_migrations` table:
 
-### Reverting
+```sql
+CREATE TABLE IF NOT EXISTS __better_duck_migrations (
+  version     BIGINT PRIMARY KEY,
+  description  VARCHAR NOT NULL,
+  applied_at   TIMESTAMP NOT NULL DEFAULT current_timestamp
+)
+```
 
-`db.revert()` (the `revert` command) runs the `Down` SQL of the **highest applied version**, in one
-transaction, deletes its bookkeeping row, and returns the reverted version (or `null` if nothing was
-applied).
+Re-running is **idempotent**: already-applied versions are skipped.
+
+### Revert
+
+[`db.revert()`](/tauri/maintenance) (the `revert` command) runs the `Down` SQL of the **highest
+applied version**, in one transaction, deletes its bookkeeping row, and returns the reverted version
+(or `null` if nothing was applied).
 
 <Warning>
-Revert errors if the last-applied version has no matching `Down` migration. Revert is a write, so it
-is rejected under `read_only(true)` — see [security](/tauri/security).
+  Revert **errors** if the last-applied version has no matching `Down` migration
+  (`backend error: no down migration for version N`). Author a `Down` for every `Up` you may need to
+  roll back. Revert is a write, so it is rejected under `read_only(true)`.
 </Warning>
-
-### Crash-safe backup protocol (on-disk databases)
-
-On-disk migrations go through a backup-in-place protocol, because the per-migration transactions
-mean a mid-batch failure could leave earlier migrations committed. The sequence runs only when
-something is pending:
-
-<Steps>
-<Step title="Restore a prior interrupted run">
-If a `<db>.migrate-journal` exists from a prior interrupted run, restore from `<db>.bak` first.
-</Step>
-<Step title="Checkpoint">
-`CHECKPOINT` to fold the WAL into the main file.
-</Step>
-<Step title="Back up + journal">
-Copy the file to `<db>.bak` (fsynced) and write the journal (records "a migration is in flight").
-</Step>
-<Step title="Run">
-Run the migrations. On success, delete the journal then the backup. On failure, restore from the
-backup and surface the error.
-</Step>
-</Steps>
-
-Sidecar files live beside the database: `<db>.bak`, `<db>.migrate-journal` (and `<db>.wal`,
-`<db>.tmp` are cleaned on restore). This runs **before** the long-lived connection handle is opened,
-so migration has exclusive file access.
-
-<Note>
-**Special cases.**
-- **In-memory** databases (`duckdb::memory:`) have no file: migrations run directly on the
-  registered handle (no backup protocol).
-- **`read_only(true)`** skips migrations entirely (they are writes).
-</Note>
 
 ## Diesel backend (`backend-diesel`)
 
@@ -98,11 +86,60 @@ const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 Builder::new().add_migrations("duckdb:app.db", MIGRATIONS).build();
 ```
 
-On `load`, pending migrations run through Diesel's `MigrationHarness` (`run_pending_migrations`),
-wrapped in the **same** crash-safe backup skeleton as the core engine (backup → journal → run →
-restore-on-failure). `db.revert()` calls the harness's `revert_last_migration` and best-effort
-parses the Diesel version string (numeric timestamp) to an `i64`. In-memory migrations run on the
-shared pool handle; `read_only` skips them.
+On `load`, pending migrations run through Diesel's `MigrationHarness`
+(`run_pending_migrations`), wrapped in the **same** crash-safe backup skeleton as the core engine.
+`db.revert()` calls the harness's `revert_last_migration` and best-effort parses the Diesel version
+string (a numeric timestamp) to an `i64`. In-memory migrations run on the shared pool handle;
+`read_only` skips them.
 
-See the [better-duck-diesel](/diesel/overview) docs for authoring the embedded migration directory
-and the Diesel schema/DSL side.
+See [better-duck-diesel setup](/diesel/installation-and-setup) for authoring the embedded migration
+directory and the schema/DSL side.
+
+## Crash-safe backup protocol
+
+On-disk migrations go through a **backup-in-place** protocol, because the per-migration transactions
+mean a mid-batch failure could otherwise leave earlier migrations committed with no clean rollback.
+It also guards against file corruption or an interrupted process. The sequence runs only when
+something is pending:
+
+<Steps>
+  <Step title="Recover an interrupted run">
+    If a `<db>.migrate-journal` exists from a prior interrupted run, restore from `<db>.bak` first
+    (a journal with no backup is treated as stale and removed).
+  </Step>
+  <Step title="Checkpoint">
+    `CHECKPOINT` to fold the WAL into the main file so a file-level copy is self-contained.
+  </Step>
+  <Step title="Back up + journal">
+    Copy the file to `<db>.bak` (fsynced), then write the journal — its mere presence records "a
+    migration is in flight and did not confirm success".
+  </Step>
+  <Step title="Migrate, then clear">
+    Run the migrations. On success, delete the **journal first, then the backup** (so a crash in
+    between leaves only a harmless stale backup). On failure, restore from the backup and surface
+    the error.
+  </Step>
+</Steps>
+
+Sidecar files live beside the database: `<db>.bak` and `<db>.migrate-journal` (and `<db>.wal` /
+`<db>.tmp` are cleaned on restore). The whole protocol runs **before** the long-lived connection
+handle is opened, so migration has exclusive file access.
+
+<Note>
+  **Special cases:**
+  - **In-memory** databases (`duckdb::memory:`) have no file — migrations run directly on the
+    registered handle, with no backup protocol.
+  - **`read_only(true)`** skips migrations entirely (they are writes).
+</Note>
+
+<Warning>
+  This migration backup is distinct from [checkpointing](/tauri/checkpointing). Checkpointing folds
+  the WAL into the main file during normal operation; the backup protocol snapshots the whole file
+  around a migration batch so it can be restored on failure.
+</Warning>
+
+## See also
+
+- [Maintenance](/tauri/maintenance) — the `revert` command in context.
+- [Registration](/tauri/registration) — where `add_migrations` sits on the builder.
+- [Backends](/tauri/backends) — the one API difference between the two builders.

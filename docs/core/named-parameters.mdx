@@ -1,0 +1,53 @@
+---
+title: "Named Parameters"
+description: "Bind $name parameters with execute_with_named — order-independent binding, and how an unknown name is reported."
+---
+
+DuckDB supports named parameters written `$name`. Bind them with `execute_with_named`, passing
+`(name, value)` pairs. Binding is **by name**, so the order of the pairs is irrelevant.
+
+## execute_with_named
+
+`execute_with_named(sql, binds: &mut [(&str, &mut dyn AppendAble)]) -> Result<DuckResult>`.
+
+```rust
+use better_duck_core::AppendAble;
+
+let mut id = 7_i32;
+let mut name = String::from("bound");
+conn.execute_with_named(
+    "INSERT INTO t VALUES ($id, $name)",
+    &mut [
+        ("name", &mut name as &mut dyn AppendAble),   // order does not matter
+        ("id",   &mut id   as &mut dyn AppendAble),
+    ],
+)?;
+```
+
+The value type is the same `&mut dyn AppendAble` used by
+[positional binding](/core/positional-parameters) — every [`DuckValue`](/core/values-overview) and
+the primitive Rust types qualify.
+
+<Note>
+  Give the name **without** the leading `$`: use `"id"` to bind `$id`.
+</Note>
+
+## Unknown names are reported
+
+A name that is not a parameter of the SQL is not silently ignored:
+
+```rust
+use better_duck_core::error::Error;
+
+let mut v = 1_i32;
+let err = conn.execute_with_named("SELECT $id", &mut [("missing", &mut v as &mut dyn better_duck_core::AppendAble)]);
+assert!(matches!(err, Err(Error::InvalidParameterName(_))));
+```
+
+See [`Error::InvalidParameterName`](/core/errors). An interior NUL in a name is caught as
+[`Error::NulError`](/core/errors).
+
+## See also
+
+- [Positional parameters](/core/positional-parameters) — `$1` / `?` binding and `params!`.
+- [Prepared statements](/core/prepared-statements) — `bind_named` on a reusable `CachedStatement`.

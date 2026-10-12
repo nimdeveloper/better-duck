@@ -1,0 +1,92 @@
+---
+title: "Data Chunks"
+description: "DataChunkHandle: allocate a columnar batch, read and write its column vectors, set and reset the row count, and respect DuckDB's build-time vector capacity."
+---
+
+<Info>Requires `feature = "columnar"` (or `udf`). `better_duck_core::DataChunkHandle`.</Info>
+
+A `DataChunkHandle` is a batch of rows laid out column-wise — one [vector](/core/vectors) per
+column. You get one from [`DuckResult::fetch_chunk`](/core/columnar-overview#reading-results-as-chunks)
+(DuckDB-owned, read-only in practice) or allocate one with `new` to build and
+[append](/core/appender-advanced#raw-chunk-ingestion).
+
+## Allocating and building
+
+```rust
+use better_duck_core::{types::LogicalType, DataChunkHandle};
+
+conn.execute_batch("CREATE TABLE dst (a INTEGER, b DOUBLE)")?;
+let types = [LogicalType::of::<i32>()?, LogicalType::of::<f64>()?];
+let mut chunk = DataChunkHandle::new(&types)?;       // owned; destroyed on drop
+
+for row in 0..3usize {
+    chunk.vector_mut(0)?.set(row, row as i32)?;
+    chunk.vector_mut(1)?.set(row, row as f64 * 1.5)?;
+}
+chunk.set_len(3)?;                                   // mark 3 valid rows (<= capacity())
+
+let mut app = conn.appender("dst", "main")?;
+app.append_chunk_handle(&chunk)?;                    // strict shape check vs the table
+app.save()?;
+
+chunk.reset();                                       // zero rows, reuse the allocation
+```
+
+## API
+
+<ParamField path="new(types: &[LogicalType]) -> Result<Self>">
+  Allocate a chunk with one [`LogicalType`](/core/composite-types#logicaltype-and-typeinfo) per
+  column. Owned — destroyed on drop.
+</ParamField>
+<ParamField path="vector(idx) -> Result<VectorRef>">
+  A read-only [view](/core/vectors) of column `idx`. Many `VectorRef`s may coexist.
+  [`InvalidColumnIndex`](/core/errors) out of range.
+</ParamField>
+<ParamField path="vector_mut(idx) -> Result<VectorMut>">
+  An exclusive, writable [view](/core/vectors) of column `idx`.
+</ParamField>
+<ParamField path="vectors_mut() -> Result<Vec<VectorMut>>">
+  A writable view of **every** column at once — disjoint by construction, so they may be held
+  together.
+</ParamField>
+<ParamField path="len() -> usize / is_empty() -> bool">
+  Current valid row count.
+</ParamField>
+<ParamField path="set_len(n) -> Result<()>">
+  Mark `n` valid rows. Errors if `n > capacity()`.
+</ParamField>
+<ParamField path="capacity() -> usize">
+  DuckDB's build-time vector size — the max rows per chunk. **Read it, never hardcode a limit.**
+</ParamField>
+<ParamField path="num_columns() -> usize">
+  Column count.
+</ParamField>
+<ParamField path="column_type_id(idx) -> Result<DUCKDB_TYPE>">
+  The DuckDB type id of column `idx`. [`InvalidColumnIndex`](/core/errors) out of range.
+</ParamField>
+<ParamField path="reset()">
+  Clear to zero rows, keeping the allocation to refill and append again.
+</ParamField>
+
+<Warning>
+  `reset()` **panics on a borrowed chunk** — one obtained from a DuckDB callback frame rather than
+  allocated with `new`. Only reset chunks you own. (A chunk from `fetch_chunk` is owned and may be
+  reset.)
+</Warning>
+
+## Capacity, not a constant
+
+```rust
+let chunk = DataChunkHandle::new(&[LogicalType::of::<i32>()?])?;
+let cap = chunk.capacity();              // e.g. 2048 — the vector size this DuckDB build was compiled with
+```
+
+The vector size is a DuckDB build-time constant that can differ across builds. Loop until `cap`
+rather than assuming any particular value, and split large writes into multiple chunks of at most
+`cap` rows each.
+
+## See also
+
+- [Vectors](/core/vectors) — reading and writing individual columns.
+- [Columnar overview](/core/columnar-overview) — `fetch_chunk` and the row-vs-chunk rule.
+- [Appender advanced](/core/appender-advanced#raw-chunk-ingestion) — `append_chunk_handle`.

@@ -1,0 +1,172 @@
+---
+title: "Versioning & Compatibility"
+description: "The beta release policy, MSRV 1.96, supported platforms, the vendored DuckDB version, and how to pin and upgrade the better-duck crates."
+---
+
+better-duck is a pre-1.0 project with a deliberate pinning and compatibility story. This page gathers
+everything you need to depend on it responsibly: the beta policy, the exact-version pinning rule, the
+minimum Rust version, the platforms CI covers, how the vendored DuckDB relates to your code, and what
+to expect when you upgrade.
+
+## Beta release policy
+
+The current release is **`0.1.0-beta.8`**.
+
+<Warning>
+  **Beta — the API is still settling.** Breaking changes before `1.0` are possible between pre-release
+  versions. Read the
+  [changelog](https://github.com/nimdeveloper/better-duck/blob/main/CHANGELOG.md) before upgrading,
+  and pin the exact version (below).
+</Warning>
+
+Under Cargo SemVer, a `0.x` version treats the **minor** component as the breaking boundary, and
+pre-release identifiers (`-beta.N`) sit *below* the corresponding release. Treat each `-beta.N` bump
+as potentially breaking until the project reaches `1.0`.
+
+## Pinning the exact version
+
+<Warning>
+  Cargo's default version requirement **excludes pre-release versions**: a requirement like `"0.1"`
+  will **not** match `0.1.0-beta.8`. You must pin the exact pre-release string.
+</Warning>
+
+<CodeGroup>
+```toml Cargo.toml
+[dependencies]
+better-duck-core   = "0.1.0-beta.8"
+# optional sibling crates — keep them on the same version:
+better-duck-diesel = "0.1.0-beta.8"
+better-duck-tauri  = { version = "0.1.0-beta.8", features = ["backend-core"] }
+```
+
+```bash cargo add
+cargo add better-duck-core --version 0.1.0-beta.8
+cargo add better-duck-diesel --version 0.1.0-beta.8
+```
+</CodeGroup>
+
+<Note>
+  Keep the sibling crates (`better-duck-core`, `better-duck-diesel`, `better-duck-tauri`) on the
+  **same** version — `better-duck-diesel` and `better-duck-tauri` build on a specific
+  `better-duck-core`. `better-duck-macros` is pulled in automatically by core's
+  [`udf` / `derive`](/guide/feature-flags) features and is never a direct dependency.
+</Note>
+
+## Minimum supported Rust version (MSRV)
+
+<Info>
+  The MSRV is **Rust 1.96**. Check yours with `rustc --version`; update with `rustup update` if
+  needed. A toolchain older than 1.96 will not build the crates.
+</Info>
+
+## Supported platforms
+
+| Platform | Status |
+|---|---|
+| Linux x86_64 | CI-tested |
+| macOS Apple Silicon (aarch64) | CI-tested |
+| macOS x86_64 | CI-tested |
+| Windows x86_64 | CI-tested |
+| iOS aarch64 | CI cross-build |
+| iOS Simulator x86_64 | CI cross-build |
+
+The iOS targets are what make better-duck's [embedded-first](/guide/architecture#bundled-duckdb-embedded-first)
+design concrete: because DuckDB is compiled and statically linked rather than loaded from a system
+package, it cross-builds to mobile where a system library is not an option.
+
+## The vendored DuckDB version
+
+DuckDB itself is **compiled from vendored source** and pinned in `better-duck-sys` — you do not
+install or match a system DuckDB. DuckDB ships an every-other-version LTS cadence from 1.4 (1.4 LTS,
+1.5 current, …); better-duck pins a specific vendored engine, and a beta bump may move it.
+
+```rust
+// The DuckDB version actually linked into your binary, at runtime:
+let v: String = better_duck_core::library_version();   // e.g. "v1.5.5"
+```
+
+<Tip>
+  Record `library_version()` in your app's diagnostics / about screen. It is the authoritative answer
+  to "which DuckDB am I running," independent of any system install (there isn't one).
+</Tip>
+
+## Licensing
+
+better-duck is licensed under either **MIT** or **Apache-2.0**, at your option.
+
+## Capabilities and known limitations
+
+The library is usable today for most workloads. Because it is pre-1.0, a few edges are still in
+progress — knowing them up front avoids surprises.
+
+<Tabs>
+  <Tab title="Available now">
+    - Full scalar **and** composite type coverage (`LIST` / `ARRAY` / `STRUCT` / `MAP` / `UNION` /
+      `ENUM`), plus `UUID`, `BIT`, and `BIGNUM` end-to-end — see [Type system](/guide/type-system).
+    - `TIME_TZ` with its UTC offset preserved on read and write.
+    - [User-defined functions](/macros/udf-overview): scalar, table (named params, projection pushdown,
+      state), aggregate, and cast — plus experimental replacement scans.
+    - [Data derives](/macros/derives-overview) (`FromRow` / `ToRow` / `DuckEnum` / `DuckStruct`).
+    - [Async facade](/core/async) (`async`) and connection pooling (`pool` / r2d2).
+    - An extensive [Diesel DSL](/diesel/dsl-overview) of DuckDB functions, aggregates, and operators, plus
+      a `spatial` module.
+  </Tab>
+  <Tab title="In progress">
+    - `GEOMETRY` / `VARIANT` / `ANY` / `INTEGER_LITERAL` typed **reads** — the DuckDB C API exposes no
+      value accessor for these yet (`GEOMETRY` still arrives as its WKB `Blob`).
+    - Multi-arm `UNION` **writes** — the current write path builds single-member unions.
+    - `DECIMAL` declared-precision round-tripping — width is read but not yet carried on the value for
+      write-back.
+    - Ordered-set aggregates (`WITHIN GROUP` quantiles) in the Diesel query builder.
+  </Tab>
+</Tabs>
+
+<Note>
+  Capabilities move between these lists as the project approaches `1.0`. Treat the
+  [changelog](https://github.com/nimdeveloper/better-duck/blob/main/CHANGELOG.md) as the source of
+  truth for a given version.
+</Note>
+
+## Upgrading checklist
+
+<Steps>
+  <Step title="Read the changelog">
+    Review the
+    [CHANGELOG](https://github.com/nimdeveloper/better-duck/blob/main/CHANGELOG.md) for breaking
+    changes between your version and the target — expected on any `-beta.N` bump.
+  </Step>
+  <Step title="Bump all sibling crates together">
+    Update `better-duck-core`, `better-duck-diesel`, and `better-duck-tauri` to the same new version
+    string in `Cargo.toml`.
+  </Step>
+  <Step title="Rebuild from clean if the engine moved">
+    If the vendored DuckDB version changed, the first rebuild recompiles the engine and is slow — this
+    is expected. Watch for `library_version()` changing.
+  </Step>
+  <Step title="Re-check #[non_exhaustive] matches">
+    `DuckValue`, `Error`, `EngineErrorKind`, and `ResultType` are `#[non_exhaustive]`. Your `_` arms
+    keep you compiling, but a new variant may be worth handling explicitly after an upgrade. See
+    [type system](/guide/type-system) and [error handling](/guide/error-handling).
+  </Step>
+  <Step title="Mind the release profile">
+    If you build `release` with `panic = "abort"`, confirm your [UDFs](/macros/udf-overview) return `Err`
+    rather than panicking — see [panics and the abort profile](/guide/error-handling#panics-and-the-abort-profile).
+  </Step>
+</Steps>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/guide/installation">
+    Add the crates and understand bundled-DuckDB build times.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/guide/architecture">
+    The crate family and the embedded-DuckDB model.
+  </Card>
+  <Card title="Feature flags" icon="toggle-on" href="/guide/feature-flags">
+    What changes behind each Cargo feature.
+  </Card>
+  <Card title="Error handling" icon="triangle-exclamation" href="/guide/error-handling">
+    Handling `#[non_exhaustive]` errors across upgrades.
+  </Card>
+</CardGroup>

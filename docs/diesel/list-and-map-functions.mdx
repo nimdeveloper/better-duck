@@ -1,0 +1,65 @@
+---
+title: "List & Map Functions"
+description: "DuckDB LIST and MAP scalar functions as typed Diesel DSL: array_length/len, list_reverse/sort/distinct/concat, array_to_string, and cardinality/map_keys/map_values."
+---
+
+Scalar functions over DuckDB's native `LIST` and `MAP` types, exposed as free functions in
+`better_duck_diesel::dsl::*`. List arguments and results are typed `DuckList`; map arguments are typed
+`DuckMap`.
+
+```rust
+use diesel::prelude::*;
+use better_duck_diesel::dsl::*;
+```
+
+## List functions
+
+| Function | Signature | Returns |
+|---|---|---|
+| `array_length(list)` | `DuckList` | `BigInt` |
+| `len(list)` | `DuckList` | `BigInt` |
+| `list_reverse(list)` | `DuckList` | `DuckList` |
+| `list_sort(list)` | `DuckList` | `DuckList` |
+| `list_distinct(list)` | `DuckList` | `DuckList` |
+| `list_concat(a, b)` | `DuckList, DuckList` | `DuckList` |
+| `array_to_string(list, sep)` | `DuckList, Text` | `Text` |
+
+```rust
+let joined: Vec<String> = readings::table
+    .select(array_to_string(readings::tags, ","))
+    .load(&mut conn)?;
+```
+
+## Map functions
+
+| Function | Signature | Returns |
+|---|---|---|
+| `cardinality(map)` | `DuckMap` | `DuckUBigInt` |
+| `map_keys(map)` | `DuckMap` | `DuckList` |
+| `map_values(map)` | `DuckMap` | `DuckList` |
+
+<Warning>
+Functions whose **result** is `DuckList` (or `DuckUBigInt`) cannot be loaded through the typed
+select builder — the `Duck*` SQL types have no `Queryable` blanket impl. To read such a result, route the
+query through `diesel::sql_query(...)` with a `QueryableByName` struct whose field carries
+`#[diesel(sql_type = DuckList)]`. Functions that **reduce** a list to a standard type — `array_length`,
+`len`, `array_to_string` — load normally. See
+[Type mapping](/diesel/type-mapping#duckdb-specific-sql-types).
+</Warning>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Type mapping" href="/diesel/type-mapping">
+    `DuckList` / `DuckMap` and how to read them.
+  </Card>
+  <Card title="Aggregates" href="/diesel/aggregates">
+    `array_agg` builds a `DuckList`.
+  </Card>
+  <Card title="JSON functions" href="/diesel/json-functions">
+    The JSON alternative to native collections.
+  </Card>
+  <Card title="DSL overview" href="/diesel/dsl-overview">
+    The rest of the DSL.
+  </Card>
+</CardGroup>

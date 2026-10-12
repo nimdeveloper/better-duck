@@ -1,18 +1,38 @@
 ---
 title: "Benchmarks"
-description: "How better-duck-core compares to the duckdb crate across types and operations."
+description: "How better-duck-core compares to the community duckdb crate across primitive types, composite types, and common operations — with methodology and the test system."
 ---
 
-These benchmarks compare `better-duck-core` against the community [`duckdb`](https://crates.io/crates/duckdb)
-crate across primitive types, composite types, and common operations.
+These benchmarks compare `better-duck-core` against the community
+[`duckdb`](https://crates.io/crates/duckdb) crate across three groups: primitive types, composite
+types, and common end-to-end operations. The honest summary: better-duck-core leads on **type
+handling** (notably `UUID` and the temporal types) and offers a **safe composite-type appender** the
+`duckdb` crate lacks, while the two are close on raw operation throughput.
+
+## Methodology
 
 <Note>
-  **Methodology.** Latency columns are min / median / p95 over the measured reps (warmup discarded).
-  Throughput is `item_count / median_latency`. `better-duck-core` and the `duckdb` crate each vendor
-  their own copy of DuckDB and cannot be linked into one process, so each ran in its **own** process;
-  the timings are still directly comparable — both are in-process, native calls with no
+  **How the numbers were produced.** Latency columns are min / median / p95 over the measured reps
+  (warmup discarded). Throughput is `item_count / median_latency`. Each library vendors its **own**
+  copy of DuckDB and the two cannot be linked into one process, so each ran in its **own** process.
+  The timings are still directly comparable — both are in-process, native calls with no
   subprocess-per-operation overhead on either side.
 </Note>
+
+The composite-type group is the one exception to a clean head-to-head; see the warning in that
+section.
+
+<AccordionGroup>
+  <Accordion title="Test system">
+    - CPU: Intel Core Ultra 7 155U (12 physical cores)
+    - RAM: ~15.5 GB
+    - Toolchain: `rustc 1.96.0` (the project [MSRV](/guide/versioning-and-compatibility))
+    - Compared against the `duckdb` crate, each vendoring its own DuckDB build
+
+    Absolute numbers depend on hardware; read the two crates **relative to each other** on the same
+    machine, which is how they were measured.
+  </Accordion>
+</AccordionGroup>
 
 ## Primitive types
 
@@ -42,9 +62,9 @@ appender API.
   workaround timings are reported separately, for reference only, in the source report.
 </Warning>
 
-The takeaway: better-duck-core offers a **safe appender** path for `LIST` / `ARRAY` / `STRUCT` /
-`MAP` where the `duckdb` crate offers none. Treat the composite charts as "better-duck-core has this
-capability," not as a head-to-head speed result.
+The takeaway is a **capability**, not a speed result: better-duck-core offers a safe
+[appender](/core/appender) path for `LIST` / `ARRAY` / `STRUCT` / `MAP` where the `duckdb` crate
+offers none. Treat the composite charts as "better-duck-core has this capability."
 
 <Frame caption="Composite types — latency (duckdb crate is a placeholder, see warning above)">
   <img src="/benchmarks/comparison-composite-types-latency.svg" alt="Composite types latency comparison" />
@@ -56,8 +76,8 @@ capability," not as a head-to-head speed result.
 
 ## Operations
 
-A mix of end-to-end workloads. The results here are mixed and we report them faithfully: the `duckdb`
-crate is somewhat faster on these particular operations, while better-duck-core stays competitive.
+A mix of end-to-end workloads. These results are mixed and reported faithfully: the `duckdb` crate is
+somewhat faster on these particular operations, while better-duck-core stays competitive.
 
 | Operation | What it measures | better-duck-core (median) | duckdb crate (median) |
 | --- | --- | --- | --- |
@@ -77,16 +97,18 @@ crate is somewhat faster on these particular operations, while better-duck-core 
 
 ## Reading the results
 
-better-duck-core's strengths show up in **type handling** — especially `UUID` and the temporal types,
-and the safe composite-type appender the `duckdb` crate lacks — while the two crates are close on raw
-operation throughput. Pick the crate that fits your workload and the API surface you want; see
-[Choosing an API](/guide/choosing-an-api).
+- **Type handling is better-duck-core's strength** — especially `UUID` and the temporal types, where
+  it is multiples faster, and the safe composite-type appender the `duckdb` crate lacks entirely.
+- **Raw operations are close**, with the `duckdb` crate marginally ahead on the simple CRUD /
+  prepared-reuse paths measured here.
+- Pick the crate that fits your workload *and* the API surface you want — the appender, columnar
+  reads, UDFs, async/pooling, and Arrow/Polars interop are all part of better-duck-core's surface.
 
 <CardGroup cols={2}>
-  <Card title="Introduction" icon="book-open" href="/guide/introduction">
-    What better-duck is and how its crates fit together.
+  <Card title="Choosing an API" icon="signs-post" href="/guide/choosing-an-api">
+    Match the crate and API surface to your task.
   </Card>
-  <Card title="Core crate" icon="rust" href="/core/connections">
+  <Card title="Core crate" icon="rust" href="/core/opening-connections">
     The driver API measured here.
   </Card>
 </CardGroup>

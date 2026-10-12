@@ -1,0 +1,129 @@
+---
+title: "Appender — Advanced"
+description: "Projected columns and default rows, catalog and query appenders, raw and built chunk ingestion, column introspection, and the appender's poisoning semantics."
+---
+
+Beyond the [basic lifecycle](/core/appender), the `Appender` supports targeting specific catalogs,
+feeding arbitrary queries, projecting a subset of columns, and bulk-ingesting whole
+[data chunks](/core/data-chunks). It also has strict error semantics worth understanding.
+
+## Catalog & query appenders
+
+```rust
+// Target a table in a specific attached catalog (None = default catalog):
+let mut app = conn.appender_ext(Some("memory"), "main", "t")?;   // (catalog, schema, table)
+```
+
+<ParamField path="appender_ext(catalog: Option<&str>, schema, table) -> Result<Appender>">
+  Address `[catalog.]schema.table` explicitly. `None` catalog uses DuckDB's default.
+</ParamField>
+
+A **query appender** feeds appended rows into an arbitrary `INSERT`/`UPDATE`/`DELETE`/`MERGE`,
+referring to the appended data by `table_name` (default `"appended_data"`):
+
+```rust
+use better_duck_core::types::LogicalType;
+
+let types = [LogicalType::of::<i32>()?];
+let mut app = conn.appender_query(
+    "INSERT INTO dest SELECT * FROM appended_data",
+    &types,          // appended columns' types
+    None,            // table_name -> "appended_data"
+    None,            // column_names -> col1, col2, ...
+)?;
+app.append(&mut better_duck_core::types::value::DuckValue::Int(42))?;
+app.save()?;
+```
+
+<ParamField path="appender_query(query, types: &[LogicalType], table_name: Option<&str>, column_names: Option<&[&str]>) -> Result<Appender>">
+  Rows appended here feed `query`. `types` gives the appended columns' logical types; `column_names`
+  optionally names them (default `col1`, `col2`, …).
+</ParamField>
+
+[`LogicalType::of::<T>()`](/core/composite-types#logicaltype-and-typeinfo) builds a logical type
+from a Rust type.
+
+## Column introspection
+
+Both reflect the appender's **active column list** (the table's columns, unless projected):
+
+- `column_count() -> u64`.
+- `column_type(col_idx: u64) -> Option<LogicalType>`.
+
+## Projected columns & default rows
+
+Supply only some columns and let the rest take their `DEFAULT`. Projection must be configured
+**before the first row** (otherwise an error):
+
+```rust
+use better_duck_core::types::value::DuckValue;
+
+conn.execute_batch("CREATE TABLE t (a INTEGER, b INTEGER DEFAULT 99)")?;
+let mut app = conn.appender("t", "main")?;
+app.add_column("a")?;                   // active column list is now just `a`
+assert_eq!(app.column_count(), 1);
+app.append(&mut DuckValue::Int(7))?;    // b takes its DEFAULT (99)
+app.save()?;
+```
+
+- `add_column(name)` — add `name` to the active column list (pre-first-row only).
+- `clear_columns()` — restore the full column set (pre-first-row only).
+- `append_default_row()` — append one row where **every** column takes its `DEFAULT` (a column with
+  no `DEFAULT` becomes `NULL`); opens and closes the row safely.
+
+## Raw chunk ingestion
+
+Append whole [data chunks](/core/data-chunks) in one call rather than value-by-value.
+
+Always available (operate on the internal `DataChunk` fetched from a query result):
+
+- `append_chunk(&DataChunk) -> Result<()>` — append every row of a `DataChunk`. The chunk is only
+  read; the column count must match (validated Rust-side).
+- `append_default_to_chunk(&mut DataChunk, col: u64, row: u64)` — write a column's `DEFAULT` into a
+  raw chunk cell.
+
+With the `udf` / `columnar` feature, the [`DataChunkHandle`](/core/data-chunks) counterparts:
+
+```rust
+use better_duck_core::{types::LogicalType, DataChunkHandle};
+
+let mut chunk = DataChunkHandle::new(&[LogicalType::of::<i32>()?])?;
+chunk.vector_mut(0)?.set(0, 123_i32)?;
+chunk.set_len(1)?;
+
+let mut app = conn.appender("one_int", "main")?;
+app.append_chunk_handle(&chunk)?;        // strict shape check vs the appender
+app.save()?;
+```
+
+- `append_chunk_handle(&DataChunkHandle) -> Result<()>` — append a chunk you built column-by-column.
+  The shape check is **strict** — column count **and** each column's type id must match — and runs
+  entirely before the chunk reaches DuckDB, so a rejected chunk leaves the appender usable.
+- `set_chunk_default(&mut DataChunkHandle, col: usize, row: usize)` — write a column's `DEFAULT`
+  into a built chunk cell.
+
+## Poisoning & error handling
+
+<Warning>
+  DuckDB **invalidates** an appender the instant a flush, row-end, or close fails — the buffered
+  data is gone and no further append/flush/close is legal. A failed `append` / `save` therefore
+  **poisons** the `Appender`: every subsequent operation fails fast (an
+  [`Error::Engine`](/core/errors) carrying the poison message) **without re-entering DuckDB**, and
+  drop skips the flush entirely. (Re-flushing an invalidated appender can deadlock DuckDB on
+  indexed / `PRIMARY KEY` tables, which is exactly what this prevents.)
+</Warning>
+
+- Engine-side failures (e.g. a deferred `CHECK` constraint caught at flush) surface as
+  [`Error::Engine`](/core/errors) with DuckDB's typed classification.
+- A Rust-side value conversion failure mid-row also poisons the appender but returns the original
+  conversion error unchanged.
+- The originating **connection** stays usable after an appender poisons.
+
+Use `finish()` (not drop) when you need the flush/close error reported.
+
+## See also
+
+- [Appender basics](/core/appender) — lifecycle, `append`, `save` / `finish`.
+- [Data chunks](/core/data-chunks) and [vectors](/core/vectors) — building a `DataChunkHandle`.
+- [Composite types](/core/composite-types#logicaltype-and-typeinfo) — `LogicalType`.
+- [Errors](/core/errors) — `Error::Engine` and the `EngineError` classification.

@@ -1,0 +1,71 @@
+---
+title: "Delete"
+description: "Delete DuckDB rows through Diesel: diesel::delete with a filtered target, deleting all rows, the unscoped-delete gotcha, and returning deleted values."
+---
+
+Removing rows with `diesel::delete`. Portable Diesel on the DuckDB backend.
+
+## Deleting matching rows
+
+Pass a filtered table to `diesel::delete`:
+
+```rust
+use diesel::prelude::*;
+
+diesel::delete(products::table.filter(products::id.eq(2))).execute(&mut conn)?;
+
+diesel::delete(products::table.filter(products::price.lt(1.0))).execute(&mut conn)?;
+```
+
+`.execute` returns the number of rows deleted.
+
+DuckDB-only predicates work in the filter once the DSL prelude is imported — see
+[Operators](/diesel/operators):
+
+```rust
+use better_duck_diesel::dsl::*;
+
+diesel::delete(products::table.filter(products::name.ilike("tmp-%"))).execute(&mut conn)?;
+```
+
+## Deleting all rows
+
+A delete with no filter removes every row:
+
+```rust
+diesel::delete(products::table).execute(&mut conn)?; // all rows
+```
+
+<Warning>
+This is the single most common accidental data loss in Diesel. `diesel::delete(table)` without `.filter`
+truncates the table. Scope every delete with `.filter(...)` unless you really mean "delete everything".
+</Warning>
+
+## Returning deleted values
+
+Chain `.returning(...)` with `get_result`/`get_results` to read columns from the rows that were deleted:
+
+```rust
+let removed: Vec<(i32, String)> = diesel::delete(products::table.filter(products::price.lt(1.0)))
+    .returning((products::id, products::name))
+    .get_results(&mut conn)?;
+```
+
+See [RETURNING](/diesel/returning).
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Update" href="/diesel/update">
+    Modify rows instead of removing them.
+  </Card>
+  <Card title="RETURNING" href="/diesel/returning">
+    Read values back from a delete.
+  </Card>
+  <Card title="Transactions" href="/diesel/transactions">
+    Make a multi-step delete atomic.
+  </Card>
+  <Card title="Select" href="/diesel/select">
+    Preview what a filter matches before deleting.
+  </Card>
+</CardGroup>

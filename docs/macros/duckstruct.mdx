@@ -1,0 +1,48 @@
+---
+title: "DuckStruct Derive"
+description: "#[derive(DuckStruct)]: map a Rust named-field struct to a DuckDB STRUCT value, with field renaming and optional Diesel emission."
+---
+
+<Info>Requires `feature = "derive"`. See the [derives overview](/macros/derives-overview) for the shared `#[duck(...)]` attributes and `rename_all` casings.</Info>
+
+`#[derive(DuckStruct)]` maps a Rust **named-field** struct to a DuckDB `STRUCT` value (named fields,
+fixed schema). It generates `From<T> for DuckValue` and `FromDuckValue for T`, so the struct
+converts to and from a [`DuckValue::Struct`](/core/composite-types#struct-duckstruct).
+
+```rust
+use better_duck_core::DuckStruct;
+
+#[derive(DuckStruct, Debug, PartialEq)]
+#[duck(rename_all = "camelCase")]
+struct Point {
+    x_coord: i32,
+    y_coord: i32,
+    #[duck(rename = "z")]
+    depth: Option<i32>,
+}
+// Maps to STRUCT(xCoord INTEGER, yCoord INTEGER, z INTEGER)
+```
+
+It shares the **same** `#[duck(rename = "…")]` / `#[duck(rename_all = "…")]` / `#[duck(crate = …)]`
+attributes as [`#[derive(FromRow)]`](/macros/fromrow-torow), with the same
+[resolution order](/macros/derives-overview#rename_all-casings).
+
+<Note>
+  `DuckStruct` maps to a DuckDB `STRUCT` value (a column value), whereas
+  [`FromRow`](/macros/fromrow-torow) maps a whole query **row**. Reach for `DuckStruct` when a
+  single column is itself a `STRUCT`; reach for `FromRow` to read a result set's rows.
+</Note>
+
+## Diesel emission
+
+With better-duck-diesel's `derive` feature on, `#[derive(DuckStruct)]` additionally emits Diesel
+`ToSql` / `FromSql` against `better_duck_diesel::sql_types::DuckStruct` (via `sql_query` +
+`QueryableByName`, routing through the `DuckDb` backend), so the same type binds and loads through a
+`DuckDbConnection`. The deriving crate must then depend on `better-duck-diesel` — see the
+[Diesel docs](/diesel/overview). Nothing extra is emitted with the feature off.
+
+## See also
+
+- [DuckEnum derive](/macros/duckenum) · [FromRow / ToRow](/macros/fromrow-torow).
+- [Composite types](/core/composite-types#struct-duckstruct) — the runtime `DuckStruct` value.
+- [Derives overview](/macros/derives-overview) — the `rename_all` casings table.

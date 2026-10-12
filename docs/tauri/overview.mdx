@@ -1,95 +1,97 @@
 ---
 title: "Overview"
-description: "A Tauri v2 plugin that exposes embedded DuckDB (better-duck) to the webview as a local analytics engine, with a fixed command set and two security layers."
+description: "A Tauri v2 plugin that exposes embedded DuckDB (better-duck) to the webview as a local analytics engine, with a fixed command set, pluggable backends, and a two-layer security model."
 ---
 
-better-duck-tauri is a [Tauri v2](https://tauri.app) plugin that exposes
-[better-duck](/core/connections) (embedded DuckDB) to your webview as a local **analytics**
+`better-duck-tauri` is a [Tauri v2](https://tauri.app) plugin that exposes
+[better-duck](/core/opening-connections) (embedded DuckDB) to the webview as a local **analytics**
 engine — not just a CRUD bridge. The Rust side registers the plugin on `tauri::Builder` with a
-chosen backend; the frontend talks to it through the `@better-duck/tauri` npm package, which wraps a
-fixed set of Tauri `invoke` commands.
+chosen backend; the frontend talks to it through the `@better-duck/tauri` npm package, which wraps
+a fixed set of `invoke` commands.
 
 <Info>
-Status is **beta** (`0.1.0-beta.8`). Query, analytics, migration, and security features are
-implemented and tested; the `arrow` (Arrow IPC) command and Android CI are the pending edges.
+  This documents version **0.1.0-beta.8**. The crate is beta: query, analytics, migration, and
+  security features are implemented and tested; the `arrow` (Arrow IPC) command and Android CI are
+  the pending edges.
 </Info>
-
-## Why a plugin, not raw invoke
-
-The plugin gives you three things that a hand-rolled `invoke` bridge does not:
-
-- **A fixed, audited command set** instead of arbitrary RPC. Every command is a `#[tauri::command]`
-  and runs its DuckDB work on a blocking task, so the async runtime is never blocked.
-- **Two independent security layers** — an init-time Rust `Policy` (mandatory) and declarative
-  per-capability `scope` entries — both enforced *before* the backend touches DuckDB. See
-  [security](/tauri/security).
-- **One backend behind a stable surface.** You pick the Rust engine with a Cargo feature; the
-  webview command API is identical either way.
 
 ## Architecture
 
+Three layers, with the plugin as the trust boundary between an untrusted webview and the embedded
+database:
+
 ```
-webview (JS/TS)              Rust (plugin)                 DuckDB
-──────────────              ─────────────                 ──────
-@better-duck/tauri   ──►   #[tauri::command]       ──►    better-duck engine
-  Database class            (blocking task)                (file or :memory:)
-   .load/.select/...        Policy + scope gate            WAL ──► checkpoint
+┌─────────────┐   invoke('plugin:…|cmd')   ┌──────────────────┐   DuckBackend    ┌──────────┐
+│   Webview   │ ─────────────────────────▶ │  better-duck-    │ ───────────────▶ │  DuckDB  │
+│  (JS / TS)  │ ◀───── JSON rows / err ──── │  tauri (Rust)    │ ◀─── rows ─────  │ (vendored)│
+└─────────────┘                            └──────────────────┘                  └──────────┘
+   @better-duck/tauri                      capabilities + scope + Policy          better-duck-core
+   Database class                          enforced before the backend runs
 ```
+
+- **Webview** holds a `Database` handle and calls typed methods that `invoke` plugin commands.
+- **Plugin** validates every call against the Tauri capability (which commands are allowed) and the
+  scope + `Policy` (which values those commands may use), then runs DuckDB work on a blocking task
+  so the async runtime is never blocked.
+- **DuckDB** is compiled into the app via `better-duck-core` (vendored through `better-duck-sys`),
+  so there is no system install to manage.
+
+## How it fits together
+
+- **One backend, picked by a Cargo feature.** `backend-core` (default) builds on
+  `better-duck-core`; `backend-diesel` builds on `better-duck-diesel` (an r2d2 pool of
+  `DuckDbConnection` + Diesel `embed_migrations!`). The webview command surface is **identical**
+  either way — both engines implement the same `DuckBackend` trait, so your JS never changes. See
+  [Backends](/tauri/backends).
+- **A fixed command set**, not arbitrary RPC. Every command is a `#[tauri::command]` and is listed
+  in `build.rs` so Tauri can generate its `allow-*` / `deny-*` permissions.
+- **Two security layers**: an init-time Rust [`Policy`](/tauri/scope-and-policy) (mandatory) and
+  declarative per-capability [scope entries](/tauri/scope-and-policy), both enforced before the
+  backend touches DuckDB. See [Security overview](/tauri/security-overview).
+
+## The command set at a glance
 
 Every method on the JS `Database` class maps to exactly one Rust command
 (`plugin:better-duck-tauri|<name>`). Parameters bind as **positional** `$1, $2, …` from a `values`
 array.
 
-## Backend Cargo features
-
-The plugin builds on exactly **one** backend, chosen by a Cargo feature. Both expose the identical
-webview command API — the choice only affects the Rust side (migrations, pooling, connection
-management).
-
-| Feature | Built on | Entry point | Migrations |
+| Command | JS method | Does | Reference |
 |---|---|---|---|
-| `backend-core` *(default)* | better-duck-core | `core::init()` / `core::Builder` | inline `Vec<Migration>` |
-| `backend-diesel` | [better-duck-diesel](/diesel/overview) | `diesel::init()` / `diesel::Builder` | Diesel `embed_migrations!` |
-| `arrow` *(add-on)* | — | enables `query_arrow` | — |
-
-<Warning>
-A backend feature is **required**. Building with neither `backend-core` nor `backend-diesel` is a
-`compile_error!`. See [backends & checkpoint](/tauri/backends-and-checkpoint) for how to choose.
-</Warning>
-
-## The frontend package
-
-The npm package is **`@better-duck/tauri`**; its default export is the `Database` class. It
-peer-depends on `@tauri-apps/api ^2`.
-
-```bash
-npm install @better-duck/tauri
-```
+| `load` / `close` | `Database.load` / `db.close` | Open / drop a connection | [Frontend overview](/tauri/frontend-overview) |
+| `select` / `execute` | `db.select` / `db.execute` | Read query / write-DDL | [Query & execute](/tauri/query-and-execute) |
+| `tables` / `columns` / `explain` | same | Schema introspection | [Schema introspection](/tauri/schema-introspection) |
+| `import` / `export` | same (+ format helpers) | Parquet/CSV/JSON file I/O | [Import & export](/tauri/import-export) |
+| `append_rows` | `db.appendRows` | Bulk-insert JSON rows | [Append rows](/tauri/append-rows) |
+| `stream` / `interrupt` | `db.stream` / `db.interrupt` | Chunked streaming + cancel | [Streaming](/tauri/streaming) |
+| `query_arrow` | `db.queryArrow` | Arrow IPC bytes (`arrow` feature) | [Arrow IPC](/tauri/arrow) |
+| `load_extension` / `checkpoint` / `revert` | same | Extensions, WAL flush, undo migration | [Maintenance](/tauri/maintenance) |
 
 ## 30-second quickstart
 
-<Steps>
-<Step title="Add the Rust dependency">
+Add the dependency (pick one backend feature) and register the plugin:
+
 ```toml
+# src-tauri/Cargo.toml
 [dependencies]
 better-duck-tauri = { version = "0.1.0-beta.8", features = ["backend-core"] }
 ```
-Pre-release versions are excluded by Cargo's default match — pin the exact pre-release.
-</Step>
-<Step title="Register the plugin">
+
 ```rust
+// src-tauri/src/main.rs
 tauri::Builder::default()
     .plugin(better_duck_tauri::core::init()) // simplest; or ::diesel::init()
     .run(tauri::generate_context!())?;
 ```
-</Step>
-<Step title="Grant permissions (src-tauri/capabilities/*.json)">
-The default set is read-only (`load`/`close`/`select`); writes and raw SQL are opt-in.
+
+Grant permissions in a capability file (the default set is read-only; writes and raw SQL are
+opt-in):
+
 ```json
 { "permissions": ["better-duck-tauri:default", "better-duck-tauri:allow-execute"] }
 ```
-</Step>
-<Step title="Query from the webview">
+
+Drive it from the frontend:
+
 ```ts
 import Database from '@better-duck/tauri'
 
@@ -99,55 +101,13 @@ await db.execute('INSERT INTO t VALUES ($1, $2)', [1, 'ada'])
 const rows = await db.select('SELECT * FROM t WHERE id > $1', [0]) // [{ id: 1, name: 'ada' }]
 await db.close()
 ```
-</Step>
-</Steps>
 
-<Note>
-**Connection strings.** `duckdb:<path>` opens a file, `duckdb::memory:` (or empty) opens in-memory,
-and a bare path works too — the plugin strips the `duckdb:` prefix to resolve the DuckDB path.
-</Note>
+See [Installation](/tauri/installation) and [Registration](/tauri/registration) for the full setup.
 
-## The webview command API at a glance
+## See also
 
-| JS method | Command | Does |
-|---|---|---|
-| `Database.load(path)` | `load` | Open + register a connection; runs pending migrations |
-| `db.close()` | `close` | Drop the connection (→ `bool` existed) |
-| `db.select(sql, values?)` | `select` | Read query → array of JSON row objects |
-| `db.execute(sql, values?)` | `execute` | Write/DDL → `{ rowsAffected }` |
-| `db.loadExtension(name)` | `load_extension` | `INSTALL`+`LOAD` a DuckDB extension |
-| `db.import(table, src, fmt)` | `import` | `CREATE TABLE … AS SELECT * FROM read_*()` |
-| `db.export(sql, path, fmt)` | `export` | `COPY (…) TO path` |
-| `db.appendRows(table, rows)` | `append_rows` | Bulk `INSERT` of JSON object rows |
-| `db.tables()` / `db.columns(t)` | `tables` / `columns` | Introspect the `main` schema |
-| `db.explain(sql)` | `explain` | `EXPLAIN` plan rows |
-| `db.stream(sql, onBatch, values?, chunk?)` | `stream` | Chunked rows over a `Channel` → total count |
-| `db.interrupt()` | `interrupt` | Cancel the in-flight stream (→ `bool`) |
-| `db.checkpoint(force?)` | `checkpoint` | Flush WAL (`FORCE CHECKPOINT` when `force`) |
-| `db.revert()` | `revert` | Run the last migration's `Down` (→ reverted version) |
-| `db.queryArrow(sql, values?)` | `query_arrow` | Arrow IPC bytes (needs the `arrow` feature) |
-
-Full signatures and the JSON value mapping are on
-[register & frontend](/tauri/register-and-frontend).
-
-## Errors
-
-The error type is `better_duck_tauri::Error` (`UnknownConnection` / `Denied` / `Backend` / `Tauri`),
-serialized to the webview as a plain string. The JS `invoke` promise rejects with that string.
-
-## Where to next
-
-<CardGroup cols={2}>
-<Card title="Register & frontend" href="/tauri/register-and-frontend">
-Add the deps, register `core` vs `diesel`, and use every command (plus Arrow IPC decode).
-</Card>
-<Card title="Backends & checkpoint" href="/tauri/backends-and-checkpoint">
-Pick a backend and tune WAL checkpoint strategies.
-</Card>
-<Card title="Migrations" href="/tauri/migrations">
-Startup migrations, revert, and the crash-safe backup protocol.
-</Card>
-<Card title="Security" href="/tauri/security">
-Capabilities, permissions, scope entries, and the Rust `Policy`.
-</Card>
-</CardGroup>
+- [Installation](/tauri/installation) — the Rust dependency, feature flags, and the JS package.
+- [Registration](/tauri/registration) — `tauri::Builder` wiring, simple and configured.
+- [Security overview](/tauri/security-overview) — the untrusted-webview threat model.
+- [Feature flags](/guide/feature-flags) — how `backend-core`, `backend-diesel`, and `arrow` relate
+  to the rest of the workspace.

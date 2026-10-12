@@ -1,0 +1,106 @@
+---
+title: "Values Overview"
+description: "The DuckValue enum: every DuckDB column value, the conversion traits around it (FromDuckValue, AppendAble, DuckDialect, DuckLogicalType), and how NULL maps to Option."
+---
+
+`better_duck_core::types::value::DuckValue` is the dynamic representation of any DuckDB column
+value. Reading a [row](/core/iterating-results) gives you `&DuckValue`s; binding
+[parameters](/core/positional-parameters) and [appending](/core/appender) accept them.
+
+<Warning>
+  `DuckValue` is `#[non_exhaustive]` — always include a `_` arm when matching, so a value from a
+  future DuckDB type cannot break your build.
+</Warning>
+
+## Variant families
+
+The full variant list is split across focused pages:
+
+<CardGroup cols={3}>
+  <Card title="Scalar types" href="/core/scalar-types">
+    Booleans, every integer width, floats, text, blob, decimal, uuid, bit, bignum.
+  </Card>
+  <Card title="Temporal types" href="/core/temporal-types">
+    Dates, times, timestamps, intervals, and ±infinity sentinels.
+  </Card>
+  <Card title="Composite types" href="/core/composite-types">
+    LIST, ARRAY, STRUCT, MAP, UNION, ENUM.
+  </Card>
+</CardGroup>
+
+The `Null` variant represents SQL `NULL` and is shared by all families.
+
+## Traits and equality
+
+`DuckValue` is `Clone + PartialEq + Eq + Hash`:
+
+- Floats are **canonicalized** for `Eq`/`Hash` (so `NaN` behaves consistently), and `Map` values
+  hash order-independently — a `DuckValue` works as a `HashMap` key.
+- `Option<T>` converts to `Null` / `Some(..)` on both read and write directions.
+
+```rust
+use better_duck_core::types::value::DuckValue;
+
+let a = DuckValue::text("hi");          // DuckValue::Text("hi".into())
+let b: DuckValue = Some(7_i32).into();  // DuckValue::Int(7)
+let c: DuckValue = Option::<i32>::None.into();   // DuckValue::Null
+```
+
+### Constructors and Map helpers
+
+- `DuckValue::text(impl Into<String>) -> DuckValue` — build a `Text` value.
+- On a `Map` variant: `get(key)`, `get_mut(key)`, `contains_key(key)`, taking any key convertible
+  into `DuckValue`. On non-`Map` variants they return `None` / `false`.
+
+```rust
+use std::collections::HashMap;
+let m: DuckValue = HashMap::from([(DuckValue::Int(1), DuckValue::text("one"))]).into();
+assert_eq!(m.get(1i32), Some(&DuckValue::text("one")));
+```
+
+## The conversion traits
+
+Four traits connect Rust types and DuckDB values. You rarely implement them by hand — the
+[derives](/macros/derives-overview) and built-in impls cover the common cases — but knowing the
+roles clarifies error messages and generic bounds.
+
+<ParamField path="AppendAble">
+  **Write direction.** Binds to a prepared-statement parameter or appends to an appender row.
+  Implemented for every `DuckValue` and the primitive Rust types. This is the bound on
+  [`execute_with`](/core/positional-parameters) and [`Appender::append`](/core/appender).
+</ParamField>
+<ParamField path="FromDuckValue">
+  **Read direction.** `from_duck_value(&DuckValue) -> Result<Self, DuckDBConversionError>`. A
+  `NULL` into a non-`Option` target is [`NullValue`](/core/errors); a mismatched variant is a
+  conversion error. `Option<T>` reads `Null` as `None`.
+</ParamField>
+<ParamField path="DuckDialect<Raw = duckdb_value>">
+  The low-level `from_duck` / `to_duck` round-trip against a raw FFI value (or, for temporal types,
+  a packed FFI struct). The machinery `AppendAble`/`FromDuckValue` build on.
+</ParamField>
+<ParamField path="DuckLogicalType">
+  Gives a Rust **type** (not value) its fixed DuckDB logical type, so `Vec<T>`, `Box<[T]>`, and
+  `HashMap<K, V>` can map to `LIST`/`ARRAY`/`MAP` **even when empty**. See
+  [`LogicalType::of::<T>()`](/core/composite-types#logicaltype-and-typeinfo).
+</ParamField>
+
+<Note>
+  `DuckValue` deliberately does **not** implement `DuckLogicalType`: the enum has no single fixed
+  logical type (it depends on the runtime variant). Wrap a `Vec<DuckValue>` as `DuckValue::List(v)`
+  and bind it directly instead.
+</Note>
+
+## Converting a whole value
+
+- `to_duck() -> Result<duckdb_value, DuckDBConversionError>` — build a heap DuckDB value (caller
+  destroys it). Errors for an empty collection whose element type can't be inferred.
+- `logical_type_of(&DuckValue) -> Result<duckdb_logical_type, _>` — the value's logical type.
+- `to_owned_value() -> Result<OwnedValue, _>` — materialize an [`OwnedValue`](/core/errors) for
+  introspection (SQL-NULL check, SQL rendering, STRUCT child access).
+
+## See also
+
+- [Scalar types](/core/scalar-types) · [Temporal types](/core/temporal-types) ·
+  [Composite types](/core/composite-types).
+- [Positional parameters](/core/positional-parameters) — binding values via `AppendAble`.
+- [FromRow / ToRow](/macros/fromrow-torow) — deriving the conversions for your structs.

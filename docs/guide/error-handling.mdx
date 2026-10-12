@@ -1,0 +1,146 @@
+---
+title: "Error Handling"
+description: "How failures surface in better-duck: the Error and Result types, DuckDB's typed EngineError classification, appender poisoning, async/pool errors, and the panic = abort caveat for UDFs."
+---
+
+Everything fallible in [`better-duck-core`](/core/opening-connections) returns one `Result` type, and engine
+failures carry DuckDB's own typed classification. This page is the overview: the shape of `Error`,
+how the common failures surface, and the two behaviors — appender poisoning and the `panic = "abort"`
+caveat — that most often surprise people. For the exhaustive variant list and the extension API, see
+[Errors & Extensions](/core/errors).
+
+## One Result type
+
+```rust
+// Alias: Result<T, better_duck_core::error::Error>
+use better_duck_core::error::{Error, Result};
+
+fn run(conn: &mut better_duck_core::connection::Connection) -> Result<()> {
+    conn.execute_batch("CREATE TABLE t (id INTEGER)")?;
+    Ok(())
+}
+```
+
+`better_duck_core::error::Error` is `#[non_exhaustive]` — **match it with a `_` arm**. It implements
+`std::error::Error` (with `source()`), `Display`, and a partial `PartialEq`, so it drops into
+`anyhow` / `thiserror` and `Box<dyn Error>`-based error handling cleanly.
+
+## How failures are grouped
+
+The variants fall into a few families. The main runtime failure is `Engine`.
+
+| Family | Variants | When |
+|---|---|---|
+| **Engine** | `Engine(EngineError)` | A query/DDL/DML failed — carries DuckDB's typed classification + message. The one you handle most. |
+| **Raw C-API** | `DuckDBFailure(ffi::Error, Option<String>)` | A C-API call with no typed classification failed (prepare, extract, table description). |
+| **Conversion** | `ConversionError(DuckDBConversionError)` | A value conversion failed: `TypeMismatch { expected, found }`, `NullValue`, `PrecisionLoss`, `ConversionError(String)`. |
+| **Caught before FFI** | `NulError`, `InvalidParameterName`, `InvalidParameterCount`, `InvalidColumnIndex`, `InvalidColumnName`, `IntegralValueOutOfRange` | Bad input rejected Rust-side, before (or instead of) reaching DuckDB. |
+| **Mode / protocol** | `MixedIterationMode` | Row-by-row and chunk consumption mixed on one result — see [columnar](/core/columnar-overview). |
+| **Concurrency** | `BackgroundTaskFailed(String)`, `Pool(String)` | A `spawn_blocking` task panicked/was cancelled; a pool checkout timed out or the manager failed. |
+
+## EngineError — DuckDB's classification
+
+A failed query surfaces as `Error::Engine(EngineError { kind, message })`. Both fields are **copied
+out of DuckDB memory** when the error is built, so the error stays valid after the result handle —
+and the connection — are gone.
+
+```rust
+use better_duck_core::error::{Error, EngineError, EngineErrorKind};
+
+match conn.execute_batch("NOT VALID SQL") {
+    Err(Error::Engine(EngineError { kind, message })) => {
+        // kind: EngineErrorKind — e.g. Syntax, Parser, Binder, Catalog, Constraint,
+        //        Conversion, MismatchType, OutOfRange, NotImplemented, Io, OutOfMemory,
+        //        Permission, MissingExtension, Transaction, …
+        // message: Option<String> — DuckDB's own text, owned.
+        eprintln!("{kind}: {message:?}");
+    }
+    Err(e) => eprintln!("other: {e}"),
+    Ok(_) => {}
+}
+```
+
+`EngineErrorKind` mirrors DuckDB's `duckdb_error_type` and is `#[non_exhaustive]`:
+
+- **Known kinds** map 1:1 (`Syntax`, `Catalog`, `Constraint`, …; the full set is
+  `EngineErrorKind::KNOWN`).
+- **`Unknown(raw)`** preserves a classification a future DuckDB adds — nothing is lost across engine
+  upgrades.
+- **`Unavailable`** is an *explicit absence*: the originating API exposed only a status code and a
+  message, with no typed classification. The driver **never invents a kind by parsing message text**.
+
+<Tip>
+  Match on `kind` for programmatic branching (e.g. retry on `Constraint`, surface `Syntax` to a
+  developer), and show `message` to a human. `EngineErrorKind::from_raw` / `to_raw` round-trip the
+  raw code if you need it.
+</Tip>
+
+## Appender poisoning
+
+The [`Appender`](/core/appender) has a failure mode worth calling out: DuckDB **invalidates** it the
+moment a flush, row-end, or close fails, and the buffered data is gone.
+
+<Warning>
+  A failed `append` / `save` **poisons** the `Appender`: every later operation fails fast with an
+  `Error::Engine` carrying the poison message — without re-entering DuckDB — and drop skips the flush
+  entirely (re-flushing an invalidated appender can deadlock DuckDB on indexed / `PRIMARY KEY`
+  tables). The originating **connection** stays usable. Use `finish()` (not drop) when you need the
+  flush/close error reported.
+</Warning>
+
+A Rust-side value-conversion failure mid-row also poisons the appender, but returns the *original*
+conversion error unchanged rather than a poison message.
+
+## Async and pool errors
+
+- The [async facade](/core/async) runs work on `spawn_blocking`; a panicked or cancelled
+  task surfaces as `Error::BackgroundTaskFailed(String)`.
+- The [r2d2 pool](/core/async#pooling-feature-pool)'s own builder/checkout errors are
+  r2d2's type; map them into the core error with `Error::Pool(e.to_string())`. A checkout timeout
+  likewise arrives as `Error::Pool(..)`.
+
+## Panics and the abort profile
+
+This is the single most important runtime gotcha for [UDFs](/macros/udf-overview) and other callbacks.
+
+<Warning>
+  Callback panics are caught and reported to DuckDB as a query error **only** under
+  `panic = "unwind"` (the default for `dev` and `test`). Under `panic = "abort"` — common in
+  `release` profiles — a panicking UDF **aborts the process**: `catch_unwind` cannot catch once
+  unwinding is compiled out.
+</Warning>
+
+The fix is to make fallible UDFs *return errors* instead of panicking — the error path never depends
+on unwinding:
+
+```rust
+use better_duck_core::{duck_bail, duckdb_scalar};
+
+#[duckdb_scalar]
+fn checked_div(a: i64, b: i64) -> Result<i64, Box<dyn std::error::Error + Send + Sync>> {
+    if b == 0 {
+        duck_bail!("division by zero");   // => the query fails with this message
+    }
+    Ok(a / b)
+}
+```
+
+A `Result::Err` return fails the query with `E`'s message; `duck_bail!("…")` is shorthand for
+`return Err(format!(…).into())`.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Errors & Extensions" icon="triangle-exclamation" href="/core/errors">
+    The exhaustive `Error` variant table and the extension API.
+  </Card>
+  <Card title="Appender" icon="bolt" href="/core/appender">
+    Full poisoning and flush semantics.
+  </Card>
+  <Card title="User-defined functions" icon="wand-magic-sparkles" href="/macros/udf-overview">
+    Returning errors from UDFs and the panic rules.
+  </Card>
+  <Card title="Async & pooling" icon="arrows-rotate" href="/core/async">
+    `BackgroundTaskFailed` and pool errors.
+  </Card>
+</CardGroup>

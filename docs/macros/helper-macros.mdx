@@ -1,0 +1,101 @@
+---
+title: "Helper Macros"
+description: "The always-available transaction! and params! declarative macros, and the UDF body macros duck_bail!, duck_state!, duck_projection!, and duck_extra_info!."
+---
+
+These are `macro_rules!` (declarative) macros exported at the crate root, carrying no extra
+dependency. Two general helpers are **always available**; four more support
+[UDF](/macros/udf-overview) bodies and need `feature = "udf"`.
+
+## transaction!
+
+`transaction!(conn, { … })` runs a block inside a transaction, committing on `Ok` and rolling back
+on `Err` or panic. The first argument is the connection **variable** (an identifier); it is
+reborrowed and shadowed inside the block, so the block uses the same name.
+
+```rust
+use better_duck_core::{connection::Connection, transaction};
+
+# fn main() -> better_duck_core::error::Result<()> {
+let mut conn = Connection::open_in_memory()?;
+conn.execute_batch("CREATE TABLE t (id INTEGER)")?;
+transaction!(conn, {
+    conn.execute_batch("INSERT INTO t VALUES (1)")?;
+    Ok(())
+})?;
+# Ok(())
+# }
+```
+
+It works with **any** connection exposing `transaction(|c| -> Result<_, _>)` — both the core
+[`Connection`](/core/transactions) and a Diesel `DuckDbConnection` — because it simply expands to
+`conn.transaction(|conn| { … })`.
+
+## params!
+
+`params![a, b, …]` builds a fixed-size array of `&mut dyn AppendAble` for
+[`execute_with`](/core/positional-parameters), so heterogeneous bind values don't have to be
+spelled out by hand.
+
+```rust
+use better_duck_core::{connection::Connection, params};
+
+# fn main() -> better_duck_core::error::Result<()> {
+let mut conn = Connection::open_in_memory()?;
+conn.execute_batch("CREATE TABLE t (a INTEGER, b VARCHAR)")?;
+conn.execute_with("INSERT INTO t VALUES ($1, $2)", &mut params![1_i32, "hi".to_owned()])?;
+# Ok(())
+# }
+```
+
+It expands to `[&mut a as &mut dyn AppendAble, …]`, so pass owned values (or
+[`DuckValue`](/core/values-overview)s, including `DuckValue::Null`). Because it yields an array, bind
+it with `&mut params![…]`.
+
+<Note>
+  `transaction!` and `params!` are part of the crate's always-on surface — they do **not** require
+  the `derive` feature.
+</Note>
+
+## UDF body macros (`feature = "udf"`)
+
+These are only valid inside the relevant [UDF](/macros/udf-overview) function body; each panics if
+called in the wrong context, but the panic is contained by the callback machinery and surfaces as a
+normal query error (never UB).
+
+### duck_bail!
+
+`duck_bail!("message with {interpolation}")` is `return Err(format!(…).into())` for a fallible UDF
+body — the surrounding error type must be `From<String>` (true for `String` and for the
+`Box<dyn Error + Send + Sync>` that `#[duckdb_scalar]` / `#[duckdb_table_function]` route a
+`Result<T, E>` through).
+
+```rust
+fn check(stop: i64, start: i64) -> Result<i64, String> {
+    if stop < start {
+        better_duck_core::duck_bail!("stop ({stop}) must be >= start ({start})");
+    }
+    Ok(stop - start)
+}
+```
+
+### duck_state!
+
+`duck_state!(Type)` returns a `Clone` of a [`#[duckdb_scalar(state(…))]`](/macros/scalar-functions#shared-state-with-duck_state)
+function's shared state. `Type` must be `Clone`.
+
+### duck_projection! and duck_extra_info!
+
+Inside a [`#[duckdb_table_function]`](/macros/table-functions#projection-pushdown-and-extra-info-body-macros)
+body:
+
+- `duck_projection!() -> Vec<usize>` — the 0-based column indices the current query needs (empty if
+  pushdown wasn't requested; only valid under `projection_pushdown`).
+- `duck_extra_info!(Type) -> Type` — a `Clone` of the registered `extra_info` value (`Type: Clone`).
+
+## See also
+
+- [Transactions](/core/transactions) — the `transaction!` target.
+- [Positional parameters](/core/positional-parameters) — the `params!` target.
+- [Scalar](/macros/scalar-functions) / [table](/macros/table-functions) functions — where the UDF
+  body macros apply.

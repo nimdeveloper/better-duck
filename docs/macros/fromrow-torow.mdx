@@ -1,0 +1,82 @@
+---
+title: "FromRow & ToRow"
+description: "Read a query row into a struct with #[derive(FromRow)] and column-name mapping; write a struct as an appender row or positional parameters with #[derive(ToRow)]."
+---
+
+<Info>Requires `feature = "derive"`. See the [derives overview](/macros/derives-overview) for the shared `#[duck(...)]` attributes and `rename_all` casings.</Info>
+
+These two derives move whole structs across the row boundary: `FromRow` reads a query row into a
+struct, `ToRow` writes a struct out as a row or as statement parameters.
+
+## `#[derive(FromRow)]` — read a struct from a row
+
+Generates `better_duck_core::FromRow`: each **named** field is read from the row by column name via
+[`FromDuckValue`](/core/values-overview#the-conversion-traits).
+[`ResultSet::to_structs::<T>()`](/core/result-sets#deserializing-into-structs) collects a whole
+result into `Vec<T>`.
+
+```rust
+use better_duck_core::FromRow;
+
+#[derive(FromRow, Debug)]
+#[duck(rename_all = "snake_case")]
+struct Task {
+    user_id: i32,
+    #[duck(rename = "n")]
+    name: String,
+    done: Option<bool>,          // NULL → None; a NULL into a non-Option field is an error
+}
+
+# fn demo(conn: &mut better_duck_core::connection::Connection) -> better_duck_core::error::Result<()> {
+let tasks: Vec<Task> = conn
+    .execute("SELECT user_id, n, done FROM tasks")?
+    .materialize()?
+    .to_structs()?;
+# Ok(())
+# }
+```
+
+- **Named-field structs only** — tuple structs and enums are rejected.
+- Container attributes: `#[duck(rename_all = "…")]`, `#[duck(crate = ::path)]`.
+- Field attribute: `#[duck(rename = "column")]`.
+- A `NULL` read into a non-`Option` field is a [`DuckDBConversionError`](/core/errors); use
+  `Option<T>` for nullable columns.
+
+## `#[derive(ToRow)]` — write a struct as a row / params
+
+Generates `better_duck_core::AppendAble`, appending or binding each field in **declaration order** —
+one bulk-[appender](/core/appender) row, or consecutive `$1`, `$2`, … statement parameters.
+
+```rust
+use better_duck_core::ToRow;
+
+#[derive(ToRow)]
+struct NewItem { id: i32, name: String }
+
+# fn demo(conn: &mut better_duck_core::connection::Connection) -> better_duck_core::error::Result<()> {
+// As an appender row:
+let mut app = conn.appender("items", "main")?;
+app.append(&mut NewItem { id: 1, name: "a".to_owned() })?;
+app.save()?;
+
+// Or as positional parameters:
+conn.execute_with(
+    "INSERT INTO items VALUES ($1, $2)",
+    &mut [&mut NewItem { id: 2, name: "b".to_owned() }],
+)?;
+# Ok(())
+# }
+```
+
+<Note>
+  `ToRow` binds **positionally**, in declaration order — there is no column-name mapping, so only
+  the container `#[duck(crate = ::path)]` option is honored (no `rename` / `rename_all`). Order your
+  struct fields to match the target columns / parameters.
+</Note>
+
+## See also
+
+- [Derives overview](/macros/derives-overview) — `rename_all` casings and resolution order.
+- [Result sets](/core/result-sets#deserializing-into-structs) — `to_structs::<T>()`.
+- [Appender](/core/appender) · [Positional parameters](/core/positional-parameters) — where `ToRow`
+  is consumed.

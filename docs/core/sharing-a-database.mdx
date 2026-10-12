@@ -1,0 +1,77 @@
+---
+title: "Sharing a Database"
+description: "Use Database to share one DuckDB database — in-memory or on-disk — across many independent connections."
+---
+
+`better_duck_core::database::Database` (re-exported as `better_duck_core::Database`) is a shared,
+cloneable handle to one open DuckDB database. Open it once, then `connect()` as many
+[`Connection`](/core/opening-connections)s as you need — all observing the **same** data.
+
+```rust
+use better_duck_core::database::Database;
+
+let db = Database::open_in_memory()?;     // one shared in-memory database
+let mut a = db.connect()?;
+let mut b = db.connect()?;                // sees whatever `a` writes
+
+a.execute_batch("CREATE TABLE t (id INTEGER)")?;
+b.execute_batch("INSERT INTO t VALUES (1)")?;   // ok: same database
+```
+
+## Why `Database` exists
+
+A bare `Connection::open_in_memory()` creates a database **private** to that one connection — a
+second such call is a different database. `Database` is how you get the "one database, many
+connections" topology, which is essential for in-memory databases (where there is no file to
+re-open) and is the foundation of the [pool](/core/pooling).
+
+<Note>
+  Each connection made from a `Database` has its **own transaction scope** (a fresh
+  `duckdb_connect`). Writes become visible to other connections once committed, following DuckDB's
+  normal transaction semantics.
+</Note>
+
+## Constructors
+
+`Database` mirrors the `Connection` constructors:
+
+<ParamField path="open<P: AsRef<Path>>(path) -> Result<Database>">
+  Open (or create) an on-disk database.
+</ParamField>
+<ParamField path="open_in_memory() -> Result<Database>">
+  Open a shared in-memory database.
+</ParamField>
+<ParamField path="open_with_flags(path, config) -> Result<Database>">
+  As `open`, with a [`Config`](/core/configuration).
+</ParamField>
+<ParamField path="open_in_memory_with_flags(config) -> Result<Database>">
+  As `open_in_memory`, with a [`Config`](/core/configuration).
+</ParamField>
+<ParamField path="connect(&self) -> Result<Connection>">
+  Open a new connection to this database.
+</ParamField>
+
+## Lifetime and cheap cloning
+
+```rust
+let db = Database::open("app.duckdb")?;
+let db2 = db.clone();                    // cheap Arc bump — same underlying database
+let conn = db2.connect()?;
+drop(db);
+drop(db2);                               // the database stays open: `conn` keeps it alive
+```
+
+- `Database` is `Clone` (a cheap `Arc` bump), `Send + Sync`, and implements `Debug`.
+- The backing database outlives every handle: a live connection keeps it open even after every
+  `Database` handle is dropped.
+
+## Bridging from a connection
+
+Already have a `Connection`? Call [`Connection::database()`](/core/opening-connections#cloning-a-connection)
+to get a `Database` for its backing database, then `connect()` more connections.
+
+## See also
+
+- [Opening connections](/core/opening-connections) — single-connection lifecycle and `try_clone`.
+- [Pooling](/core/pooling) — an r2d2 pool is built on exactly this shared-database model.
+- [Async](/core/async) — `AsyncDatabase` is the async mirror of this type.

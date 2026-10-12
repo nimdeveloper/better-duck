@@ -1,0 +1,146 @@
+---
+title: "Installation & Setup"
+description: "Add the better-duck-diesel crate, open a DuckDbConnection with establish or from_core, reach the underlying core connection, run DDL batches, and understand the backend error type."
+---
+
+Everything needed to get a `DuckDbConnection` open and talking to DuckDB — adding the crate, the ways to
+establish a connection, reaching the core driver underneath, running raw DDL, and the error type you
+catch. Verified against `crates/better-duck-diesel/src/connection.rs` and the crate's tests.
+
+## Adding the crate
+
+```toml
+[dependencies]
+better-duck-diesel = "0.1.0-beta.8"   # pin exactly — pre-release
+diesel = "2.3"
+```
+
+<Warning>
+Pin the exact pre-release version. Cargo's default version match excludes pre-releases, so a bare
+`"0.1"` will not resolve. See [Installation](/guide/installation).
+</Warning>
+
+Diesel's own derives (`Queryable`, `Insertable`, `QueryableByName`, …) come from `diesel` itself — this
+crate only provides the backend. Opt into date/time with `features = ["chrono"]`, `r2d2` for pooling, and
+`udf`/`derive`/`spatial`/`json` as needed — see the [feature-flags table](/diesel/overview#feature-flags).
+
+<Warning>
+`chrono` is **not** on by default here (it is in core). Enable it before using DATE / TIME / TIMESTAMP /
+TIMESTAMPTZ / INTERVAL columns.
+</Warning>
+
+## Establishing a connection
+
+`DuckDbConnection::establish` is Diesel's `Connection::establish`:
+
+```rust
+use better_duck_diesel::DuckDbConnection;
+use diesel::prelude::*;
+
+let mut conn = DuckDbConnection::establish(":memory:")?;                 // in-memory
+let mut conn = DuckDbConnection::establish("/path/to/db.duckdb")?;       // on-disk
+let mut conn = DuckDbConnection::establish("duckdb:///path/db.duckdb")?; // "duckdb://" prefix is stripped
+let mut conn = DuckDbConnection::establish("duckdb://:memory:")?;        // prefix stripped -> ":memory:"
+```
+
+`":memory:"` opens a fresh in-memory database; any other string (after stripping an optional `duckdb://`
+prefix) is treated as a file path.
+
+<Warning>
+Each `:memory:` connection is its own **independent, empty** database. If you need several handles to
+observe the *same* in-memory data (e.g. a pool), share one core `Database` — see
+[`from_core`](#wrapping-an-existing-core-connection) below and
+[`SharedDuckDbConnectionManager`](/diesel/pooling#sharedduckdbconnectionmanager).
+</Warning>
+
+### Wrapping an existing core connection
+
+To share one core `Database` across several Diesel connections, open it through core and wrap each
+connection with `from_core`:
+
+```rust
+let db = better_duck_core::database::Database::open_in_memory()?;
+let core_conn = db.connect()?;
+let mut diesel_conn = DuckDbConnection::from_core(core_conn);
+```
+
+## Reaching the core connection
+
+`.inner()` / `.inner_mut()` expose the underlying `better_duck_core::connection::Connection` so you can
+register UDFs, load extensions, or call core-only APIs:
+
+```rust
+conn.inner_mut().load_extension("json")?;   // &mut better_duck_core::connection::Connection
+let _core: &better_duck_core::connection::Connection = conn.inner();
+```
+
+This is the bridge between the two crates: anything the ORM does not model — the appender, columnar
+chunks, Arrow/Polars, async — you reach through `inner_mut()`. See [`better-duck-core`](/core/opening-connections).
+
+<Note>
+UDF registration and `LOAD`ing extensions live on a single DuckDB connection, **not** on a shared
+`Database`. In a pool, do them in the [`on_connect` hook](/diesel/pooling#per-connection-setup-with-on_connect)
+so every pooled connection is set up.
+</Note>
+
+## Running raw / DDL statements
+
+`DuckDbConnection` implements `SimpleConnection`, so DDL and multi-statement batches go through
+`batch_execute` (which maps to core's `execute_batch`). It runs one or more `;`-separated statements in a
+single call — ideal for schema setup:
+
+```rust
+use diesel::connection::SimpleConnection;
+
+conn.batch_execute(
+    "CREATE TABLE products (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, price DOUBLE NOT NULL DEFAULT 0);
+     INSERT INTO products VALUES (1, 'widget', 9.99), (2, 'gadget', 4.99);",
+)?;
+```
+
+For a single raw query mapped with Diesel's `QueryableByName`, use `diesel::sql_query(...)`. This is also
+the path for the DuckDB-specific `Duck*` types, which bind and load via `QueryableByName` rather than the
+typed builder — see [Type mapping](/diesel/type-mapping#duckdb-specific-sql-types).
+
+```rust
+#[derive(diesel::QueryableByName)]
+struct Count {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    n: i64,
+}
+
+let total: i64 = diesel::sql_query("SELECT COUNT(*) AS n FROM products")
+    .get_result::<Count>(&mut conn)?
+    .n;
+```
+
+## Error type
+
+Backend errors surface as Diesel's `diesel::result::Error`; the underlying DuckDB error is wrapped by
+`better_duck_diesel::result::DuckDbError` (carrying core's `EngineError` message). Catch them as
+`QueryResult<_>` / `diesel::result::Error` like any other Diesel backend.
+
+```rust
+match products::table.load::<(i32, String, f64)>(&mut conn) {
+    Ok(rows) => { /* … */ }
+    Err(diesel::result::Error::NotFound) => { /* no rows */ }
+    Err(e) => eprintln!("query failed: {e}"),
+}
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Schema & Migrations" href="/diesel/schema">
+    Declare tables with `table!` and run `diesel migration`.
+  </Card>
+  <Card title="Transactions" href="/diesel/transactions">
+    `.transaction`, test transactions, and the savepoint caveat.
+  </Card>
+  <Card title="Pooling" href="/diesel/pooling">
+    r2d2 pools and `on_connect` per-connection setup.
+  </Card>
+  <Card title="Core connections" href="/core/opening-connections">
+    The driver `inner_mut()` hands you.
+  </Card>
+</CardGroup>

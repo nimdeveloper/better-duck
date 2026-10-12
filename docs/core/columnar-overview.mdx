@@ -1,0 +1,73 @@
+---
+title: "Columnar Overview"
+description: "The columnar feature: zero-copy column reads via fetch_chunk, where DataChunkHandle and VectorRef/VectorMut fit, and the strict row-vs-chunk rule."
+---
+
+<Info>
+  Requires `feature = "columnar"` (also turned on by `udf`). The types re-export at the crate root:
+  `better_duck_core::{DataChunkHandle, VectorRef, VectorMut, FixedWidth}`.
+</Info>
+
+The `columnar` feature adds a columnar read/write path alongside the
+[row-oriented API](/core/iterating-results): pull query results as data chunks, read fixed-width
+columns zero-copy, and build chunks to [bulk-insert](/core/appender-advanced#raw-chunk-ingestion).
+It is the same data-chunk machinery [user-defined functions](/macros/udf-overview) use.
+
+## Reading results as chunks
+
+`DuckResult::fetch_chunk() -> Option<Result<DataChunkHandle>>` pulls the next chunk directly,
+bypassing per-row [`DuckRow`](/core/iterating-results#duckrow-access) materialization. `None` means
+the result is exhausted.
+
+```rust
+let mut result = conn.execute("SELECT n FROM range(5000) t(n)")?;
+let mut total = 0_i64;
+while let Some(chunk) = result.fetch_chunk() {
+    let chunk = chunk?;                       // DataChunkHandle
+    let n = chunk.len();                      // rows in this chunk
+    let col = chunk.vector(0)?;               // VectorRef over column 0
+    let data: &[i64] = col.as_slice(n)?;      // zero-copy &[i64]
+    total += data.iter().copied().sum::<i64>();
+}
+```
+
+<Warning>
+  **The row-vs-chunk rule.** A `DuckResult` is consumed **either** row-by-row (`next` / `exists` /
+  `count` / `materialize`) **or** chunk-by-chunk (`fetch_chunk`), never both — they share one
+  cursor. The first method used fixes the mode:
+
+  - A row call **after** `fetch_chunk` → the row call returns `Err(Error::MixedIterationMode)`.
+  - `fetch_chunk` **after** any row call → `Some(Err(Error::MixedIterationMode))`.
+
+  Pick one mode per result. See [`Error::MixedIterationMode`](/core/errors).
+</Warning>
+
+## When to go columnar
+
+<CardGroup cols={2}>
+  <Card title="Columnar">
+    Analytical scans over fixed-width columns, where `as_slice` gives a zero-copy `&[T]`; or
+    building chunks to bulk-append. Minimal per-value overhead.
+  </Card>
+  <Card title="Row-oriented">
+    Mixed-type rows, random column access by name, or small results. Simpler and always available.
+  </Card>
+</CardGroup>
+
+## The pieces
+
+<CardGroup cols={2}>
+  <Card title="DataChunkHandle" href="/core/data-chunks">
+    An owned-or-borrowed batch of columns: `len`, `capacity`, `vector` / `vector_mut`, `set_len`,
+    `reset`.
+  </Card>
+  <Card title="Vectors" href="/core/vectors">
+    `VectorRef` (read) and `VectorMut` (write), the `FixedWidth` marker, and validity masks.
+  </Card>
+</CardGroup>
+
+## See also
+
+- [Iterating results](/core/iterating-results) — the row-oriented counterpart.
+- [Appender advanced](/core/appender-advanced#raw-chunk-ingestion) — appending built chunks.
+- [UDF overview](/macros/udf-overview) — the same chunk/vector API inside function callbacks.
